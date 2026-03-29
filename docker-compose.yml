@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Redis 缓存
+  redis:
+    image: "redis:7-alpine"
+    container_name: uai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  # PostgreSQL + pgvector
+  postgres:
+    image: "pgvector/pgvector:pg15"
+    container_name: uai-pg
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_database_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  # UniAI Kernel API
+  api:
+    build: .
+    container_name: uai-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-your_database_password}@postgres:5432/${POSTGRES_DB:-agent_db}
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - .:/app
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  redis_data:
+  postgres_data:

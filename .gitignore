@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# 环境
+.env
+.env.local
+.env.*.local
+
+# 日志
+*.log
+nohup.out
+
+# 数据库
+*.db
+*.sqlite3
+
+# Docker volumes
+volumes/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 临时文件
+debug.py
+temp_*/
+resources/*
+!resources/.gitkeep
+
+# Alembic
+alembic/versions/*.pyc
