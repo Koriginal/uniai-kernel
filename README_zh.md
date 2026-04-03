@@ -19,13 +19,11 @@
 - **动态切换**：运行时无缝切换模型供应商
 
 ### 🧠 智能记忆系统
-- **三层记忆架构**：短期对话 → 中期摘要 → 长期画像
-- **自动提取**：Chain-of-Thought 记忆提取
-- **AI 仲裁**：智能去重与合并
-- **pgvector 检索**：语义相似度搜索
-
-### 🚀 开发者友好
-- **清晰的 API**：RESTful 设计，完整 Swagger 文档
+- **🚀 极简微内核架构 (Microkernel)**：内核彻底抽离重型组件依赖。没有数据库也能秒级启动提供原生的大模型代理；支持按需挂载插拔式生态库。
+- **🔌 原生 Tool/Plugin 扩展总线**：通过 `PluginRegistry` 无缝装载任何兼容 OpenAI Tool Calling 的函数，内置了基于网络搜索的 `WebSearchTool` 与基于私有库的 `MemorySearchTool`。
+- **🧠 动态图思考机制 (Graph Thinking)**：底层拥抱 `LangGraph`，使用泛型的编排工厂代替了写死的控制流。能自由赋予新 Agent “自主思考、自我反思纠错并决定是否调用外部工具”的思维链能力。
+- **🔑 多租户与多模型分发网关**：内置安全的用户鉴权体系和企业级凭证加密（AES）。基于 `LiteLLM` 的能力，轻松接入和混用 100+ 种全球大模型（OpenAI, Anthropic, Qwen 等）。
+- **💾 PgVector 底层 RAG 与记忆隔离**：使用 PostgreSQL 原生的向量计算功能，为不同租户安全存放短期会话摘要和长期提炼偏好。完整 Swagger 文档
 - **类型安全**：Pydantic 数据验证
 - **流式响应**：SSE 实时对话
 - **用户认证接口**：预留清晰的集成点
@@ -36,26 +34,23 @@
 
 ```
 uniai-kernel/
-├── app/
-│   ├── api/endpoints/      # API 端点
-│   │   ├── chat.py         # 智能对话
-│   │   ├── providers.py    # 供应商管理
-│   │   ├── memories.py     # 记忆管理
-│   │   └── sessions.py     # 会话管理
-│   ├── config/
-│   │   └── provider_templates.py  # 供应商模板配置
-│   ├── core/
-│   │   ├── llm.py          # 多租户 LLM 调用
-│   │   ├── auth.py         # 用户认证接口
-│   │   ├── config.py       # 配置管理
-│   │   └── startup.py      # 启动自动配置
-│   ├── models/             # 数据模型
-│   ├── services/           # 业务服务
-│   └── main.py             # 应用入口
-├── scripts/                # 工具脚本
-│   ├── init_providers.py   # 初始化供应商
-│   └── reset_user.py       # 重置用户配置
-└── tests/                  # 测试脚本
+├── backend/                # 后端核心
+│   ├── app/                # FastAPI 应用
+│   │   ├── api/            # 接口定义
+│   │   ├── core/           # 核心逻辑
+│   │   ├── models/         # 数据库模型
+│   │   ├── services/       # 业务逻辑
+│   │   └── tools/          # 插件工具
+│   ├── alembic/            # 数据库迁移
+│   ├── scripts/            # 工具脚本
+│   ├── tests/              # 测试套件
+│   └── .env                # 后端私有配置
+├── frontend/               # 现代化前端 (Vite + React)
+│   ├── src/                # SPA 源码
+│   └── Dockerfile          # 前端镜像定义
+├── run_backend.py          # 根目录后端启动器
+├── docker-compose.yml      # 全栈容器编排
+└── .env.example            # 环境变量模板
 ```
 
 ---
@@ -91,20 +86,38 @@ DEFAULT_LLM_API_KEY=sk-xxx  # 从 dashscope.aliyuncs.com 获取
 ### 3. 启动服务
 
 ```bash
-# 启动数据库
-docker-compose up -d postgres
+# 启动后端服务 (推荐：在项目根目录运行)
+python3 run_backend.py
 
-# 运行数据库迁移
-uv run alembic upgrade head
+# 或者通过 VS Code 的 "🚀 运行 UniAI Kernel" 调试项启动。
 
-# 初始化供应商模板
-uv run python scripts/init_providers.py
-
-# 启动服务
-uv run uvicorn app.main:app --reload
+# 启动前端开发环境 (可选)
+cd frontend
+npm install && npm run dev
 ```
 
 访问 `http://localhost:8000/docs` 查看 API 文档 ✨
+
+### 4. 接入标准第三方生态应用 (100% 兼容 OpenAI 协议)
+由于从新架构起框架支持完整的 `v1/chat/completions` 请求。您可以利用官方的 Python 客户端甚至 **LobeChat**, **NextChat**, **Dify** 等应用，只要把服务器地址指过来，直接就能唤醒微内核底层的智能体、检索池与各种联网插件！
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/api/v1", 
+    api_key="local_test" # API Key随意，内部网关会自动打通
+)
+
+response = client.chat.completions.create(
+    model="default",
+    messages=[{"role": "user", "content": "帮我查查今天关于黑神话悟空调取的大模型的新闻"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
 
 ---
 

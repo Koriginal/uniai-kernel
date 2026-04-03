@@ -1,0 +1,102 @@
+import logging
+from typing import Dict, Any, Type, Optional, List
+from app.interfaces.memory_store import IMemoryStore
+from app.interfaces.knowledge_base import IKnowledgeBase
+from app.interfaces.action import BaseAction, ActionMetadata
+import os
+import importlib
+import pkgutil
+
+logger = logging.getLogger(__name__)
+
+class PluginRegistry:
+    """
+    UniAI 内核资产注册表 (Kernel Asset Registry)
+    
+    统一管理内存、知识库以及所有外部可执行的 Action (行动资产)。
+    """
+    def __init__(self):
+        # 核心系统服务插件
+        self._memory_store: Optional[IMemoryStore] = None
+        self._knowledge_base: Optional[IKnowledgeBase] = None
+        
+        # 挂载的行动资产 (AIP Actions / Tools)
+        self._actions: Dict[str, BaseAction] = {}
+
+    def register_memory_store(self, store: IMemoryStore):
+        self._memory_store = store
+        logger.info(f"[Registry] MemoryStore registered: {store.__class__.__name__}")
+
+    def get_memory_store(self) -> Optional[IMemoryStore]:
+        return self._memory_store
+
+    def register_knowledge_base(self, kb: IKnowledgeBase):
+        self._knowledge_base = kb
+        logger.info(f"[Registry] KnowledgeBase registered: {kb.__class__.__name__}")
+
+    def get_knowledge_base(self) -> Optional[IKnowledgeBase]:
+        return self._knowledge_base
+
+    def register_action(self, action: BaseAction):
+        """注册一个标准化的行动资产"""
+        name = action.metadata.name
+        self._actions[name] = action
+        logger.info(f"[Registry] Action registered: {name} ({action.metadata.label})")
+
+    def get_action(self, name: str) -> Optional[BaseAction]:
+        return self._actions.get(name)
+
+    def get_all_actions(self) -> List[BaseAction]:
+        """获取所有已注册的行动资产"""
+        return list(self._actions.values())
+
+    def get_all_tools(self) -> List[BaseAction]:
+        """[向下兼容] 返回所有行动资产"""
+        return self.get_all_actions()
+
+    def get_action_catalog(self) -> List[Dict[str, Any]]:
+        """获取资产目录清单 (用于管理后台或前端展示)"""
+        return [
+            {
+                "name": a.metadata.name,
+                "label": a.metadata.label,
+                "description": a.metadata.description,
+                "category": a.metadata.category,
+                "icon": a.metadata.icon,
+                "version": a.metadata.version
+            }
+            for a in self._actions.values()
+        ]
+
+    def load_plugins(self, package_name: str = "app.tools"):
+        """
+        [框架化演进] 自动化扫描并加载指定包下的插件。
+        """
+        try:
+            package = importlib.import_module(package_name)
+            package_path = package.__path__
+            
+            for _, name, is_pkg in pkgutil.iter_modules(package_path):
+                full_module_name = f"{package_name}.{name}"
+                module = importlib.import_module(full_module_name)
+                
+                # 方案 A: 寻找模块内定义的 BaseAction 子类并自动实例化
+                # 方案 B: 寻找模块内的 register(registry) 函数 (推荐，更灵活)
+                if hasattr(module, "register"):
+                    module.register(self)
+                else:
+                    # 备选：寻找所有继承自 BaseAction 的类（非抽象类）
+                    import inspect
+                    for _, obj in inspect.getmembers(module, inspect.isclass):
+                        if issubclass(obj, BaseAction) and obj != BaseAction and not inspect.isabstract(obj):
+                            try:
+                                self.register_action(obj())
+                            except Exception as e:
+                                logger.error(f"[Registry] Failed to auto-register class {obj.__name__}: {e}")
+            
+            logger.info(f"[Registry] ✅ Auto-loaded plugins from {package_name}")
+        except Exception as e:
+            logger.error(f"[Registry] ❌ Failed to load plugins from {package_name}: {e}")
+
+# 全局单例
+registry = PluginRegistry()

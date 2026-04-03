@@ -4,7 +4,7 @@ services:
   # Redis 缓存
   redis:
     image: "redis:7-alpine"
-    container_name: uai-redis
+    container_name: uniai-redis
     ports:
       - "6379:6379"
     volumes:
@@ -14,32 +14,56 @@ services:
   # PostgreSQL + pgvector
   postgres:
     image: "pgvector/pgvector:pg15"
-    container_name: uai-pg
+    container_name: uniai-pg
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-root}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_database_password}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_secret_uniai}
       POSTGRES_DB: ${POSTGRES_DB:-agent_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: always
 
-  # UniAI Kernel API
-  api:
-    build: .
-    container_name: uai-api
+  # UniAI Kernel Backend
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: uniai-backend
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-your_database_password}@postgres:5432/${POSTGRES_DB:-agent_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-local_dev_secret_uniai}@postgres:5432/${POSTGRES_DB:-agent_db}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
-      - .:/app
+      - ./backend:/app
     restart: always
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # UniAI Kernel Frontend (Modern SPA)
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: uniai-frontend
+    ports:
+      - "5173:5173" # 映射到宿主机，支持开发态调试 (生产态可改为 80:80)
+    volumes:
+      - ./frontend:/app
+    environment:
+      - NODE_ENV=development
+    restart: always
+    command: npm run dev -- --host
 
 volumes:
   redis_data:

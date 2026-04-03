@@ -16,13 +16,11 @@
 - **7 Built-in Providers**: DeepSeek, Groq, Zhipu AI, Qwen, OpenAI, Anthropic, Google Gemini
 - **User-level Isolation**: Independent API Keys and configurations for each user
 - **Quick Environment Setup**: One-click start using `.env`
-- **Dynamic Switching**: Seamlessly switch model providers at runtime
-
-### 🧠 Intelligent Memory System
-- **Three-tier Memory Architecture**: Short-term Dialogue → Mid-term Summary → Long-term Profile
-- **Automatic Extraction**: Chain-of-Thought memory extraction
-- **AI Arbitration**: Intelligent deduplication and merging
-- **pgvector Retrieval**: Semantic similarity search
+- **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
+- **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
+- **🧠 Dynamic Graph Thinking Pipeline**: Underpinned by `LangGraph` generic builders. Agents now execute non-linear complex workflows, self-reflection, and autonomous tool calling inherently.
+- **🔑 Multi-Tenant Model Gateway**: Complete with isolated credentials (AES-GCM encryption). Switch between 100+ global models using `LiteLLM`.
+- **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
 
 ### 🚀 Developer Friendly
 - **Clear APIs**: RESTful design, complete Swagger documentation
@@ -30,32 +28,34 @@
 - **Streaming Responses**: SSE real-time chat
 - **User Authentication Interface**: Pre-reserved clear integration points
 
+### 🎨 Modern Frontend
+- **React + Vite**: High-performance SPA architecture
+- **Responsive Design**: Mobile-friendly chat interface
+- **Real-time Interaction**: Seamless integration with backend SSE streams
+
 ---
 
 ## 📂 Project Structure
 
 ```text
 uniai-kernel/
-├── app/
-│   ├── api/endpoints/      # API Endpoints
-│   │   ├── chat.py         # Intelligent Chat
-│   │   ├── providers.py    # Provider Management
-│   │   ├── memories.py     # Memory Management
-│   │   └── sessions.py     # Session Management
-│   ├── config/
-│   │   └── provider_templates.py  # Provider Template Configuration
-│   ├── core/
-│   │   ├── llm.py          # Multi-tenant LLM Invocation
-│   │   ├── auth.py         # User Authentication Interface
-│   │   ├── config.py       # Configuration Management
-│   │   └── startup.py      # Startup Auto-configuration
-│   ├── models/             # Data Models
-│   ├── services/           # Business Services
-│   └── main.py             # Application Entry
-├── scripts/                # Utility Scripts
-│   ├── init_providers.py   # Initialize Providers
-│   └── reset_user.py       # Reset User Configuration
-└── tests/                  # Test Scripts
+├── backend/                # Backend Core
+│   ├── app/                # FastAPI Application
+│   │   ├── api/            # Endpoints
+│   │   ├── core/           # Logic, Config, Auth
+│   │   ├── models/         # SQLAlchemy Models
+│   │   ├── services/       # Business Logic
+│   │   └── tools/          # Pluggable Tools
+│   ├── alembic/            # Database Migrations
+│   ├── scripts/            # Utility Scripts
+│   ├── tests/              # Test Suite
+│   └── .env                # Backend Configuration
+├── frontend/               # Modern Frontend (Vite + React)
+│   ├── src/                # SPA Source Code
+│   └── Dockerfile          # Frontend Build Definition
+├── run_backend.py          # Root-level Backend Launcher
+├── docker-compose.yml      # Fullstack Orchestration
+└── .env.example            # Environment Template
 ```
 
 ---
@@ -91,20 +91,38 @@ DEFAULT_LLM_API_KEY=sk-xxx  # Obtain from dashscope.aliyuncs.com
 ### 3. Start Service
 
 ```bash
-# Start Database
-docker-compose up -d postgres
+# Start Backend Service (Root Level)
+python3 run_backend.py
 
-# Run Database Migrations
-uv run alembic upgrade head
+# Or start via VS Code Debugger (Recommended) using the "🚀 运行 UniAI Kernel" launch config.
 
-# Initialize Provider Templates
-uv run python scripts/init_providers.py
-
-# Start Service
-uv run uvicorn app.main:app --reload
+# Start Frontend Development (Optional)
+cd frontend
+npm install && npm run dev
 ```
 
 Visit `http://localhost:8000/docs` to view the API documentation ✨
+
+### 4. 100% OpenAI Compatible Adapter (For Third-Party Ecosystems)
+Because the new architecture natively exposes `v1/chat/completions`, you can drop this framework into Langchain, AutoGen, or UI clients like Chatbot UI seamlessly using standard clients:
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/api/v1", 
+    api_key="sk-local"  # Will be mapped automatically by our gateway
+)
+
+response = client.chat.completions.create(
+    model="default",
+    messages=[{"role": "user", "content": "Can you check for the latest news on OpenAI?"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
 
 ---
 

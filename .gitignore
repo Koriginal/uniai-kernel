@@ -41,8 +41,9 @@ nohup.out
 *.db
 *.sqlite3
 
-# Docker volumes
+# Docker volumes 与本地配置
 volumes/
+docker-compose.override.yml
 
 # macOS
 .DS_Store
@@ -56,3 +57,5 @@ resources/*
 
 # Alembic
 alembic/versions/*.pyc
+# 脚本
+run_frontend.py

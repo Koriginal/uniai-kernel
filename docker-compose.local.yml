@@ -1,0 +1,49 @@
+version: '3.8'
+
+# ==========================================
+# 本地开发基础设施专用配置 (docker-compose.local.yml)
+# ==========================================
+# 仅包含数据库与缓存，不包含代码服务。
+# 配合本地原生运行的 Python 代码使用。
+
+services:
+  # Redis 缓存
+  redis:
+    image: "redis:7-alpine"
+    container_name: uniai-local-redis
+    ports:
+      - "6380:6379" # 映射至 6380 以防 6379 与本地 Redis 冲突
+    volumes:
+      - uniai_local_redis_data:/data
+    restart: always
+
+  # PostgreSQL + pgvector
+  postgres:
+    image: "pgvector/pgvector:pg15"
+    container_name: uniai-local-pg
+    ports:
+      - "5433:5432" # 本地 5433 映射容器 5432，对齐 .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_secret_uniai}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_db}
+    volumes:
+      - uniai_local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  # 数据库管理工具
+  adminer:
+    image: adminer
+    container_name: uniai-local-adminer
+    restart: always
+    ports:
+      - 8082:8080
+
+volumes:
+  uniai_local_redis_data:
+  uniai_local_postgres_data:
