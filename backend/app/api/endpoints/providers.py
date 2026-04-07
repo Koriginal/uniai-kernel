@@ -134,7 +134,7 @@ async def create_my_provider(
 
 @router.get("/my/providers", summary="我的供应商列表")
 async def list_my_providers(
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """查看我配置的所有供应商（含模型列表）"""
@@ -173,7 +173,7 @@ async def list_my_providers(
 @router.delete("/my/providers/{provider_id}", summary="删除供应商")
 async def delete_my_provider(
     provider_id: int,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """删除用户的供应商配置（级联删除其下所有模型）"""
@@ -191,7 +191,7 @@ async def delete_my_provider(
 @router.post("/my/providers/{provider_id}/sync", summary="同步/更新模型列表")
 async def sync_my_provider(
     provider_id: int,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -259,7 +259,7 @@ async def sync_my_provider(
 async def add_model(
     provider_id: int,
     model: ModelCreate,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """在供应商下添加一个模型配置"""
@@ -295,7 +295,7 @@ async def add_model(
 @router.get("/my/providers/{provider_id}/models", summary="列出模型")
 async def list_models(
     provider_id: int,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """列出供应商下的所有模型"""
@@ -317,7 +317,7 @@ async def list_models(
 async def delete_model(
     provider_id: int,
     model_id: int,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """删除供应商下的某个模型"""
@@ -339,7 +339,7 @@ async def delete_model(
 @router.put("/my/default-models", summary="设置默认模型")
 async def set_default_model(
     config: DefaultModelSet,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     result = await user_provider_manager.set_default_model(
@@ -349,7 +349,7 @@ async def set_default_model(
 
 @router.get("/my/default-models", summary="查看默认模型")
 async def get_my_default_models(
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(

@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.post("/init", summary="初始化新用户")
 async def initialize_user(
-    user_id: str = "default_user",
+    user_id: str = "admin",
     db: AsyncSession = Depends(get_db)
 ):
     """

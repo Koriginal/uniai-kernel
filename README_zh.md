@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**企业级 AI 开发框架** - 基于 FastAPI、LangGraph 和 LiteLLM 构建，支持多租户模型管理、智能记忆系统和流式对话。
+**企业级 Agentic OS 内核** - 基于 FastAPI 和 LangGraph 构建的高性能多租户 AI 编排引擎。内置先进的 Swarm 智能协作体系、实时 Artifacts 交互看板以及生产级可观测性监控。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
@@ -12,18 +12,29 @@
 
 ## ✨ 核心特性
 
-### 🔌 多租户模型管理
-- **7个内置供应商**：DeepSeek、Groq、智谱AI、通义千问、OpenAI、Anthropic、Google Gemini
-- **用户级隔离**：每个用户独立的 API Key 和配置
-- **环境变量快速配置**：`.env` 一键启动
-- **动态切换**：运行时无缝切换模型供应商
+### 🧠 Swarm 多智能体协作
+- **动态接力 (Handoff)**：根据任务意图自动在不同领域的专家智能体（如代码专家、SQL 专家、搜索专家）之间无缝切换。
+- **状态感知上下文**：全集群共享短期对话记忆与长期用户偏好，确保专家协作的连贯性。
+- **协议注入自愈**：强制执行协作协议，确保专家输出质量与可视化看板的精确同步。
 
-### 🧠 智能记忆系统
-- **🚀 极简微内核架构 (Microkernel)**：内核彻底抽离重型组件依赖。没有数据库也能秒级启动提供原生的大模型代理；支持按需挂载插拔式生态库。
-- **🔌 原生 Tool/Plugin 扩展总线**：通过 `PluginRegistry` 无缝装载任何兼容 OpenAI Tool Calling 的函数，内置了基于网络搜索的 `WebSearchTool` 与基于私有库的 `MemorySearchTool`。
-- **🧠 动态图思考机制 (Graph Thinking)**：底层拥抱 `LangGraph`，使用泛型的编排工厂代替了写死的控制流。能自由赋予新 Agent “自主思考、自我反思纠错并决定是否调用外部工具”的思维链能力。
-- **🔑 多租户与多模型分发网关**：内置安全的用户鉴权体系和企业级凭证加密（AES）。基于 `LiteLLM` 的能力，轻松接入和混用 100+ 种全球大模型（OpenAI, Anthropic, Qwen 等）。
-- **💾 PgVector 底层 RAG 与记忆隔离**：使用 PostgreSQL 原生的向量计算功能，为不同租户安全存放短期会话摘要和长期提炼偏好。完整 Swagger 文档
+### 🎨 Artifacts 交互式看板
+- **实时流式渲染**：在独立侧边栏实时预览代码、HTML、React 组件及 Markdown，不干扰对话流。
+- **专家一键发布**：专家在思考的同时可直接“推送”结果至看板，实现思维与结果的分离展示。
+- **状态持久化**：看板内容随会话自动保存，支持历史记录回溯与预览。
+
+### 📊 生产级可观测性 (Observability)
+- **全链路追踪**：详细记录每一次 Agent 思考、工具调用及任务接力的元数据。
+- **成本与用量监控**：实时计算 Token 消耗并根据模型单价预估单次请求成本 (USD)。
+- **分析仪表盘**：内置 API 支持 QPS、响应耗时、成功率等维度的统计分析。
+
+### 🔑 多租户模型网关
+- **企业级安全**：所有模型凭证均通过 AES-GCM 高强度加密存储。
+- **动态分发**：基于 LiteLLM 轻松接入 100+ 全球主流模型（OpenAI, Anthropic, DeepSeek, 智谱等）。
+- **极简微内核**：支持无数据库纯代理模式秒级启动，重型依赖按需挂载。
+
+### 🔌 扩展与存储
+- **原生 Tool/Plugin 扩展总线**：通过 `PluginRegistry` 无缝装载任何兼容 OpenAI Tool Calling 的函数，内置了基于网络搜索的 `WebSearchTool` 与基于私有库的 `MemorySearchTool`。
+- **💾 PgVector 底层 RAG 与记忆隔离**：使用 PostgreSQL 原生的向量计算功能，为不同租户安全存放短期会话摘要和长期提炼偏好。
 - **类型安全**：Pydantic 数据验证
 - **流式响应**：SSE 实时对话
 - **用户认证接口**：预留清晰的集成点
@@ -96,27 +107,13 @@ cd frontend
 npm install && npm run dev
 ```
 
-访问 `http://localhost:8000/docs` 查看 API 文档 ✨
+访问 `http://localhost:5173` 体验现代化图形界面，或访问 `http://localhost:8000/docs` 查看交互式 API 文档 ✨
 
-### 4. 接入标准第三方生态应用 (100% 兼容 OpenAI 协议)
-由于从新架构起框架支持完整的 `v1/chat/completions` 请求。您可以利用官方的 Python 客户端甚至 **LobeChat**, **NextChat**, **Dify** 等应用，只要把服务器地址指过来，直接就能唤醒微内核底层的智能体、检索池与各种联网插件！
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8000/api/v1", 
-    api_key="local_test" # API Key随意，内部网关会自动打通
-)
-
-response = client.chat.completions.create(
-    model="default",
-    messages=[{"role": "user", "content": "帮我查查今天关于黑神话悟空调取的大模型的新闻"}],
-    stream=True
-)
-
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
-```
+### 4. 生产级可观测性监控
+通过内置接口实时追踪系统运行状态：
+- **使用统计分析**：`GET /api/v1/audit/stats?days=7`
+- **全链路行动日志**：`GET /api/v1/audit/actions`
+- **成本详情**：每条审计日志均包含详细的 Token 消耗及美元成本预估。
 
 
 ---

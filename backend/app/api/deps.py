@@ -1,0 +1,91 @@
+from typing import Generator, Optional
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.core.config import settings
+from app.core.db import get_db
+from app.models.user import User, UserApiKey
+from app.services.user_service import user_service
+
+# OAuth2 方案，用于 Dashboard 登录
+reusable_oauth2 = OAuth2PasswordBearer(
+    tokenUrl=f"/api/v1/auth/login"
+)
+
+async def get_current_user(
+    db: AsyncSession = Depends(get_db),
+    token: str = Depends(reusable_oauth2),
+    request: Request = None
+) -> User:
+    """
+    Dashboard 专用的 JWT 鉴权依赖项
+    """
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+            )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+    
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return user
+
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+async def get_current_admin(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="The user doesn't have enough privileges"
+        )
+    return current_user
+
+async def get_identity(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> str:
+    """
+    通用身份识别（混合模式）：优先检查 Authorization Bearer，其次检查 X-API-Key，最后回退。
+    用于 /chat/completions 等双向接口。
+    """
+    # 1. 检查 JWT (Bearer)
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            return payload.get("sub")
+        except JWTError:
+            pass # 继续尝试 API Key
+
+    # 2. 检查 API Key
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        user = await user_service.get_user_by_api_key(db, api_key)
+        if user:
+            return user.id
+
+    # 3. 回退默认 (为了保持现有演示功能不中断)
+    return "admin"

@@ -26,7 +26,7 @@ class VectorService:
             logger.error(f"Vector service health check failed: {e}")
             return False
 
-    async def embed_text(self, text: Union[str, List[str]], model: str = None, user_id: str = "default_user") -> List[List[float]]:
+    async def embed_text(self, text: Union[str, List[str]], model: str = None, user_id: str = "admin") -> List[List[float]]:
         """
         将字符串或字符串列表嵌入为向量（多租户版本）。
         

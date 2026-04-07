@@ -15,10 +15,12 @@ router = APIRouter()
 class SessionCreate(BaseModel):
     title: Optional[str] = "New Chat"
     opening_remarks: Optional[str] = None
+    active_agent_id: Optional[str] = None
     
 class SessionUpdate(BaseModel):
     title: Optional[str] = None
     opening_remarks: Optional[str] = None
+    active_agent_id: Optional[str] = None
 
 class SessionResponse(BaseModel):
     id: str
@@ -46,7 +48,8 @@ async def create_session(session_in: SessionCreate, db: AsyncSession = Depends(g
     """新建会话。"""
     new_session = ChatSession(
         title=session_in.title,
-        opening_remarks=session_in.opening_remarks
+        opening_remarks=session_in.opening_remarks,
+        active_agent_id=session_in.active_agent_id
     )
     db.add(new_session)
     await db.commit()
@@ -146,7 +149,8 @@ async def get_session_messages(session_id: str, db: AsyncSession = Depends(get_d
             "role": m.role,
             "content": m.content,
             "timestamp": int(m.created_at.timestamp() * 1000) if m.created_at else 0,
-            "agent_id": m.agent_id
+            "agent_id": m.agent_id,
+            "tool_calls": m.tool_calls or []
         }
         for m in messages
     ]

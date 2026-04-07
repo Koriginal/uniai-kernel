@@ -1,5 +1,5 @@
 import sys, os; sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-"""完全重置 default_user（解决加密密钥问题）"""
+"""完全重置 admin（解决加密密钥问题）"""
 import asyncio
 from app.core.db import SessionLocal
 from app.core.config import settings
@@ -9,7 +9,7 @@ from sqlalchemy import select, delete
 async def reset_and_reinit():
     """完全清空并重新初始化"""
     async with SessionLocal() as session:
-        user_id = "default_user"
+        user_id = "admin"
         
         # 1. 完全删除旧数据
         await session.execute(delete(UserModelConfig).where(UserModelConfig.user_id == user_id))

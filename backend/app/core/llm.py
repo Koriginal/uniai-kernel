@@ -150,7 +150,7 @@ async def get_provider_config(
 async def completion(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
-    user_id: str = "default_user",
+    user_id: str = "admin",
     **kwargs
 ) -> Any:
     """
@@ -236,7 +236,7 @@ async def completion(
 async def embedding(
     input: Union[str, List[str]],
     model: Optional[str] = None,
-    user_id: str = "default_user"
+    user_id: str = "admin"
 ) -> Dict[str, Any]:
     """
     向量嵌入（多租户版本）。

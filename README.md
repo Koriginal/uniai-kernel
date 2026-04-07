@@ -2,11 +2,33 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Enterprise-level AI Development Framework** - Built with FastAPI, LangGraph, and LiteLLM, supporting multi-tenant model management, intelligent memory systems, and streaming chat.
+**Enterprise-grade Agentic OS Kernel** - A high-performance, multi-tenant AI orchestration engine built with FastAPI and LangGraph. It features a sophisticated Swarm intelligence system, real-time Artifacts visualization, and production-ready observability.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+---
+
+## 🧩 System Architecture
+
+```mermaid
+graph TD
+    User((User/Client)) --> Gateway[API Gateway / Auth]
+    Gateway --> Orchestrator[Orchestrator Agent]
+    Orchestrator --> State[LangGraph State Machine]
+    State --> Experts{Expert Swarm}
+    Experts --> ExpertA[Coder/Expert]
+    Experts --> ExpertB[Researcher]
+    ExpertA --> Tools[Tool Registry]
+    ExpertB --> Tools
+    Tools --> Web[Web Search]
+    Tools --> Canvas[Artifact Canvas]
+    Tools --> DB[(PgVector/Memory)]
+    
+    Orchestrator -.-> Audit[Audit & Observability]
+    Audit --> Monitor[Usage Stats / Cost Tracking]
+```
 
 ---
 
@@ -18,7 +40,8 @@
 - **Quick Environment Setup**: One-click start using `.env`
 - **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
 - **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
-- **🧠 Dynamic Graph Thinking Pipeline**: Underpinned by `LangGraph` generic builders. Agents now execute non-linear complex workflows, self-reflection, and autonomous tool calling inherently.
+- **🧠 Swarm Multi-Agent Collaboration**: Orchestrate expert agents to solve complex tasks. Supports dynamic handoffs, role-specific prompts, and state-aware transitions.
+- **🎨 Artifacts Visual Canvas**: Dedicated side panel for rendering code, HTML, and rich data. Experts can "upsert" to the canvas while chatting.
 - **🔑 Multi-Tenant Model Gateway**: Complete with isolated credentials (AES-GCM encryption). Switch between 100+ global models using `LiteLLM`.
 - **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
 
@@ -101,27 +124,13 @@ cd frontend
 npm install && npm run dev
 ```
 
-Visit `http://localhost:8000/docs` to view the API documentation ✨
+Visit `http://localhost:5173` to explore the modern UI or `http://localhost:8000/docs` to view the interactive API documentation ✨
 
-### 4. 100% OpenAI Compatible Adapter (For Third-Party Ecosystems)
-Because the new architecture natively exposes `v1/chat/completions`, you can drop this framework into Langchain, AutoGen, or UI clients like Chatbot UI seamlessly using standard clients:
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://127.0.0.1:8000/api/v1", 
-    api_key="sk-local"  # Will be mapped automatically by our gateway
-)
-
-response = client.chat.completions.create(
-    model="default",
-    messages=[{"role": "user", "content": "Can you check for the latest news on OpenAI?"}],
-    stream=True
-)
-
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
-```
+### 4. Enterprise-grade Observability
+Access the monitoring endpoints to track performance:
+- **Usage Stats**: `GET /api/v1/audit/stats?days=7`
+- **Full Trace Logs**: `GET /api/v1/audit/actions`
+- **Cost Analysis**: Included in every audit log entry.
 
 
 ---

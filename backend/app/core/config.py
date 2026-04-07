@@ -49,8 +49,13 @@ class Settings(BaseSettings):
     DASHBOARD_PASSWORD: str = "uniai-admin-2026" # 控制台访问令牌
     ENCRYPTION_KEY: Optional[str] = None  # API Key 加密密钥 (需在 .env 中设置)
     
+    # --- JWT 鉴权配置 ---
+    SECRET_KEY: str = "uniai-secret-2026-fallback" # 生产环境务必在 .env 中设置
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 默认 7 天
+    
     # --- 自动初始化配置 (仅用于开发/演示环境快速启动) ---
-    DEFAULT_USER_ID: str = "default_user"
+    DEFAULT_USER_ID: str = "admin"
     DEFAULT_USER_API_KEY: str = "123456"
     
     # --- LLM 配置 (LiteLLM) ---

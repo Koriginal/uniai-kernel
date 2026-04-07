@@ -19,15 +19,20 @@ async def lifespan(app: FastAPI):
     # 启动加载流水线
     logger.info("UniAI Kernel 启动加载流水线...")
     
-    # 1. 自动化加载内核扩展 (Plugins/Tools Discovery)
     from app.core.plugins import registry
     registry.load_plugins("app.tools")
     
+    # 2. 自动配置与动态数据加载
+    from app.core.startup import auto_configure_admin
+    from app.core.db import SessionLocal
+    
+    await auto_configure_admin()
+    
+    # 加载数据库中的动态工具
+    async with SessionLocal() as session:
+        await registry.load_dynamic_tools(session)
+    
     logger.info(f"已加载内核扩展能力：{[t.metadata.name for t in registry.get_all_actions()]}")
-
-    # 2. 自动配置默认租户体系
-    from app.core.startup import auto_configure_default_user
-    await auto_configure_default_user()
     
     yield
     logger.info("UniAI Kernel 正在安全关闭...")

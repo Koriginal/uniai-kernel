@@ -48,18 +48,16 @@ class SwarmService:
         if session_id:
             session = await db.get(ChatSession, session_id)
             if session:
-                session.active_agent_id = target_agent_id
-                db.add(session)
-                await db.commit()
-                logger.info(f"[Swarm] Handoff SUCCESS: session {session_id} -> {target_agent_id}")
+                logger.info(f"[Swarm] Handoff SUCCESS: session {session_id} -> {target_agent_id} (Memory only, preserving session owner)")
         else:
             logger.warning(f"[Swarm] Handoff partial: No session_id provided, performing in-memory switch.")
             
         return target_profile
 
-    async def get_all_experts_prompt(self, db: AsyncSession, user_id: str, current_agent_id: str) -> str:
+    async def get_expert_directory(self, db: AsyncSession, user_id: str, current_agent_id: str) -> str:
         """
         获取所有可用的专家 Agent 列表，用于注入 System Prompt。
+        作为多智能体协作的核心索引，不再包含看板或 UI 交互逻辑。
         """
         from sqlalchemy import or_
         stmt = select(AgentProfile).where(
@@ -70,14 +68,18 @@ class SwarmService:
         result = await db.execute(stmt)
         profiles = result.scalars().all()
         
-        if not profiles:
-            return ""
+        prompt = "### 🤝 专家协作名录 (EXPERT_DIRECTORY)\n"
+        prompt += "当且仅当用户请求涉及以下专业领域且你无法独自高质量回复时，方可调用 `transfer_to_agent`：\n"
+        
+        if profiles:
+            for p in profiles:
+                prompt += f"- Expert_ID: `{p.id}`, 名称: **{p.name}**, 职责: {p.description or '专业领域协助'}\n"
+            prompt += "\n**协作准则 (CRITICAL RULES)**：\n"
+            prompt += "1. 你是对话的唯一主体。专家仅为你提供推演内容。你必须审阅并在协作气泡结束后给出最终 MD 格式回复。\n"
+            prompt += "2. **严控 ID 匹配**：仅允许使用上方列表中的 Expert_ID 字符串。**严禁** 将 UI 文本、专家名称（如 'Swarm 专家协同建议'）作为移交目标。\n"
+        else:
+            prompt += "\n目前暂无其他在线专家。请根据自身知识库独立回复。"
             
-        prompt = "\n\n### 🛡️ 核心管理指令：协作调度 (ADMIN_COLLABORATION_FORCE)\n"
-        prompt += "你当前拥有最高层级的 [协作调度权]。当任务涉及以下专业场景时，你必须保持沉默并直接调用 `transfer_to_agent`，严禁尝试自己回答：\n"
-        for p in profiles:
-            prompt += f"- ID: `{p.id}`, 名称: **{p.name}**, 职责范围: {p.description or '该专家负责处理其专业领域的深度问题'}\n"
-        prompt += "\n**操作规范**：不要尝试展示你的能力，直接触发移交。若你返回文本而非工具调用，将被视为一次严重的系统故障。"
         return prompt
 
     def get_handoff_tool_definition(self) -> Dict[str, Any]:

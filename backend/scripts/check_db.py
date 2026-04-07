@@ -9,7 +9,7 @@ async def check_db():
     async with SessionLocal() as session:
         # 检查 UserProvider
         result = await session.execute(
-            select(UserProvider).where(UserProvider.user_id == "default_user")
+            select(UserProvider).where(UserProvider.user_id == "admin")
         )
         providers = result.scalars().all()
         
@@ -25,7 +25,7 @@ async def check_db():
         
         # 检查 UserModelConfig
         result = await session.execute(
-            select(UserModelConfig).where(UserModelConfig.user_id == "default_user")
+            select(UserModelConfig).where(UserModelConfig.user_id == "admin")
         )
         configs = result.scalars().all()
         

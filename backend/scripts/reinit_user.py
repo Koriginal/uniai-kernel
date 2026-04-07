@@ -1,5 +1,5 @@
 import sys, os; sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-"""重新初始化 default_user（从环境变量）"""
+"""重新初始化 admin（从环境变量）"""
 import asyncio
 from app.core.db import SessionLocal
 from app.core.config import settings
@@ -7,10 +7,10 @@ from app.models.provider import ProviderTemplate, UserProvider, UserModelConfig
 from app.services.user_provider_manager import user_provider_manager
 from sqlalchemy import select, delete
 
-async def reinit_default_user():
+async def reinit_admin():
     """删除旧配置，从环境变量重新初始化"""
     async with SessionLocal() as session:
-        user_id = "default_user"
+        user_id = "admin"
         
         # 1. 删除旧配置
         await session.execute(delete(UserModelConfig).where(UserModelConfig.user_id == user_id))
@@ -58,4 +58,4 @@ async def reinit_default_user():
         print(f"[Reinit] ✅ 成功配置 {settings.DEFAULT_LLM_PROVIDER} / {model_name}")
 
 if __name__ == "__main__":
-    asyncio.run(reinit_default_user())
+    asyncio.run(reinit_admin())

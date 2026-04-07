@@ -32,6 +32,13 @@ class ChatCompletionRequest(BaseModel):
     presence_penalty: Optional[float] = 0.0
     frequency_penalty: Optional[float] = 0.0
     user: Optional[str] = None
+    
+    # UniAI 扩展字段
+    session_id: Optional[str] = None
+    enable_memory: bool = False
+    enable_swarm: bool = True
+    enable_canvas: bool = True
+    skip_save_user: bool = False
 
 # --- Responses (Non-Streaming) ---
 

@@ -9,7 +9,12 @@ from app.api.endpoints import (
     embeddings,
     audit,
     registry,
-    llm
+    llm,
+    api_keys,
+    dynamic_tools,
+    auth,
+    users,
+    messages as messages_ep
 )
 
 api_router = APIRouter()
@@ -26,10 +31,15 @@ mgmt_router = APIRouter(prefix="/api/v1")
 mgmt_router.include_router(agents.router, prefix="/agents", tags=["Agent Profiles"])
 mgmt_router.include_router(providers.router, prefix="/providers", tags=["Provider Management"])
 mgmt_router.include_router(sessions.router, prefix="/chat-sessions", tags=["Session Tracking"])
+mgmt_router.include_router(messages_ep.router, prefix="/messages", tags=["Message Management"])
 mgmt_router.include_router(memories.router, prefix="/memories", tags=["Memory & RAG"])
 mgmt_router.include_router(audit.router, prefix="/audit", tags=["Audit Traceability"])
 mgmt_router.include_router(registry.router, prefix="/registry", tags=["Asset Inventory"])
-mgmt_router.include_router(user_init.router, prefix="/users", tags=["User Lifecycle"])
+mgmt_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+mgmt_router.include_router(users.router, prefix="/users", tags=["User Management"])
+mgmt_router.include_router(user_init.router, prefix="/user-init", tags=["User Lifecycle"])
 mgmt_router.include_router(llm.router, prefix="/llm", tags=["LLM Raw Access"])
+mgmt_router.include_router(api_keys.router, prefix="/user/api-keys", tags=["API Keys"])
+mgmt_router.include_router(dynamic_tools.router, prefix="/dynamic-tools", tags=["Dynamic Tools"])
 
 api_router.include_router(mgmt_router)

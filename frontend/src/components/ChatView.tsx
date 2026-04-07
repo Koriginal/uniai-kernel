@@ -1,27 +1,32 @@
-import React, { useRef, useEffect } from 'react';
-import { Typography, Avatar, Input, Tag, Empty, Space, Divider, Button, Collapse } from 'antd';
-import {
-  SendOutlined, RobotOutlined, UserOutlined,
-  HistoryOutlined, PartitionOutlined, PlusOutlined,
-  SyncOutlined, CaretRightOutlined
+import React, { useRef, useEffect, useState } from 'react';
+import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip } from 'antd';
+import { 
+  AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
+  UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
+  DislikeOutlined, StopOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined 
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneLight, oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const { Text } = Typography;
 
-interface Message {
+export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string | any[];
   timestamp: number;
   agentName?: string;
   images?: string[]; 
+  feedback?: 'like' | 'dislike' | 'null';
+  tool_calls?: { id: string; function: { name: string; arguments: string; }; }[];
 }
 
-interface Agent {
+export interface Agent {
   id: string;
   name: string;
   description: string;
@@ -43,458 +48,333 @@ interface ChatViewProps {
   enableSwarm: boolean;
   setEnableSwarm: (v: boolean) => void;
   onSend: () => void;
+  onStop?: () => void;
+  onDeleteMessage?: (id: string) => void;
+  onEditMessage?: (id: string, content: string) => void;
+  onFeedbackMessage?: (id: string, feedback: 'like' | 'dislike' | 'null') => void;
+  onRegenerate?: () => void;
   pendingImages: string[];
   setPendingImages: (v: string[] | ((prev: string[]) => string[])) => void;
+  onOpenCanvas?: (title: string, content: string, type: 'markdown' | 'code', language?: string, msgId?: string) => void;
+  enableAutoCanvas?: boolean;
+  setEnableAutoCanvas?: (v: boolean) => void;
+  collaborationStatus?: { agentName?: string, content?: string, state: 'active' | 'completed' | null };
 }
 
-const MessageContent: React.FC<{ content: string | any[]; role: string }> = ({ content, role }) => {
-  const isDark = false;
-
-  const processContent = (raw: string | any[]) => {
-    if (Array.isArray(raw)) {
-      return raw.map(item => item.type === 'text' ? item.text : '').join('\n');
-    }
-    return raw;
-  };
-
-  const parts: { type: 'text' | 'thought' | 'collaboration' | 'tool', content: string }[] = [];
-  const textContent = processContent(content);
-  let remaining = textContent;
-
-  const thoughtRegex = /<thought>([\s\S]*?)<\/thought>/g;
-  const collabRegex = /<collaboration>([\s\S]*?)<\/collaboration>/g;
-  
-  // 混合解析逻辑
-  let allMatches: { index: number, length: number, type: 'thought' | 'collaboration', content: string }[] = [];
-  
-  let match;
-  while ((match = thoughtRegex.exec(remaining)) !== null) {
-    allMatches.push({ index: match.index, length: match[0].length, type: 'thought', content: match[1] });
-  }
-  collabRegex.lastIndex = 0;
-  while ((match = collabRegex.exec(remaining)) !== null) {
-    allMatches.push({ index: match.index, length: match[0].length, type: 'collaboration', content: match[1] });
-  }
-  
-  allMatches.sort((a, b) => a.index - b.index);
-
-  let lastIndex = 0;
-  allMatches.forEach(m => {
-    if (m.index > lastIndex) {
-      parts.push({ type: 'text', content: remaining.slice(lastIndex, m.index) });
-    }
-    // 增加逻辑：判断标签是否闭合
-    const rawTag = remaining.slice(m.index, m.index + m.length);
-    const isClosed = rawTag.includes('</thought>') || rawTag.includes('</collaboration>');
-    
-    parts.push({ type: m.type, content: m.content, isClosed } as any);
-    lastIndex = m.index + m.length;
-  });
-
-  if (lastIndex < remaining.length) {
-    remaining = remaining.slice(lastIndex);
-    // 处理可能存在的未闭合尾部
-    if (remaining.includes('<thought>')) {
-        const idx = remaining.indexOf('<thought>');
-        if (idx > 0) parts.push({ type: 'text', content: remaining.slice(0, idx) });
-        parts.push({ type: 'thought', content: remaining.slice(idx + 9), isClosed: false } as any);
-        remaining = "";
-    } else if (remaining.includes('<collaboration>')) {
-        const idx = remaining.indexOf('<collaboration>');
-        if (idx > 0) parts.push({ type: 'text', content: remaining.slice(0, idx) });
-        parts.push({ type: 'collaboration', content: remaining.slice(idx + 15), isClosed: false } as any);
-        remaining = "";
-    }
-  }
-
-  if (parts.length === 0 && remaining) {
-    const lines = remaining.split('\n');
-    let currentText = "";
-    lines.forEach(line => {
-      if (line.trim().startsWith('⚡')) {
-        if (currentText) parts.push({ type: 'text', content: currentText });
-        parts.push({ type: 'tool', content: line.trim().replace(/^⚡\s*/, '') });
-        currentText = "";
-      } else {
-        currentText += line + '\n';
-      }
-    });
-    if (currentText) parts.push({ type: 'text', content: currentText });
-  } else if (remaining) {
-    parts.push({ type: 'text', content: remaining });
-  }
-
+const CodeBlock = ({ language, children, onOpenCanvas }: { language: string, children: string, onOpenCanvas?: any }) => {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => { navigator.clipboard.writeText(children).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
   return (
-    <div className="message-markdown-content" style={{ fontSize: '14px', lineHeight: '1.6' }}>
-      {parts.map((p: any, i) => {
-        if (p.type === 'thought') {
-          return (
-            <Collapse
-              key={i}
-              ghost
-              defaultActiveKey={p.isClosed ? [] : ['1']}
-              style={{ marginBottom: 12, border: '1px solid #e8e8e8', borderRadius: 8, background: '#fafafa' }}
-              expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
-              items={[{
-                key: '1',
-                label: <Text type="secondary" style={{ fontSize: '12px' }}><RobotOutlined style={{ marginRight: 6 }} />内核深度思考记录 {!p.isClosed && <SyncOutlined spin style={{ marginLeft: 8 }} />}</Text>,
-                children: <div style={{ fontSize: '13px', color: '#666', borderLeft: '2px solid #ddd', paddingLeft: 12 }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.content}</ReactMarkdown>
-                </div>
-              }]}
-            />
-          );
-        }
-        if (p.type === 'collaboration') {
-          if (!p.isClosed) {
-            return (
-                <div key={i} style={{ 
-                    marginBottom: 16, 
-                    padding: '12px 16px', 
-                    background: '#e6f7ff', 
-                    border: '1px solid #91d5ff', 
-                    borderRadius: '8px',
-                    borderLeft: '4px solid #1890ff',
-                    animation: 'fadeIn 0.3s ease-out'
-                }}>
-                    <Space style={{ marginBottom: 8 }}>
-                        <SyncOutlined spin style={{ color: '#1890ff' }} />
-                        <Text strong style={{ color: '#0050b3' }}>Swarm 专家正在输出中...</Text>
-                    </Space>
-                    <div style={{ color: '#003a8c', fontSize: '14px' }}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.content}</ReactMarkdown>
-                    </div>
-                </div>
-            );
-          }
-          return (
-            <Collapse
-              key={i}
-              ghost
-              style={{ 
-                  marginBottom: 16, 
-                  border: '1px solid #d9f7be', 
-                  borderRadius: '12px', 
-                  background: 'linear-gradient(to right, #f6ffed, #ffffff)',
-                  overflow: 'hidden'
-              }}
-              expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} style={{ color: '#389e0d' }} />}
-              items={[{
-                key: '1',
-                label: (
-                    <Space>
-                        <PartitionOutlined style={{ color: '#52c41a' }} />
-                        <Text strong style={{ fontSize: '13px', color: '#135200' }}>Swarm 专家协同建议 (已完成)</Text>
-                    </Space>
-                ),
-                children: <div style={{ fontSize: '14px', color: '#237804', paddingBottom: 4 }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.content}</ReactMarkdown>
-                </div>
-              }]}
-            />
-          );
-        }
-        if (p.type === 'tool') {
-          return (
-            <Tag 
-                key={i} 
-                color="blue" 
-                style={{ 
-                    marginBottom: 12, 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
-                    padding: '4px 10px',
-                    borderRadius: '4px'
-                }}
-            >
-              <PartitionOutlined style={{ marginRight: 6 }} /> 
-              {p.content}
-            </Tag>
-          );
-        }
-        return (
-          <ReactMarkdown
-            key={i}
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ node, inline, className, children, ...props }: any) {
-                const match = /language-(\w+)/.exec(className || '');
-                return !inline && match ? (
-                  <SyntaxHighlighter
-                    style={isDark ? oneDark : oneLight}
-                    language={match[1]}
-                    PreTag="div"
-                    {...props}
-                  >
-                    {String(children).replace(/\n$/, '')}
-                  </SyntaxHighlighter>
-                ) : (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                );
-              }
-            }}
-          >
-            {p.content}
-          </ReactMarkdown>
-        );
-      })}
+    <div style={{ position: 'relative', margin: '12px 0', borderRadius: '8px', overflow: 'hidden', border: '1px solid #f0f0f0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px', background: '#f8f8f8', borderBottom: '1px solid #eee', fontSize: '12px', color: '#666' }}>
+        <Space size={12}><span>{language || 'code'}</span></Space>
+        <Space size={12}>
+          <Button type="text" size="small" icon={<ExpandOutlined />} onClick={() => onOpenCanvas?.(`${language} 画布`, children, 'code', language)} />
+          <Button type="text" size="small" icon={copied ? <CheckOutlined style={{ color: '#52c41a' }} /> : <CopyOutlined />} onClick={handleCopy} />
+        </Space>
+      </div>
+      <SyntaxHighlighter style={oneLight} language={language} PreTag="div" customStyle={{ margin: 0, padding: '12px', background: '#fff', fontSize: '13px' }}>{children}</SyntaxHighlighter>
     </div>
   );
 };
 
-const ChatView: React.FC<ChatViewProps> = ({
-  messages, loading, inputText, setInputText,
-  currentAgent, enableMemory, setEnableMemory,
-  enableSwarm, setEnableSwarm, onSend,
-  pendingImages, setPendingImages
-}) => {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
+// 内部协作折叠块组件：通过 isGenerating 判断自动展开/折叠
+const CollaborationBlock: React.FC<{ title: string; children: React.ReactNode; isGenerating?: boolean }> = ({ title, children, isGenerating = false }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  // 流式生成期间保持展开，一旦生成结束，自动折叠
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+    setIsExpanded(!!isGenerating);
+  }, [isGenerating]);
 
   return (
     <div style={{ 
-      flex: 1, 
-      display: 'flex', 
-      flexDirection: 'column', 
-      overflow: 'hidden', 
-      background: 'var(--bg-main)',
-      position: 'relative'
+      margin: '12px 0', border: '1px solid #d9f7be', borderRadius: '8px', 
+      background: '#f6ffed', overflow: 'hidden' 
     }}>
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 0' }}>
+      <div 
+        onClick={() => setIsExpanded(!isExpanded)}
+        style={{ 
+          padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, 
+          cursor: 'pointer', userSelect: 'none', color: '#52c41a', fontWeight: 500,
+          background: isExpanded ? 'rgba(82, 196, 26, 0.05)' : 'transparent'
+        }}
+      >
+        <PartitionOutlined />
+        <span style={{ fontSize: '13px' }}>{title || '协作专家'} 处理详情</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', opacity: 0.6 }}>
+          {isExpanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
+        </div>
+      </div>
+      {isExpanded && (
+        <div style={{ 
+          padding: '12px 16px', borderTop: '1px solid #d9f7be', 
+          background: '#fff', fontSize: '13px' 
+        }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MessageContent = ({ content, loading, onOpenCanvas, collaborationStatus }: { 
+  content: string | any[], 
+  loading?: boolean, 
+  onOpenCanvas?: any,
+  collaborationStatus?: { agentName?: string, content?: string, state: 'active' | 'completed' | null } 
+}) => {
+  const textContent = typeof content === 'string' ? content : (Array.isArray(content) ? content.map(item => item.type === 'text' ? item.text : '').join('\n') : '');
+  const preprocessMath = (text: string) => text.replace(/\\\[/g, '$$$$').replace(/\\\]/g, '$$$$').replace(/\\\(/g, '$$').replace(/\\\)/g, '$$');
+  
+  // 状态归并逻辑：
+  // 如果当前消息所属的模型正在通过全局协作条显示进度，则气泡内不再显示重复的长占位符
+  const isExpertActive = loading && collaborationStatus?.state === 'active';
+
+  const renderParts = () => {
+    const parts: React.ReactNode[] = [];
+    const regex = /<collaboration\s+title=['"](.*?)['"]>([\s\S]*?)(?:<\/collaboration>|$)/g;
+    let lastIndex = 0;
+    let match;
+
+    const cleanContent = textContent.replace(/<\/collaboration>\s*<\/collaboration>/g, '</collaboration>');
+    
+    while ((match = regex.exec(cleanContent)) !== null) {
+      let beforeText = cleanContent.substring(lastIndex, match.index);
+      if (beforeText) {
+        parts.push(
+          <ReactMarkdown 
+            key={`md-${lastIndex}`}
+            remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
+            components={{
+              code({ node, inline, className, children, ...props }: any) {
+                const matchCode = /language-(\w+)/.exec(className || '');
+                const codeVal = String(children).replace(/\n$/, '');
+                return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
+              }
+            }}
+          >
+            {preprocessMath(beforeText)}
+          </ReactMarkdown>
+        );
+      }
+
+      const [fullMatch, title, collabContent] = match;
+      const safeCollabContent = collabContent.replace(/<collaboration[^>]*>/g, '').replace(/<\/collaboration>/g, '').trim();
+      
+      const finalDisplayContent = safeCollabContent || (isExpertActive ? "" : (loading ? "_专家计算中..._" : "_专家已完成任务协同_"));
+      
+      if (finalDisplayContent || isExpertActive) {
+          parts.push(
+            <CollaborationBlock key={`collab-${match.index}`} title={title} isGenerating={loading}>
+              <ReactMarkdown 
+                remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
+                components={{
+                  code({ node, inline, className, children, ...props }: any) {
+                    const matchCode = /language-(\w+)/.exec(className || '');
+                    const codeVal = String(children).replace(/\n$/, '');
+                    return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
+                  }
+                }}
+              >
+                {preprocessMath(finalDisplayContent)}
+              </ReactMarkdown>
+            </CollaborationBlock>
+          );
+      }
+      lastIndex = match.index + fullMatch.length;
+    }
+
+    let remainingText = cleanContent.substring(lastIndex);
+    remainingText = remainingText.replace(/<\/collaboration>/g, '').trim();
+    if (remainingText) {
+      parts.push(
+        <ReactMarkdown 
+          key={`md-remaining-${lastIndex}`}
+          remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
+          components={{
+            code({ node, inline, className, children, ...props }: any) {
+              const matchCode = /language-(\w+)/.exec(className || '');
+              const codeVal = String(children).replace(/\n$/, '');
+              return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
+            }
+          }}
+        >
+          {preprocessMath(remainingText)}
+        </ReactMarkdown>
+      );
+    }
+
+    return parts;
+  };
+
+  return (
+    <div className="message-markdown-content" style={{ fontSize: '14px', lineHeight: '1.6' }}>
+      {renderParts()}
+      {loading && !isExpertActive && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#1890ff', fontSize: '12px', marginTop: 8 }}><SyncOutlined spin />续写中...</div>}
+    </div>
+  );
+};
+
+const ChatView: React.FC<ChatViewProps> = (props) => {
+  const { messages, loading, collaborationStatus, inputText, setInputText, currentAgent, enableMemory, setEnableMemory, enableSwarm, setEnableSwarm, onSend, onStop, onDeleteMessage, onEditMessage, onFeedbackMessage, onRegenerate, pendingImages, setPendingImages, onOpenCanvas, enableAutoCanvas, setEnableAutoCanvas } = props;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [isIME, setIsIME] = useState(false);
+  
+
+  const groupMessagesIntoTurns = (msgs: Message[]) => {
+    const turns: { id: string, role: string, messages: Message[] }[] = [];
+    msgs.forEach((m, idx) => {
+      if (idx > 0 && m.role === msgs[idx-1].role && m.role === 'assistant') turns[turns.length - 1].messages.push(m);
+      else turns.push({ id: m.id || `turn-${idx}`, role: m.role, messages: [m] });
+    });
+    return turns;
+  };
+  const messageTurns = groupMessagesIntoTurns(messages);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+        if (scrollHeight - scrollTop - clientHeight < 200) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', position: 'relative' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 0', scrollBehavior: 'smooth' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', padding: '0 24px' }}>
-          
           {messages.length === 0 ? (
-            <div style={{ height: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Empty description={<Text type="secondary">UniAI 协作内核已就绪，请输入指令</Text>} />
-            </div>
+            <div style={{ height: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Empty description="UniAI 协作引擎已就绪" /></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {messages.map(m => (
-                <div
-                  key={m.id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
-                    marginBottom: '24px',
-                    width: '100%'
-                  }}
-                >
-                  {m.role === 'system' ? (
-                    <div style={{
-                      width: '100%', textAlign: 'center',
-                      padding: '8px 16px', fontSize: '12px',
-                      color: 'var(--text-secondary)', background: 'var(--msg-system-bg)',
-                      borderRadius: '4px', border: '1px solid var(--border-color)'
-                    }}>
-                      {m.content}
-                    </div>
-                  ) : (
-                    <div style={{
-                      display: 'flex',
-                      flexDirection: m.role === 'user' ? 'row-reverse' : 'row',
-                      gap: '12px', maxWidth: '85%'
-                    }}>
-                      <div style={{ flexShrink: 0, paddingTop: '2px' }}>
-                        <Avatar 
-                          size={32} 
-                          icon={m.role === 'user' ? <UserOutlined /> : <RobotOutlined />} 
-                          style={{ 
-                            background: m.role === 'user' ? 'var(--primary-blue)' : '#fff',
-                            color: m.role === 'user' ? '#fff' : 'var(--primary-blue)',
-                            border: '1px solid var(--border-color)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                          }} 
-                        />
-                      </div>
-                      <div 
-                        className="pro-card"
-                        style={{
-                          padding: '12px 16px',
-                          background: m.role === 'user' ? 'var(--primary-blue)' : '#fff',
-                          color: m.role === 'user' ? '#fff' : 'var(--text-primary)',
-                          borderRadius: '8px',
-                          borderTopRightRadius: m.role === 'user' ? '2px' : '8px',
-                          borderTopLeftRadius: m.role === 'assistant' ? '2px' : '8px',
-                          fontSize: '14px',
-                          lineHeight: '1.6',
-                          wordBreak: 'break-word'
-                        }}
-                      >
-                        {m.agentName && m.role === 'assistant' && (
-                          <div style={{ 
-                            fontSize: '11px', 
-                            fontWeight: 600,
-                            color: 'var(--primary-blue)',
-                            marginBottom: 4
+              {messageTurns.map((turn, tIdx) => {
+                const isUser = turn.role === 'user';
+                const isAssistant = turn.role === 'assistant';
+                const isSystem = turn.role === 'system';
+                const isLastTurn = tIdx === messageTurns.length - 1;
+
+                return (
+                  <div key={turn.id} style={{ marginBottom: 32, width: '100%', position: 'relative' }}>
+                    {isSystem ? (
+                      <div style={{ width: '100%', textAlign: 'center', padding: '6px 16px', fontSize: '12px', color: 'rgba(0,0,0,0.45)', background: '#fafafa', borderRadius: '4px' }}>{turn.messages.map(m => (typeof m.content === 'string' ? m.content : '')).join('\n')}</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: isUser ? 'row-reverse' : 'row', gap: '16px', maxWidth: '98%', position: 'relative' }}>
+                        <div style={{ flexShrink: 0, width: 34 }}><Avatar size={34} icon={isUser ? <UserOutlined /> : <RobotOutlined />} style={{ background: isUser ? '#1890ff' : '#fff', color: isUser ? '#fff' : '#1890ff', border: '1px solid #eee' }} /></div>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', flex: 1 }}>
+                          <div style={{
+                            padding: '16px 20px', background: isUser ? '#1890ff' : '#fff', color: isUser ? '#fff' : 'rgba(0,0,0,0.85)',
+                            borderRadius: '16px', borderTopRightRadius: isUser ? '2px' : '16px', borderTopLeftRadius: isAssistant ? '2px' : '16px',
+                            fontSize: '15px', lineHeight: '1.7', boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                            border: isUser ? 'none' : '1px solid #f0f0f0', position: 'relative', width: isAssistant ? '100%' : 'auto'
                           }}>
-                            {m.agentName}
+                            {turn.messages.map((m, mIdx) => {
+                               const isLastInTurn = mIdx === turn.messages.length - 1;
+                               const isMsgGenerating = loading && isLastTurn && isLastInTurn;
+                               
+                               return (
+                                  <div key={m.id || m.timestamp} onMouseEnter={() => setHoveredMessageId(m.id)} onMouseLeave={() => setHoveredMessageId(null)} style={{ marginBottom: isLastInTurn ? 0 : 20, position: 'relative' }}>
+                                      <div style={{ position: 'relative' }}>
+                                        {m.agentName && isAssistant && turn.messages.length > 1 && (
+                                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#1890ff', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <PartitionOutlined style={{ fontSize: 13 }} /><span>{m.agentName}</span>
+                                          </div>
+                                        )}
+                                        {editingId === m.id ? (
+                                          <div style={{ minWidth: '400px' }}><Input.TextArea autoSize={{ minRows: 2 }} value={editingText} onChange={e => setEditingText(e.target.value)} style={{ marginBottom: 12, borderRadius: 8 }} /><Space><Button size="small" type="primary" onClick={() => { onEditMessage?.(m.id, editingText); setEditingId(null); }}>保存</Button><Button size="small" onClick={() => setEditingId(null)}>取消</Button></Space></div>
+                                        ) : (
+                                          <MessageContent 
+                                            content={m.content} 
+                                            loading={isMsgGenerating} 
+                                            onOpenCanvas={onOpenCanvas} 
+                                            collaborationStatus={collaborationStatus}
+                                          />
+                                        )}
+                                        {m.images && m.images.length > 0 && (
+                                            <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                                {m.images.map((img, idx) => (<img key={idx} src={img} alt="msg-img" style={{ maxWidth: '100%', borderRadius: 8, maxHeight: 400, border: '1px solid #f0f0f0' }} />))}
+                                            </div>
+                                        )}
+                                        {hoveredMessageId === m.id && !editingId && !loading && (
+                                            <div style={{ 
+                                                position: 'absolute', right: 0, bottom: -40, padding: '4px 12px', background: '#fff', 
+                                                borderRadius: '8px', border: '1px solid #eee', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                                                display: 'flex', gap: 12, zIndex: 100, alignItems: 'center'
+                                            }}>
+                                                {isUser ? (
+                                                  <>
+                                                    <Tooltip title="编辑"><EditOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => { setEditingId(m.id); setEditingText(typeof m.content === 'string' ? m.content : ""); }} /></Tooltip>
+                                                    <Tooltip title="撤回"><DeleteOutlined style={{ cursor: 'pointer', color: '#ff4d4f' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <Tooltip title="投至看板"><AppstoreAddOutlined style={{ cursor: 'pointer', color: '#1890ff' }} onClick={() => { const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content); onOpenCanvas?.('快照', text, 'markdown'); }} /></Tooltip>
+                                                    <Divider type="vertical" />
+                                                    {m.feedback === 'like' ? <LikeFilled style={{ color: '#1890ff', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <LikeOutlined style={{ color: '#666', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'like')} />}
+                                                    {m.feedback === 'dislike' ? <DislikeFilled style={{ color: '#ff4d4f', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <DislikeOutlined style={{ color: '#666', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'dislike')} />}
+                                                    <Divider type="vertical" />
+                                                    <Tooltip title="重生成"><ReloadOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => onRegenerate?.()} /></Tooltip>
+                                                    <Tooltip title="删除"><DeleteOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
+                                                  </>
+                                                )}
+                                            </div>
+                                        )}
+                                      </div>
+                                  </div>
+                                );
+                            })}
                           </div>
-                        )}
-                        <MessageContent content={m.content} role={m.role} />
-                         {m.images && m.images.length > 0 && (
-                            <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                {m.images.map((img, idx) => (
-                                    <img 
-                                      key={idx} src={img} alt="msg-img" 
-                                      style={{ maxWidth: '100%', borderRadius: 4, maxHeight: 400, border: '1px solid var(--border-color)' }} 
-                                    />
-                                ))}
-                            </div>
-                         )}
-                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
-
-          {loading && (
-            <div style={{ padding: '0 44px', display: 'flex', gap: 12, alignItems: 'center', marginTop: -12 }}>
-                <SyncOutlined spin style={{ color: 'var(--primary-blue)' }} />
-                <Text type="secondary" style={{ fontSize: '13px' }}>
-                  {currentAgent?.name} 正在响应中...
-                </Text>
-            </div>
+          {loading && collaborationStatus?.state === 'active' && (
+              <div style={{ padding: '0 54px', display: 'flex', gap: 12, alignItems: 'center', marginTop: -16, marginBottom: 24 }}>
+                  <SyncOutlined spin style={{ color: '#52c41a' }} />
+                  <Text style={{ fontSize: '14px', color: '#389e0d', fontWeight: 500 }}>
+                    {collaborationStatus.agentName} {collaborationStatus.content || '正在深入协作中...'}
+                  </Text>
+              </div>
           )}
         </div>
       </div>
 
-      <div style={{ 
-        padding: '20px 24px 32px', 
-        background: '#fff',
-        borderTop: '1px solid var(--border-color)',
-        boxShadow: '0 -2px 10px rgba(0,0,0,0.02)'
-       }}>
+      <div style={{ padding: '24px', background: '#fff', borderTop: '1px solid #f0f0f0' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto' }}>
           {pendingImages.length > 0 && (
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
                 {pendingImages.map((img, idx) => (
                     <div key={idx} style={{ position: 'relative' }}>
-                        <img src={img} style={{ width: 60, height: 60, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border-color)' }} />
-                        <div 
-                            onClick={() => setPendingImages(prev => prev.filter((_, i) => i !== idx))}
-                            style={{ 
-                              position: 'absolute', top: -6, right: -6, 
-                              background: '#ff4d4f', color: '#fff', borderRadius: '50%', 
-                              width: 18, height: 18, display: 'flex', alignItems: 'center', 
-                              justifyContent: 'center', cursor: 'pointer', fontSize: 10
-                            }}
-                        >✕</div>
+                        <img src={img} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid #eee' }} />
+                        <div onClick={() => setPendingImages(prev => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: -8, right: -8, background: '#ff4d4f', color: '#fff', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 10 }}>✕</div>
                     </div>
                 ))}
             </div>
           )}
-          <div style={{ display: 'flex', gap: '16px', marginBottom: '12px', alignItems: 'center' }}>
-            <Space size={0} split={<Divider type="vertical" />}>
-                <Button 
-                    type="text" 
-                    icon={<HistoryOutlined />} 
-                    size="small"
-                    onClick={() => setEnableMemory(!enableMemory)}
-                    style={{ color: enableMemory ? 'var(--primary-blue)' : 'var(--text-secondary)' }}
-                >
-                    长效记忆
-                </Button>
-                <Button 
-                    type="text" 
-                    icon={<PartitionOutlined />} 
-                    size="small"
-                    onClick={() => setEnableSwarm(!enableSwarm)}
-                    style={{ color: enableSwarm ? '#52c41a' : 'var(--text-secondary)' }}
-                >
-                    Swarm 协作
-                </Button>
-            </Space>
-            
-            <div style={{ flex: 1 }} />
-            
-            <Button 
-                type="text" 
-                icon={<PlusOutlined />} 
-                size="small"
-                onClick={() => document.getElementById('img-upload')?.click()}
-                style={{ color: 'var(--text-secondary)' }}
-            >
-                上传素材
-            </Button>
-            
-            <input 
-                type="file" 
-                id="img-upload" 
-                style={{ display: 'none' }} 
-                accept="image/*"
-                onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                            const base64 = ev.target?.result as string;
-                            setPendingImages(prev => [...prev, base64]);
-                        };
-                        reader.readAsDataURL(file);
-                    }
-                }}
-            />
-          </div>
           
-          <div style={{ 
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            background: '#fff',
-            border: '1px solid var(--border-color)',
-            borderRadius: '4px',
-            paddingRight: '8px'
-          }}>
-            <Input.TextArea 
-                placeholder={currentAgent ? `向 ${currentAgent.name} 发送指令...` : "请先选择一个专家"}
-                autoSize={{ minRows: 1, maxRows: 6 }}
-                variant="borderless"
-                style={{ flex: 1, padding: '12px 16px', color: 'var(--text-primary)' }}
-                value={inputText}
-                onChange={e => setInputText(e.target.value)}
-                onPressEnter={(e) => {
-                  if (!e.shiftKey) { e.preventDefault(); onSend(); }
-                }}
-                onPaste={(e) => {
-                    const items = e.clipboardData?.items;
-                    if (!items) return;
-                    for (let i = 0; i < items.length; i++) {
-                        if (items[i].type.indexOf('image') !== -1) {
-                            const file = items[i].getAsFile();
-                            if (file) {
-                                const reader = new FileReader();
-                                reader.onload = (ev) => {
-                                    const base64 = ev.target?.result as string;
-                                    setPendingImages(prev => [...prev, base64]);
-                                };
-                                reader.readAsDataURL(file);
-                            }
-                        }
-                    }
-                }}
-                disabled={!currentAgent}
-            />
-            <Button 
-                type="primary" 
-                icon={<SendOutlined />} 
-                onClick={onSend}
-                loading={loading}
-                disabled={!currentAgent || (!inputText.trim() && pendingImages.length === 0)}
-                style={{ 
-                  background: 'var(--primary-blue)',
-                  border: 'none',
-                  height: '36px'
-                }}
-            />
+          <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
+            <Space size={0} split={<Divider type="vertical" />}>
+                <Button type="text" icon={<HistoryOutlined />} size="small" onClick={() => setEnableMemory(!enableMemory)} style={{ color: enableMemory ? '#1890ff' : '#999' }}>长效记忆</Button>
+                <Button type="text" icon={<PartitionOutlined />} size="small" onClick={() => setEnableSwarm(!enableSwarm)} style={{ color: enableSwarm ? '#52c41a' : '#999' }}>Swarm 协作</Button>
+                <Button type="text" icon={<AppstoreAddOutlined />} size="small" onClick={() => setEnableAutoCanvas?.(!enableAutoCanvas)} style={{ color: enableAutoCanvas ? '#eb2f96' : '#999' }}>自动看板</Button>
+            </Space>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, background: '#f9f9f9', border: '1px solid #e8e8e8', borderRadius: '16px', padding: '8px 12px' }}>
+            <Button type="text" shape="circle" icon={<PlusOutlined style={{ fontSize: 20, color: '#999' }} />} onClick={() => document.getElementById('img-upload')?.click()} />
+            <input type="file" id="img-upload" style={{ display: 'none' }} accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onload = (ev) => setPendingImages(prev => [...prev, ev.target?.result as string]); reader.readAsDataURL(file); } }} />
+            <Input.TextArea placeholder={currentAgent ? `向 ${currentAgent.name} 发送指令...` : "请先选择一个专家"} autoSize={{ minRows: 1, maxRows: 12 }} variant="borderless" style={{ flex: 1, padding: '8px 0', fontSize: '15px' }} value={inputText} onChange={e => setInputText(e.target.value)} onCompositionStart={() => setIsIME(true)} onCompositionEnd={() => setIsIME(false)} onKeyDown={(e) => { if (e.key === 'Enter' && !isIME && !e.shiftKey) { e.preventDefault(); onSend(); } }} />
+            <div style={{ paddingBottom: 4 }}>
+                {loading ? <Button type="primary" shape="circle" danger icon={<StopOutlined />} onClick={onStop} /> : <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={onSend} disabled={!currentAgent || (!inputText.trim() && pendingImages.length === 0)} />}
+            </div>
           </div>
         </div>
       </div>
@@ -503,4 +383,3 @@ const ChatView: React.FC<ChatViewProps> = ({
 };
 
 export default ChatView;
-export type { Message, Agent };

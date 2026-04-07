@@ -98,5 +98,56 @@ class PluginRegistry:
         except Exception as e:
             logger.error(f"[Registry] ❌ Failed to load plugins from {package_name}: {e}")
 
+    async def load_dynamic_tools(self, db_session):
+        """
+        从数据库加载动态注册的工具 (API/MCP/CLI)。
+        """
+        from app.models.dynamic_tool import DynamicTool
+        from app.services.ext_tools import ApiTool, McpTool, CliTool
+        from sqlalchemy import select
+
+        try:
+            result = await db_session.execute(select(DynamicTool).where(DynamicTool.is_active == True))
+            tools = result.scalars().all()
+            
+            for t in tools:
+                try:
+                    instance = None
+                    if t.tool_type == "api":
+                        instance = ApiTool(
+                            name=t.name, label=t.label, description=t.description,
+                            url=t.config.get("url"), method=t.config.get("method", "POST"),
+                            headers=t.config.get("headers"), schema=t.parameters_schema
+                        )
+                    elif t.tool_type == "mcp":
+                        transport = t.config.get("transport", "stdio")
+                        if transport == "sse":
+                            from app.services.ext_tools import McpSseTool
+                            instance = McpSseTool(
+                                name=t.name, label=t.label, description=t.description,
+                                url=t.config.get("url"),
+                                schema=t.parameters_schema
+                            )
+                        else:
+                            instance = McpTool(
+                                name=t.name, label=t.label, description=t.description,
+                                command=t.config.get("command"), args=t.config.get("args"),
+                                schema=t.parameters_schema
+                            )
+                    elif t.tool_type == "cli":
+                        instance = CliTool(
+                            name=t.name, label=t.label, description=t.description,
+                            script=t.config.get("script"), schema=t.parameters_schema
+                        )
+                    
+                    if instance:
+                        self.register_action(instance)
+                except Exception as e:
+                    logger.error(f"[Registry] Failed to load dynamic tool {t.name}: {e}")
+            
+            logger.info(f"[Registry] ✅ Loaded {len(tools)} dynamic tools from DB")
+        except Exception as e:
+            logger.error(f"[Registry] ❌ Failed to query dynamic tools: {e}")
+
 # 全局单例
 registry = PluginRegistry()

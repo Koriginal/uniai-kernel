@@ -6,3 +6,4 @@ from app.models.memory import UserMemory
 from app.models.agent import AgentProfile
 from app.models.audit import ActionLog
 from app.models.user import User, UserApiKey
+from app.models.dynamic_tool import DynamicTool

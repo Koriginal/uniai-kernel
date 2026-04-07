@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.db import Base
@@ -13,10 +13,15 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=lambda: f"user-{uuid.uuid4().hex[:8]}")
     email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, nullable=True)
+    username = Column(String, unique=True, index=True, nullable=True)
+    phone = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    
+    bio = Column(Text, nullable=True) # 个人简介，供智能体理解用户背景
+    avatar = Column(String, nullable=True) # 头像 URL
+    preferences = Column(JSON, nullable=True, default={}) # 智能体协作首选项
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

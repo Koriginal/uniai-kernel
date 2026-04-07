@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_db
 from app.models.session import ChatSession
+from app.api import deps
 import time
 import json
 import uuid
@@ -37,7 +38,6 @@ router = APIRouter()
 async def generate_sse_stream(
     request: ChatCompletionRequest, 
     req_id: str,
-    db: AsyncSession = None,
     session_id: str = None,
     user_id: str = None,
     enable_memory: bool = False
@@ -47,7 +47,6 @@ async def generate_sse_stream(
     """
     async for chunk in agent_service.chat_stream(
         request=request,
-        db=db,
         user_id=user_id,
         session_id=session_id,
         enable_memory=enable_memory,
@@ -58,21 +57,21 @@ async def generate_sse_stream(
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
-    http_request: Request,
+    user_id: str = Depends(deps.get_identity),
+    http_request: Request = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
     100% 兼容 OpenAI 格式的标准对话网关。
     """
     req_id = f"chatcmpl-{uuid.uuid4().hex}"
-    user_id = getattr(http_request.state, "user_id", "default_user")
     session_id = http_request.headers.get("X-Session-Id")
     enable_memory = http_request.headers.get("X-Enable-Memory", "false").lower() == "true"
     
     if request.stream:
         return StreamingResponse(
             generate_sse_stream(
-                request=request, req_id=req_id, db=db, 
+                request=request, req_id=req_id, 
                 session_id=session_id, user_id=user_id, enable_memory=enable_memory
             ),
             media_type="text/event-stream"
@@ -81,7 +80,6 @@ async def chat_completions(
     # 非流式：统一委托给 AgentService 处理
     return await agent_service.chat(
         request=request,
-        db=db,
         user_id=user_id,
         session_id=session_id,
         enable_memory=enable_memory

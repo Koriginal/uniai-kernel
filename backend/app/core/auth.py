@@ -14,7 +14,7 @@ async def get_current_user_id(
     
     默认实现：
     - 如果请求头包含 X-User-Id，使用该值
-    - 否则使用 default_user（单用户模式）
+    - 否则使用 admin（单用户模式）
     
     ### 自定义认证示例
     
@@ -26,7 +26,7 @@ async def get_current_user_id(
     
     # 集成 Session
     async def get_current_user_id(session: dict = Depends(get_session)):
-        return session.get("user_id", "default_user")
+        return session.get("user_id", "admin")
     
     # 集成第三方系统
     async def get_current_user_id(auth: str = Header(...)):
@@ -45,8 +45,8 @@ async def get_current_user_id(
         ...
     ```
     """
-    return x_user_id or "default_user"
+    return x_user_id or "admin"
 
 
 # 全局用户 ID（用于非 API 调用场景）
-GLOBAL_USER_ID = "default_user"
+GLOBAL_USER_ID = "admin"

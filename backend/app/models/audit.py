@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, JSON, DateTime, Float, ForeignKey
+from sqlalchemy import Column, String, JSON, DateTime, Float, ForeignKey, Integer
 from sqlalchemy.sql import func
 from app.core.db import Base
 import uuid
@@ -25,5 +25,11 @@ class ActionLog(Base):
     # 性能与状态
     status = Column(String) # success, failed
     duration_ms = Column(Float)
+    
+    # 使用统计与成本 (Token Usage & Cost)
+    request_tokens = Column(Integer, default=0)
+    response_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    cost = Column(Float, default=0.0) # 预估成本 (USD)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

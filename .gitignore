@@ -49,13 +49,25 @@ docker-compose.override.yml
 .DS_Store
 **/.DS_Store
 
-# 临时文件
+# 临时文件与测试脚本
 debug.py
 temp_*/
 resources/*
 !resources/.gitkeep
+*_tmp.py
+inspect_*.py
+test_*.js
+*.test.js
+
+# 前端构建与依赖
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
 
 # Alembic
 alembic/versions/*.pyc
-# 脚本
+alembic/versions/__pycache__/
+
+# 启动脚本 (保持原有忽略项)
 run_frontend.py

@@ -1,7 +1,7 @@
 """
 启动时自动配置
 
-从环境变量读取默认模型配置，自动为 default_user 初始化。
+从环境变量读取默认模型配置，自动为 admin 初始化。
 """
 import asyncio
 from app.core.config import settings
@@ -9,6 +9,7 @@ from app.core.db import SessionLocal
 from app.models.provider import ProviderTemplate, UserProvider, UserModelConfig
 from sqlalchemy import select, func, text
 import logging
+from app.core.security import get_password_hash
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ async def ensure_vector_extension_is_ready(session):
     except Exception as e:
         logger.warning(f"[Startup] Vector self-healing skipped or failed: {e}. This might affect expert collaboration.")
 
-async def auto_configure_default_user():
+async def auto_configure_admin():
     """
     启动时自动配置默认用户的模型。
     
@@ -68,8 +69,14 @@ async def auto_configure_default_user():
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:
-            logger.info(f"[Auto-Config] Creating seed user: {user_id}")
-            user = User(id=user_id, email=f"{user_id}@uniai.local", username="Auto Seed User")
+            logger.info(f"[Auto-Config] Creating seed admin user: {user_id}")
+            user = User(
+                id=user_id, 
+                email=f"{user_id}@uniai.local", 
+                username="Admin",
+                hashed_password=get_password_hash("admin123456"),
+                is_admin=True
+            )
             session.add(user)
             await session.commit()
             
@@ -91,7 +98,7 @@ async def auto_configure_default_user():
         existing = result.scalars().first()
         
         if existing:
-            logger.info(f"[Auto-Config] default_user already configured")
+            logger.info(f"[Auto-Config] admin already configured")
             return
         
         # 2. 查找模板 (支持简称映射与不区分大小写)
@@ -166,11 +173,11 @@ async def auto_configure_default_user():
                     )
                     configured.append(f"{model_type}={model_name}")
             
-            logger.info(f"[Auto-Config] ✅ Configured default_user: {', '.join(configured)}")
+            logger.info(f"[Auto-Config] ✅ Configured admin: {', '.join(configured)}")
             
         except Exception as e:
             logger.error(f"[Auto-Config] Failed: {e}")
             await session.rollback()
 
 if __name__ == "__main__":
-    asyncio.run(auto_configure_default_user())
+    asyncio.run(auto_configure_admin())

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.requests import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Optional
+from typing import List, Optional, Union, Dict, Any
 from app.core.db import get_db
 from app.models.agent import AgentProfile
 from app.models.openai import ChatCompletionRequest, ChatCompletionMessage
@@ -49,11 +49,13 @@ class AgentProfileResponse(BaseModel):
         from_attributes = True
 
 class AgentChatRequest(BaseModel):
-    query: str
+    query: Union[str, List[Dict[str, Any]]] # 支持图片/多模态
     session_id: Optional[str] = None
     stream: bool = True
     enable_memory: bool = False
     enable_swarm: bool = True
+    enable_canvas: bool = True
+    skip_save_user: bool = False # 控制是否重复保存用户消息
 
 # --- Endpoints ---
 
@@ -150,7 +152,7 @@ async def agent_chat(
         raise HTTPException(status_code=404, detail="Agent profile not found")
         
     # 从中中间件提取身份
-    user_id = getattr(request.state, "user_id", "default_user")
+    user_id = getattr(request.state, "user_id", "admin")
 
     # 模拟构造一个标准 OpenAI 请求体
     openai_request = ChatCompletionRequest(
@@ -158,18 +160,19 @@ async def agent_chat(
         messages=[
             ChatCompletionMessage(role="user", content=request_data.query)
         ],
-        stream=request_data.stream
+        stream=request_data.stream,
+        skip_save_user=request_data.skip_save_user
     )
     
     if request_data.stream:
         return StreamingResponse(
             agent_service.chat_stream(
                 request=openai_request,
-                db=db,
                 user_id=user_id,
                 session_id=request_data.session_id,
                 enable_memory=request_data.enable_memory,
-                enable_swarm=request_data.enable_swarm
+                enable_swarm=request_data.enable_swarm,
+                enable_canvas=request_data.enable_canvas
             ),
             media_type="text/event-stream"
         )
@@ -177,9 +180,9 @@ async def agent_chat(
         # 统一使用业务层方法接入
         return await agent_service.chat(
             request=openai_request,
-            db=db,
             user_id=user_id,
             session_id=request_data.session_id,
             enable_memory=request_data.enable_memory,
-            enable_swarm=request_data.enable_swarm
+            enable_swarm=request_data.enable_swarm,
+            enable_canvas=request_data.enable_canvas
         )

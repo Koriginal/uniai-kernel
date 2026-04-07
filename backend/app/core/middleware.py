@@ -40,7 +40,7 @@ class AuthMiddleware:
 
         # 3. 提取 API Key 与 identity 注入
         api_key = request.headers.get("X-API-Key")
-        user_id = "default_user"
+        user_id = "admin"
 
         if api_key:
             async with SessionLocal() as db:
