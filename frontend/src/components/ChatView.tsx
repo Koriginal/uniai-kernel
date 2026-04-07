@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip } from 'antd';
+import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, message } from 'antd';
 import { 
   AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
@@ -266,21 +266,35 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                         <div style={{ flexShrink: 0, width: 34 }}><Avatar size={34} icon={isUser ? <UserOutlined /> : <RobotOutlined />} style={{ background: isUser ? '#1890ff' : '#fff', color: isUser ? '#fff' : '#1890ff', border: '1px solid #eee' }} /></div>
                         
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', flex: 1 }}>
-                          <div style={{
-                            padding: '16px 20px', background: isUser ? '#1890ff' : '#fff', color: isUser ? '#fff' : 'rgba(0,0,0,0.85)',
-                            borderRadius: '16px', borderTopRightRadius: isUser ? '2px' : '16px', borderTopLeftRadius: isAssistant ? '2px' : '16px',
-                            fontSize: '15px', lineHeight: '1.7', boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                            border: isUser ? 'none' : '1px solid #f0f0f0', position: 'relative', width: isAssistant ? '100%' : 'auto'
-                          }}>
+                          <div style={{ position: 'relative', width: isAssistant ? '100%' : 'auto' }}>
                             {turn.messages.map((m, mIdx) => {
                                const isLastInTurn = mIdx === turn.messages.length - 1;
                                const isMsgGenerating = loading && isLastTurn && isLastInTurn;
                                
                                return (
-                                  <div key={m.id || m.timestamp} onMouseEnter={() => setHoveredMessageId(m.id)} onMouseLeave={() => setHoveredMessageId(null)} style={{ marginBottom: isLastInTurn ? 0 : 20, position: 'relative' }}>
-                                      <div style={{ position: 'relative' }}>
+                                  <div key={m.id || m.timestamp} 
+                                       onMouseEnter={() => setHoveredMessageId(m.id)} 
+                                       onMouseLeave={() => setHoveredMessageId(null)} 
+                                       style={{ marginBottom: isLastInTurn ? 0 : 20, display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', width: '100%' }}>
+                                      
+                                      {/* [BUBBLE] 仅包裹消息内容与图片 */}
+                                      <div style={{
+                                        padding: '12px 16px', 
+                                        background: isUser ? '#1890ff' : '#fff', 
+                                        color: isUser ? '#fff' : 'rgba(0,0,0,0.85)',
+                                        borderRadius: '16px', 
+                                        borderTopRightRadius: (isUser && isLastInTurn) ? '2px' : '16px', 
+                                        borderTopLeftRadius: (isAssistant && isLastInTurn) ? '2px' : '16px',
+                                        fontSize: '15px', 
+                                        lineHeight: '1.7', 
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                                        border: isUser ? 'none' : '1px solid #f0f0f0', 
+                                        position: 'relative', 
+                                        width: 'fit-content', 
+                                        maxWidth: '100%'
+                                      }}>
                                         {m.agentName && isAssistant && turn.messages.length > 1 && (
-                                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#1890ff', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                          <div style={{ fontSize: '11px', fontWeight: 600, color: isUser ? '#fff' : '#1890ff', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, opacity: isUser ? 0.9 : 1 }}>
                                             <PartitionOutlined style={{ fontSize: 13 }} /><span>{m.agentName}</span>
                                           </div>
                                         )}
@@ -299,33 +313,53 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                                                 {m.images.map((img, idx) => (<img key={idx} src={img} alt="msg-img" style={{ maxWidth: '100%', borderRadius: 8, maxHeight: 400, border: '1px solid #f0f0f0' }} />))}
                                             </div>
                                         )}
-                                        {hoveredMessageId === m.id && !editingId && !loading && (
-                                            <div style={{ 
-                                                position: 'absolute', right: 0, bottom: -40, padding: '4px 12px', background: '#fff', 
-                                                borderRadius: '8px', border: '1px solid #eee', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                                                display: 'flex', gap: 12, zIndex: 100, alignItems: 'center'
-                                            }}>
-                                                {isUser ? (
-                                                  <>
-                                                    <Tooltip title="编辑"><EditOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => { setEditingId(m.id); setEditingText(typeof m.content === 'string' ? m.content : ""); }} /></Tooltip>
-                                                    <Tooltip title="撤回"><DeleteOutlined style={{ cursor: 'pointer', color: '#ff4d4f' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
-                                                  </>
-                                                ) : (
-                                                  <>
-                                                    <Tooltip title="投至看板"><AppstoreAddOutlined style={{ cursor: 'pointer', color: '#1890ff' }} onClick={() => { const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content); onOpenCanvas?.('快照', text, 'markdown'); }} /></Tooltip>
-                                                    <Divider type="vertical" />
-                                                    {m.feedback === 'like' ? <LikeFilled style={{ color: '#1890ff', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <LikeOutlined style={{ color: '#666', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'like')} />}
-                                                    {m.feedback === 'dislike' ? <DislikeFilled style={{ color: '#ff4d4f', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <DislikeOutlined style={{ color: '#666', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'dislike')} />}
-                                                    <Divider type="vertical" />
-                                                    <Tooltip title="重生成"><ReloadOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => onRegenerate?.()} /></Tooltip>
-                                                    <Tooltip title="删除"><DeleteOutlined style={{ cursor: 'pointer', color: '#666' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
-                                                  </>
-                                                )}
-                                            </div>
-                                        )}
                                       </div>
+
+                                      {/* [ACTIONS] 彻底置于气泡之外 */}
+                                      {hoveredMessageId === m.id && !editingId && !loading && (
+                                          <div style={{ 
+                                              marginTop: 6,
+                                              display: 'flex',
+                                              justifyContent: isUser ? 'flex-end' : 'flex-start',
+                                              alignItems: 'center',
+                                              width: '100%',
+                                              animation: 'fadeIn 0.2s ease-in-out'
+                                          }}>
+                                              <div style={{ 
+                                                  padding: '2px 8px', 
+                                                  background: 'rgba(255, 255, 255, 0.8)', 
+                                                  backdropFilter: 'blur(12px)',
+                                                  borderRadius: '12px', 
+                                                  border: '1px solid #f0f0f0', 
+                                                  display: 'flex', 
+                                                  gap: 6, 
+                                                  alignItems: 'center',
+                                                  boxShadow: '0 2px 10px rgba(0,0,0,0.05)'
+                                              }} className="message-action-bar">
+                                                  {isUser ? (
+                                                    <>
+                                                      <Tooltip title="复制内容"><CopyOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#999' }} onClick={() => { navigator.clipboard.writeText(typeof m.content === 'string' ? m.content : ""); message.success('已复制到剪贴板'); }} /></Tooltip>
+                                                      <Tooltip title="编辑"><EditOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#999' }} onClick={() => { setEditingId(m.id); setEditingText(typeof m.content === 'string' ? m.content : ""); }} /></Tooltip>
+                                                      <div style={{ width: 1, height: 10, background: '#eee', margin: '0 2px' }} />
+                                                      <Tooltip title="撤回"><DeleteOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#ff4d4f' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <Tooltip title="复制结果"><CopyOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#999' }} onClick={() => { navigator.clipboard.writeText(typeof m.content === 'string' ? m.content : ""); message.success('已复制到剪贴板'); }} /></Tooltip>
+                                                      <Tooltip title="重新生成"><ReloadOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#999' }} onClick={() => onRegenerate?.()} /></Tooltip>
+                                                      <Tooltip title="投至看板"><AppstoreAddOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#1890ff' }} onClick={() => { const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content); onOpenCanvas?.('快照', text, 'markdown'); }} /></Tooltip>
+                                                      <div style={{ width: 1, height: 10, background: '#eee', margin: '0 2px' }} />
+                                                      {m.feedback === 'like' ? <LikeFilled style={{ fontSize: 12, color: '#1890ff', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <LikeOutlined style={{ fontSize: 12, color: '#999', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'like')} />}
+                                                      {m.feedback === 'dislike' ? <DislikeFilled style={{ fontSize: 12, color: '#ff4d4f', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'null')} /> : <DislikeOutlined style={{ fontSize: 12, color: '#999', cursor: 'pointer' }} onClick={() => onFeedbackMessage?.(m.id, 'dislike')} />}
+                                                      <div style={{ width: 1, height: 10, background: '#eee', margin: '0 2px' }} />
+                                                      <Tooltip title="清除消息"><DeleteOutlined style={{ fontSize: 12, cursor: 'pointer', color: '#999' }} onClick={() => onDeleteMessage?.(m.id)} /></Tooltip>
+                                                    </>
+                                                  )}
+                                              </div>
+                                          </div>
+                                      )}
                                   </div>
-                                );
+                               );
                             })}
                           </div>
                         </div>

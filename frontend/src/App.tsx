@@ -45,7 +45,7 @@ const App: React.FC = () => {
 
   api.interceptors.request.use(config => {
     if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   });
@@ -108,18 +108,18 @@ const App: React.FC = () => {
       const res = await api.get('/api/v1/agents/');
       const agentsData: Agent[] = res.data;
       setAgents(agentsData);
-      
+
       const savedAgentId = localStorage.getItem('currentAgentId');
-      
+
       setCurrentAgent(prev => {
         if (prev) return prev; // 已有则不覆盖
-        
+
         if (savedAgentId && agentsData.length > 0) {
-            const found = agentsData.find(a => a.id === savedAgentId);
-            if (found) {
-                console.log("[App] Restoring saved agent:", found.id);
-                return found;
-            }
+          const found = agentsData.find(a => a.id === savedAgentId);
+          if (found) {
+            console.log("[App] Restoring saved agent:", found.id);
+            return found;
+          }
         }
 
         if (agentsData.length > 0) {
@@ -150,19 +150,19 @@ const App: React.FC = () => {
   const fetchMe = useCallback(async () => {
     if (!token) return;
     try {
-        const res = await api.get('/api/v1/auth/me');
-        setUser(res.data);
+      const res = await api.get('/api/v1/auth/me');
+      setUser(res.data);
     } catch {
-        logout();
+      logout();
     }
   }, [token]);
 
   useEffect(() => {
     if (token) {
-        fetchMe();
-        fetchAgents();
-        fetchModelConfigs();
-        fetchSessions();
+      fetchMe();
+      fetchAgents();
+      fetchModelConfigs();
+      fetchSessions();
     }
   }, [token, fetchMe, fetchAgents, fetchModelConfigs, fetchSessions]);
 
@@ -173,15 +173,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (currentAgent) {
-        localStorage.setItem('currentAgentId', currentAgent.id);
+      localStorage.setItem('currentAgentId', currentAgent.id);
     }
   }, [currentAgent]);
 
   useEffect(() => {
     if (currentSessionId) {
-        localStorage.setItem('currentSessionId', currentSessionId);
+      localStorage.setItem('currentSessionId', currentSessionId);
     } else {
-        localStorage.removeItem('currentSessionId');
+      localStorage.removeItem('currentSessionId');
     }
   }, [currentSessionId]);
 
@@ -189,8 +189,8 @@ const App: React.FC = () => {
   const [sessionRestored, setSessionRestored] = useState(false);
   useEffect(() => {
     if (token && currentSessionId && sessions.length > 0 && agents.length > 0 && !sessionRestored) {
-        loadSession(currentSessionId);
-        setSessionRestored(true);
+      loadSession(currentSessionId);
+      setSessionRestored(true);
     }
   }, [token, currentSessionId, sessions, agents, sessionRestored]);
 
@@ -233,7 +233,7 @@ const App: React.FC = () => {
     setActiveView('chat');
     setCanvasVisible(false);
     setCanvasContent(null);
-    
+
     try {
       // 1. 恢复会话关联的专家信息
       const res = await api.get(`/api/v1/chat-sessions/${sessionId}`);
@@ -254,9 +254,9 @@ const App: React.FC = () => {
         tool_calls: m.tool_calls // 恢复工具调用持久化状态
       }));
       setMessages(history);
-      
+
       // 自动寻回逻辑：寻找最后一次看板投射并恢复状态
-      const lastCanvasCall = [...history].reverse().find(m => 
+      const lastCanvasCall = [...history].reverse().find(m =>
         m.tool_calls && m.tool_calls.some((tc: any) => tc.function?.name === 'upsert_canvas')
       );
       if (lastCanvasCall) {
@@ -342,13 +342,13 @@ const App: React.FC = () => {
     try {
       // 1. 物理回溯：删除该消息之后的所有消息
       await api.delete(`/api/v1/messages/${messageId}?truncate=true`);
-      
+
       // 2. 更新当前消息内容
       await api.patch(`/api/v1/messages/${messageId}`, { content: newContent });
-      
+
       // 3. 前端同步：保留该消息及之前的所有消息，并更新内容
       const msgIndex = messages.findIndex(m => m.id === messageId);
-      const newMessages = messages.slice(0, msgIndex + 1).map(m => 
+      const newMessages = messages.slice(0, msgIndex + 1).map(m =>
         m.id === messageId ? { ...m, content: newContent } : m
       );
       setMessages(newMessages);
@@ -356,7 +356,7 @@ const App: React.FC = () => {
       // 4. 定位到当前 Agent 并触发重新生成
       // 找到该消息对应的 agent_id（如果有），或者直接用当前 active agent
       setInputText(""); // 清空输入框，因为我们是修改已有消息
-      
+
       const originalMsg = messages.find(m => m.id === messageId);
       const originalImages = originalMsg?.images;
 
@@ -379,7 +379,7 @@ const App: React.FC = () => {
       await api.delete(`/api/v1/messages/${lastMsg.id}`);
       const newMessages = messages.slice(0, -1);
       setMessages(newMessages);
-      
+
       // 获取上一条用户消息内容
       const lastUserMsg = newMessages[newMessages.length - 1];
       if (lastUserMsg.role === 'user') {
@@ -400,9 +400,9 @@ const App: React.FC = () => {
   };
 
   const handleSendMessageInternal = async (
-    text: string, 
-    isRetry = false, 
-    skipSaveUser = false, 
+    text: string,
+    isRetry = false,
+    skipSaveUser = false,
     overrideImages?: string[]
   ) => {
     if (!currentAgent) return;
@@ -410,19 +410,19 @@ const App: React.FC = () => {
     console.log(`[App] >>> handleSendMessageInternal! Text: "${text}"`, "AgentID:", currentAgent.id, "SkipSave:", skipSaveUser);
     const activeImages = overrideImages || (isRetry ? [] : pendingImages);
     const hasImages = activeImages.length > 0;
-    
+
     if (!isRetry) {
-        const userMsg: Message = {
-          id: Date.now().toString(),
-          role: 'user',
-          content: text,
-          timestamp: Date.now(),
-          images: hasImages ? [...activeImages] : undefined
-        };
-        setMessages(prev => [...prev, userMsg]);
-        setPendingImages([]);
+      const userMsg: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: text,
+        timestamp: Date.now(),
+        images: hasImages ? [...activeImages] : undefined
+      };
+      setMessages(prev => [...prev, userMsg]);
+      setPendingImages([]);
     }
-    
+
     setLoading(true);
 
     // 若无会话，自动创建 (Lazy Creation)
@@ -455,9 +455,9 @@ const App: React.FC = () => {
     try {
       const response = await fetch(`/api/v1/agents/${currentAgent.id}/chat`, {
         method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}` 
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           query: contentPayload,
@@ -477,7 +477,7 @@ const App: React.FC = () => {
       const decoder = new TextDecoder();
       let accumulatedContent = '';
       let initialTempId = assistantMsgId; // 记录初始临时 ID，用于稳健同步
-      let toolCallsBuffer: any[] = []; 
+      let toolCallsBuffer: any[] = [];
       let lineBuffer = ''; // 用于处理跨 chunk 的完整行
 
       if (reader) {
@@ -487,49 +487,49 @@ const App: React.FC = () => {
 
           const chunk = decoder.decode(value, { stream: true });
           lineBuffer += chunk;
-          
+
           const lines = lineBuffer.split('\n');
           // 留最后一行到 buffer (如果它不以 \n 结尾)
           lineBuffer = lines.pop() || '';
-          
+
           for (const line of lines) {
             const trimmedLine = line.trim();
             if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
-            
+
             const dataStr = trimmedLine.replace('data: ', '');
             if (dataStr === '[DONE]') break;
 
             try {
               const data = JSON.parse(dataStr);
-              
+
               // 处理元数据同步 ID
               if (data.type === 'metadata') {
                 if (data.user_message_id) {
-                    setMessages(prev => {
-                        const newMsgs = [...prev];
-                        for (let i = newMsgs.length - 1; i >= 0; i--) {
-                            if (newMsgs[i].role === 'user') {
-                                newMsgs[i] = { ...newMsgs[i], id: data.user_message_id };
-                                break;
-                            }
-                        }
-                        return newMsgs;
-                    });
+                  setMessages(prev => {
+                    const newMsgs = [...prev];
+                    for (let i = newMsgs.length - 1; i >= 0; i--) {
+                      if (newMsgs[i].role === 'user') {
+                        newMsgs[i] = { ...newMsgs[i], id: data.user_message_id };
+                        break;
+                      }
+                    }
+                    return newMsgs;
+                  });
                 }
                 if (data.assistant_message_id) {
-                    // 核心逻辑：只有当前 ID 既不是旧跟踪 ID 也不是初始临时 ID 时，才认为是真正的新消息，才执行清空。
-                    // [IMPORTANT] 重大修复：移除 setCanvasContent("")。看板应跨专家生命周期持久，直到被新内容覆盖。
-                    if (data.assistant_message_id !== assistantMsgId && data.assistant_message_id !== initialTempId) {
-                        accumulatedContent = "";
-                        toolCallsBuffer = [];
-                    }
-                    
-                    setMessages(prev => prev.map(m => 
-                      // 稳健匹配：兼容初始临时 ID 和当前正在跟踪的助理 ID
-                      (m.id === assistantMsgId || m.id === initialTempId) ? { ...m, id: data.assistant_message_id } : m
-                    ));
-                    // 闭包内的 ID 同步更新，保证后续代码块逻辑连贯
-                    assistantMsgId = data.assistant_message_id;
+                  // 核心逻辑：只有当前 ID 既不是旧跟踪 ID 也不是初始临时 ID 时，才认为是真正的新消息，才执行清空。
+                  // [IMPORTANT] 重大修复：移除 setCanvasContent("")。看板应跨专家生命周期持久，直到被新内容覆盖。
+                  if (data.assistant_message_id !== assistantMsgId && data.assistant_message_id !== initialTempId) {
+                    accumulatedContent = "";
+                    toolCallsBuffer = [];
+                  }
+
+                  setMessages(prev => prev.map(m =>
+                    // 稳健匹配：兼容初始临时 ID 和当前正在跟踪的助理 ID
+                    (m.id === assistantMsgId || m.id === initialTempId) ? { ...m, id: data.assistant_message_id } : m
+                  ));
+                  // 闭包内的 ID 同步更新，保证后续代码块逻辑连贯
+                  assistantMsgId = data.assistant_message_id;
                 }
                 continue;
               }
@@ -582,24 +582,24 @@ const App: React.FC = () => {
               if (delta?.content) {
                 accumulatedContent += delta.content;
               }
-              
+
               if (delta?.tool_calls) {
                 delta.tool_calls.forEach((tc: any) => {
                   const idx = tc.index;
                   if (!toolCallsBuffer[idx]) {
-                    toolCallsBuffer[idx] = { 
-                      id: tc.id, 
-                      function: { name: tc.function?.name || "", arguments: "" } 
+                    toolCallsBuffer[idx] = {
+                      id: tc.id,
+                      function: { name: tc.function?.name || "", arguments: "" }
                     };
                   }
                   if (tc.function?.arguments) {
                     toolCallsBuffer[idx].function.arguments += tc.function.arguments;
                     const currentTC = toolCallsBuffer[idx];
-                    
+
                     if (currentTC.function.name === 'upsert_canvas' || toolCallsBuffer[idx].isCanvasUpdate) {
                       toolCallsBuffer[idx].isCanvasUpdate = true;
                       const argsStr = currentTC.function.arguments;
-                      
+
                       // 展示 Loading 骨架，减少等待感
                       if (!canvasVisible) setCanvasVisible(true);
 
@@ -607,11 +607,11 @@ const App: React.FC = () => {
                       const sTitle = extractPartialJsonField(argsStr, "title");
                       const sType = extractPartialJsonField(argsStr, "type");
                       const sLanguage = extractPartialJsonField(argsStr, "language");
-                      
+
                       if (sType) setCanvasType(sType as any);
                       if (sLanguage) setCanvasLanguage(sLanguage);
                       if (sTitle) setCanvasTitle(sTitle);
-                      
+
                       // 关键：仅在有效提取时更新，防止推流抖动置空
                       if (sContent !== null) {
                         setCanvasContent(sContent);
@@ -622,10 +622,10 @@ const App: React.FC = () => {
               }
 
               if (delta?.content || delta?.tool_calls) {
-                setMessages(prev => prev.map(m => 
+                setMessages(prev => prev.map(m =>
                   // 只要 ID 没变或者是正在流式更新的气泡，就持续喂入内容块
-                  (m.id === assistantMsgId || m.id === initialTempId) ? 
-                  { ...m, content: accumulatedContent, tool_calls: toolCallsBuffer.filter(Boolean) } : m
+                  (m.id === assistantMsgId || m.id === initialTempId) ?
+                    { ...m, content: accumulatedContent, tool_calls: toolCallsBuffer.filter(Boolean) } : m
                 ));
               }
             } catch (err) {
@@ -638,17 +638,17 @@ const App: React.FC = () => {
       // [IMPORTANT] 采用“倒序优先”策略：确保在多轮接力中，看板展现的是主控最终确认的最新版本
       const finalCanvasTC = [...toolCallsBuffer].reverse().find(tc => tc && tc.function.name === 'upsert_canvas');
       if (finalCanvasTC) {
-          try {
-              const finalArgs = JSON.parse(finalCanvasTC.function.arguments);
-              if (finalArgs.content) {
-                  setCanvasContent(finalArgs.content);
-                  if (!canvasVisible) setCanvasVisible(true);
-              }
-              if (finalArgs.title) setCanvasTitle(finalArgs.title);
-              if (finalArgs.type) setCanvasType(finalArgs.type);
-          } catch (e) {
-              console.warn("[App] Final alignment failed:", e);
+        try {
+          const finalArgs = JSON.parse(finalCanvasTC.function.arguments);
+          if (finalArgs.content) {
+            setCanvasContent(finalArgs.content);
+            if (!canvasVisible) setCanvasVisible(true);
           }
+          if (finalArgs.title) setCanvasTitle(finalArgs.title);
+          if (finalArgs.type) setCanvasType(finalArgs.type);
+        } catch (e) {
+          console.warn("[App] Final alignment failed:", e);
+        }
       }
 
       fetchSessions();
@@ -675,10 +675,10 @@ const App: React.FC = () => {
       message.warning(`${agent.name} 当前离线`);
       return;
     }
-    
+
     // 如果切换了不同的智能体，则进入“新会话”预备状态，避免内容错位
     if (currentAgent?.id !== agent.id) {
-        startNewChat();
+      startNewChat();
     }
 
     setActiveView('chat');
@@ -692,12 +692,12 @@ const App: React.FC = () => {
 
   return (
     <Layout style={{ height: '100vh', width: '100vw', overflow: 'hidden', background: '#f5f6fa' }}>
-        {activeView !== 'settings' && (
-          <Sider
-            width={240}
-            theme="light"
-            style={{ borderRight: '1px solid #e8e8e8', overflow: 'auto', flexShrink: 0 }}
-          >
+      {activeView !== 'settings' && (
+        <Sider
+          width={240}
+          theme="light"
+          style={{ borderRight: '1px solid #e8e8e8', overflow: 'auto', flexShrink: 0 }}
+        >
           <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid #f0f0f0' }}>
             <Title level={5} style={{ margin: 0, color: '#1890ff', fontSize: 16 }}>
               <ThunderboltOutlined style={{ marginRight: 6 }} />
@@ -706,12 +706,12 @@ const App: React.FC = () => {
             <Text type="secondary" style={{ fontSize: '10px' }}>Agentic OS v1.0</Text>
           </div>
 
-          {/* 新建会话 - 全局快速操作 (Gemini Style) */}
+          {/* 新建会话 - 全局快速操作 */}
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
-              block 
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              block
               onClick={startNewChat}
               style={{ borderRadius: 8, height: 40, fontWeight: 500, boxShadow: '0 2px 4px rgba(24,144,255,0.2)' }}
             >
@@ -739,14 +739,14 @@ const App: React.FC = () => {
                     {s.title || 'Untitled'}
                   </Text>
                   <Space size={4}>
-                      <EditOutlined
-                        onClick={e => { e.stopPropagation(); renameSession(s.id); }}
-                        style={{ color: '#999', fontSize: '11px' }}
-                      />
-                      <DeleteOutlined
-                        onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
-                        style={{ color: '#ff4d4f', fontSize: '11px' }}
-                      />
+                    <EditOutlined
+                      onClick={e => { e.stopPropagation(); renameSession(s.id); }}
+                      style={{ color: '#999', fontSize: '11px' }}
+                    />
+                    <DeleteOutlined
+                      onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
+                      style={{ color: '#ff4d4f', fontSize: '11px' }}
+                    />
                   </Space>
                 </Menu.Item>
               ))}
@@ -805,17 +805,17 @@ const App: React.FC = () => {
 
           </Menu>
         </Sider>
-        )}
+      )}
 
-        <Layout style={{ 
-          marginLeft: 0, 
-          transition: 'all 0.2s',
-          height: '100vh', 
-          display: 'flex', 
-          flexDirection: 'column' 
-        }}>
-          {activeView !== 'settings' && (
-            <Header style={{
+      <Layout style={{
+        marginLeft: 0,
+        transition: 'all 0.2s',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column'
+      }}>
+        {activeView !== 'settings' && (
+          <Header style={{
             background: '#fff', padding: '0 20px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             borderBottom: '1px solid #f0f0f0', height: 52, lineHeight: '52px'
@@ -833,30 +833,30 @@ const App: React.FC = () => {
                 <Text strong style={{ fontSize: 14 }}>
                   {activeView === 'agents' ? '专家集群管理'
                     : activeView === 'providers' ? '模型供应商'
-                    : activeView === 'tools' ? '工具注册表'
-                    : activeView === 'users' ? '系统用户管理'
-                    : 'UniAI Kernel'}
+                      : activeView === 'tools' ? '工具注册表'
+                        : activeView === 'users' ? '系统用户管理'
+                          : 'UniAI Kernel'}
                 </Text>
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               {activeView === 'chat' && (
                 <Tooltip title={canvasVisible ? "关闭侧边看板" : "打开侧边看板"}>
-                  <Button 
-                    type="text" 
-                    icon={<AppstoreAddOutlined style={{ fontSize: 16, color: canvasVisible ? '#1890ff' : 'rgba(0,0,0,0.45)' }} />} 
+                  <Button
+                    type="text"
+                    icon={<AppstoreAddOutlined style={{ fontSize: 16, color: canvasVisible ? '#1890ff' : 'rgba(0,0,0,0.45)' }} />}
                     onClick={() => setCanvasVisible(!canvasVisible)}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   />
                 </Tooltip>
               )}
               {user && (
-                <Dropdown 
+                <Dropdown
                   overlay={
                     <Menu>
                       <Menu.Item key="username" disabled>
                         <Text strong>{user.username}</Text>
-                        <br/>
+                        <br />
                         <Text type="secondary" style={{ fontSize: '12px' }}>{user.email}</Text>
                       </Menu.Item>
                       <Menu.Divider />
@@ -873,22 +873,22 @@ const App: React.FC = () => {
                       )}
                       <Menu.Divider />
                       <Menu.Item key="logout" danger icon={<DeleteOutlined />} onClick={() => Modal.confirm({
-                          title: '确定要退出吗？',
-                          content: '退出后需要重新登录方可访问系统。',
-                          onOk: logout
+                        title: '确定要退出吗？',
+                        content: '退出后需要重新登录方可访问系统。',
+                        onOk: logout
                       })}>
                         退出登录
                       </Menu.Item>
                     </Menu>
-                  } 
-                  placement="bottomRight" 
+                  }
+                  placement="bottomRight"
                   arrow
                 >
                   <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Avatar 
-                      size="small" 
-                      icon={<UserOutlined />} 
-                      style={{ background: user.is_admin ? '#f56a00' : '#1890ff' }} 
+                    <Avatar
+                      size="small"
+                      icon={<UserOutlined />}
+                      style={{ background: user.is_admin ? '#f56a00' : '#1890ff' }}
                     />
                     <Text strong>{user.username}</Text>
                     {user.is_admin && <Tag color="gold" style={{ margin: 0 }}>ADMIN</Tag>}
@@ -897,107 +897,107 @@ const App: React.FC = () => {
               )}
             </div>
           </Header>
+        )}
+
+        <Content style={{
+          margin: (activeView === 'settings' || activeView === 'audit') ? 0 : '12px',
+          background: (activeView === 'settings' || activeView === 'audit') ? 'transparent' : '#fff',
+          borderRadius: (activeView === 'settings' || activeView === 'audit') ? 0 : '8px',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          boxShadow: (activeView === 'settings' || activeView === 'audit') ? 'none' : '0 1px 4px rgba(0,0,0,0.06)'
+        }}>
+          {activeView === 'chat' && (
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              <ChatView
+                messages={messages} loading={loading}
+                collaborationStatus={collaborationStatus}
+                inputText={inputText} setInputText={setInputText}
+                currentAgent={currentAgent}
+                enableMemory={enableMemory} setEnableMemory={setEnableMemory}
+                enableSwarm={enableSwarm} setEnableSwarm={setEnableSwarm}
+                onSend={handleSendMessage}
+                onStop={onStopGeneration}
+                onDeleteMessage={onDeleteMessage}
+                onEditMessage={onEditMessage}
+                onFeedbackMessage={onFeedbackMessage}
+                onRegenerate={onRegenerate}
+                pendingImages={pendingImages}
+                setPendingImages={setPendingImages}
+                enableAutoCanvas={enableAutoCanvas}
+                setEnableAutoCanvas={setEnableAutoCanvas}
+                onOpenCanvas={(title, content, type, lang) => {
+                  setCanvasTitle(title);
+                  setCanvasContent(content);
+                  setCanvasType(type);
+                  if (lang) setCanvasLanguage(lang);
+                  setCanvasVisible(true);
+                }}
+              />
+              <ArtifactCanvas
+                visible={canvasVisible}
+                onClose={() => {
+                  setCanvasVisible(false);
+                }}
+                title={canvasTitle}
+                content={canvasContent}
+                type={canvasType}
+                language={canvasLanguage}
+                loading={loading}
+              />
+            </div>
           )}
 
-          <Content style={{
-            margin: (activeView === 'settings' || activeView === 'audit') ? 0 : '12px', 
-            background: (activeView === 'settings' || activeView === 'audit') ? 'transparent' : '#fff', 
-            borderRadius: (activeView === 'settings' || activeView === 'audit') ? 0 : '8px',
-            display: 'flex', flexDirection: 'column', overflow: 'hidden',
-            boxShadow: (activeView === 'settings' || activeView === 'audit') ? 'none' : '0 1px 4px rgba(0,0,0,0.06)'
-          }}>
-            {activeView === 'chat' && (
-              <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                <ChatView
-                  messages={messages} loading={loading}
-                  collaborationStatus={collaborationStatus}
-                  inputText={inputText} setInputText={setInputText}
-                  currentAgent={currentAgent}
-                  enableMemory={enableMemory} setEnableMemory={setEnableMemory}
-                  enableSwarm={enableSwarm} setEnableSwarm={setEnableSwarm}
-                  onSend={handleSendMessage}
-                  onStop={onStopGeneration}
-                  onDeleteMessage={onDeleteMessage}
-                  onEditMessage={onEditMessage}
-                  onFeedbackMessage={onFeedbackMessage}
-                  onRegenerate={onRegenerate}
-                  pendingImages={pendingImages}
-                  setPendingImages={setPendingImages}
-                  enableAutoCanvas={enableAutoCanvas}
-                  setEnableAutoCanvas={setEnableAutoCanvas}
-                  onOpenCanvas={(title, content, type, lang) => {
-                    setCanvasTitle(title);
-                    setCanvasContent(content);
-                    setCanvasType(type);
-                    if (lang) setCanvasLanguage(lang);
-                    setCanvasVisible(true);
-                  }}
-                />
-                <ArtifactCanvas
-                  visible={canvasVisible}
-                  onClose={() => {
-                    setCanvasVisible(false);
-                  }}
-                  title={canvasTitle}
-                  content={canvasContent}
-                  type={canvasType}
-                  language={canvasLanguage}
-                  loading={loading}
-                />
-              </div>
-            )}
+          {activeView === 'agents' && (
+            <AgentManager
+              agents={agents} setAgents={setAgents}
+              modelConfigs={modelConfigs} msgApi={message}
+              onRefresh={() => { fetchAgents(); fetchModelConfigs(); }}
+            />
+          )}
 
-            {activeView === 'agents' && (
-              <AgentManager
-                agents={agents} setAgents={setAgents}
-                modelConfigs={modelConfigs} msgApi={message}
-                onRefresh={() => { fetchAgents(); fetchModelConfigs(); }}
-              />
-            )}
+          {activeView === 'providers' && (
+            <ProviderManager
+              modelConfigs={modelConfigs} msgApi={message}
+              onRefresh={fetchModelConfigs}
+            />
+          )}
 
-            {activeView === 'providers' && (
-              <ProviderManager
-                modelConfigs={modelConfigs} msgApi={message}
-                onRefresh={fetchModelConfigs}
-              />
-            )}
+          {activeView === 'tools' && (
+            <ToolRegistry msgApi={message} />
+          )}
 
-            {activeView === 'tools' && (
-              <ToolRegistry msgApi={message} />
-            )}
+          {activeView === 'audit' && (
+            <AuditLogView />
+          )}
 
-            {activeView === 'audit' && (
-              <AuditLogView />
-            )}
+          {activeView === 'api_keys' && (
+            <ApiKeyManager api={api} user={user} />
+          )}
 
-            {activeView === 'api_keys' && (
-              <ApiKeyManager api={api} user={user} />
-            )}
-            
-            {activeView === 'settings' && user && (
-               <SettingsCenter 
-                user={user} 
-                api={api} 
-                modelConfigs={modelConfigs} 
-                onRefresh={fetchMe}
-                onBack={() => setActiveView('chat')}
-               />
-            )}
+          {activeView === 'settings' && user && (
+            <SettingsCenter
+              user={user}
+              api={api}
+              modelConfigs={modelConfigs}
+              onRefresh={fetchMe}
+              onBack={() => setActiveView('chat')}
+            />
+          )}
 
-            {activeView === 'users' && (
-              <UserManager />
-            )}
-          </Content>
-          <ChangePasswordModal 
-            visible={passwordModalVisible}
-            onCancel={() => setPasswordModalVisible(false)}
-            api={api}
-            onSuccess={() => {
-                setPasswordModalVisible(false);
-                logout();
-            }}
-          />
-        </Layout>
+          {activeView === 'users' && (
+            <UserManager />
+          )}
+        </Content>
+        <ChangePasswordModal
+          visible={passwordModalVisible}
+          onCancel={() => setPasswordModalVisible(false)}
+          api={api}
+          onSuccess={() => {
+            setPasswordModalVisible(false);
+            logout();
+          }}
+        />
+      </Layout>
     </Layout>
   );
 };
