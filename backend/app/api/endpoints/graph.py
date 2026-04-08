@@ -1,0 +1,72 @@
+"""
+图拓扑与调试 API
+
+提供前端可视化所需的图结构数据。
+"""
+import logging
+from fastapi import APIRouter, Depends
+from app.agents.graph_builder import get_graph_mermaid, build_conversation_graph
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.get("/topology")
+async def get_graph_topology():
+    """
+    返回当前对话图的 Mermaid 表示。
+
+    前端可直接将此字符串渲染为可视化流程图。
+    """
+    mermaid = get_graph_mermaid()
+    return {
+        "mermaid": mermaid,
+        "nodes": ["context", "agent", "tool_executor", "handoff", "synthesize"],
+        "description": "UniAI LangGraph 对话状态图"
+    }
+
+
+@router.get("/nodes")
+async def get_graph_nodes():
+    """
+    返回图中所有节点的描述信息，用于前端展示节点说明。
+    """
+    return {
+        "nodes": [
+            {
+                "id": "context",
+                "label": "上下文构建",
+                "description": "加载会话记忆、历史消息，注入 System Prompt，创建助手消息气泡",
+                "icon": "📥",
+                "color": "#52c41a"
+            },
+            {
+                "id": "agent",
+                "label": "LLM 推理",
+                "description": "调用大语言模型进行思考，产出文本回复或工具调用指令",
+                "icon": "🤖",
+                "color": "#1890ff"
+            },
+            {
+                "id": "tool_executor",
+                "label": "工具执行",
+                "description": "并行执行模型请求的工具（搜索、Canvas、自定义工具等）",
+                "icon": "🔧",
+                "color": "#fa8c16"
+            },
+            {
+                "id": "handoff",
+                "label": "专家路由",
+                "description": "将任务移交给指定领域专家，切换活跃智能体身份",
+                "icon": "🤝",
+                "color": "#722ed1"
+            },
+            {
+                "id": "synthesize",
+                "label": "汇总归还",
+                "description": "专家完成后关闭协作区块，将控制权归还给主控智能体",
+                "icon": "📝",
+                "color": "#eb2f96"
+            }
+        ]
+    }

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Enterprise-level AI Development Framework** - Built with FastAPI, LangGraph, and LiteLLM, supporting multi-tenant model management, intelligent memory systems, and streaming chat.
+**Enterprise-level Agentic OS Kernel** - A high-performance multi-tenant AI orchestration engine built with FastAPI and LangGraph. Features advanced Swarm collaboration, real-time Artifacts canvas, graph-native execution, and production-grade observability.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
@@ -16,17 +16,23 @@
 graph TD
     User((User/Client)) --> Gateway[API Gateway / Auth]
     Gateway --> Orchestrator[Orchestrator Agent]
-    Orchestrator --> State[LangGraph State Machine]
-    State --> Experts{Expert Swarm}
-    Experts --> ExpertA[Coder/Expert]
-    Experts --> ExpertB[Researcher]
-    ExpertA --> Tools[Tool Registry]
-    ExpertB --> Tools
-    Tools --> Web[Web Search]
+    Orchestrator --> Graph[LangGraph Orchestration Engine]
+    
+    subgraph "Execution Flow (StateGraph)"
+        Context[Context Builder] --> Agent[LLM Decision Node]
+        Agent -- Needs Tool --> Tools[Tool Executor]
+        Agent -- Needs Expert --> Handoff[Expert Handoff]
+        Agent -- Expert Done --> Synthesize[Final Synthesis]
+        Tools --> Agent
+        Handoff --> Agent
+        Synthesize --> Agent
+        Agent -- Success --> END((END))
+    end
+    
     Tools --> Canvas[Artifact Canvas]
     Tools --> DB[(PgVector/Memory)]
     
-    Orchestrator -.-> Audit[Audit & Observability]
+    Graph -.-> Audit[Audit & Observability]
     Audit --> Monitor[Usage Stats / Cost Tracking]
 ```
 
@@ -40,9 +46,11 @@ graph TD
 - **Quick Environment Setup**: One-click start using `.env`
 - **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
 - **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
-- **🧠 Swarm Multi-Agent Collaboration**: Orchestrate expert agents to solve complex tasks. Supports dynamic handoffs, role-specific prompts, and state-aware transitions.
+- **🧠 Graph-Native Swarm Collaboration**: Orchestrates specialized agents using **LangGraph**. Provides deep-link execution tracing, self-reflection loops, and dynamic handoffs between heterogeneous models.
+- **🔍 Real-Time Execution Tracing**: A new **Graph Trace** dashboard in the UI for monitoring internal node transitions and agent reasoning steps.
 - **🎨 Artifacts Visual Canvas**: Dedicated side panel for rendering code, HTML, and rich data. Experts can "upsert" to the canvas while chatting.
 - **🔑 Multi-Tenant Model Gateway**: Complete with isolated credentials (AES-GCM encryption). Switch between 100+ global models using `LiteLLM`.
+- **📊 Production Observability**: Full traceability of representative node transitions, tool calls, and nested task lifecycles with cost/token tracking.
 - **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
 
 ### 🚀 Developer Friendly

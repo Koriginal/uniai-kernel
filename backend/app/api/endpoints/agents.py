@@ -172,7 +172,8 @@ async def agent_chat(
                 session_id=request_data.session_id,
                 enable_memory=request_data.enable_memory,
                 enable_swarm=request_data.enable_swarm,
-                enable_canvas=request_data.enable_canvas
+                enable_canvas=request_data.enable_canvas,
+                skip_save_user=request_data.skip_save_user,
             ),
             media_type="text/event-stream"
         )

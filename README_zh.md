@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**企业级 AI 开发框架** - 基于 FastAPI、LangGraph 和 LiteLLM 构建，支持多租户模型管理、智能记忆系统和流式对话。
+**企业级 Agentic OS 内核** - 基于 FastAPI 和 LangGraph 构建的高性能多租户 AI 编排引擎。内置先进的 Swarm 智能协作体系、实时 Artifacts 交互看板、图原生执行引擎以及生产级可观测性监控。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
@@ -10,12 +10,40 @@
 
 ---
 
+## 🧩 系统架构
+
+```mermaid
+graph TD
+    User((用户/客户端)) --> Gateway[API 网关 / 鉴权]
+    Gateway --> Orchestrator[主控智能体]
+    Orchestrator --> Graph[LangGraph 编排引擎]
+    
+    subgraph "执行图 (StateGraph)"
+        Context[上下文构建] --> Agent[LLM 决策节点]
+        Agent -- 需工具 --> Tools[工具执行器]
+        Agent -- 需专家 --> Handoff[专家接力]
+        Agent -- 专家收尾 --> Synthesize[主控汇总]
+        Tools --> Agent
+        Handoff --> Agent
+        Synthesize --> Agent
+        Agent -- 完成 --> END((结束))
+    end
+    
+    Tools --> Canvas[Artifact 看板]
+    Tools --> DB[(PgVector/记忆库)]
+    
+    Graph -.-> Audit[审计与可观测性]
+    Audit --> Monitor[使用统计 / 成本追踪]
+```
+
+---
+
 ## ✨ 核心特性
 
-### 🧠 Swarm 多智能体协作
-- **动态接力 (Handoff)**：根据任务意图自动在不同领域的专家智能体（如代码专家、SQL 专家、搜索专家）之间无缝切换。
-- **状态感知上下文**：全集群共享短期对话记忆与长期用户偏好，确保专家协作的连贯性。
-- **协议注入自愈**：强制执行协作协议，确保专家输出质量与可视化看板的精确同步。
+### 🧠 图原生 Swarm 协作
+- **LangGraph 驱动**：彻底弃用硬编码循环，采用状态机驱动的对话流，支持复杂的分支决策与反思闭环。
+- **动态接力 (Handoff)**：基于图节点跳转，自动将任务分发至代码专家、研究专家等独立节点。
+- **思考轨迹可视化**：前端新增 **Graph Trace** 控制面板，实时监测 Agent 在图节点间的跳转路径与内部思考过程。
 
 ### 🎨 Artifacts 交互式看板
 - **实时流式渲染**：在独立侧边栏实时预览代码、HTML、React 组件及 Markdown，不干扰对话流。
@@ -23,7 +51,7 @@
 - **状态持久化**：看板内容随会话自动保存，支持历史记录回溯与预览。
 
 ### 📊 生产级可观测性 (Observability)
-- **全链路追踪**：详细记录每一次 Agent 思考、工具调用及任务接力的元数据。
+- **执行轨迹追踪**：详细记录每一次节点跳转、工具调用及任务嵌套的完整生命周期。
 - **成本与用量监控**：实时计算 Token 消耗并根据模型单价预估单次请求成本 (USD)。
 - **分析仪表盘**：内置 API 支持 QPS、响应耗时、成功率等维度的统计分析。
 

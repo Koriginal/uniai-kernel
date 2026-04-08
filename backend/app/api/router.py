@@ -42,4 +42,8 @@ mgmt_router.include_router(llm.router, prefix="/llm", tags=["LLM Raw Access"])
 mgmt_router.include_router(api_keys.router, prefix="/user/api-keys", tags=["API Keys"])
 mgmt_router.include_router(dynamic_tools.router, prefix="/dynamic-tools", tags=["Dynamic Tools"])
 
+# --- 3. [图引擎面] LangGraph 图拓扑与调试 ---
+from app.api.endpoints import graph as graph_ep
+mgmt_router.include_router(graph_ep.router, prefix="/graph", tags=["Graph Engine"])
+
 api_router.include_router(mgmt_router)

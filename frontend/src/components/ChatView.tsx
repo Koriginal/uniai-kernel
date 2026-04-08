@@ -3,7 +3,7 @@ import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, mess
 import { 
   AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
-  DislikeOutlined, StopOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined 
+  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined 
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -73,7 +73,31 @@ const CodeBlock = ({ language, children, onOpenCanvas }: { language: string, chi
           <Button type="text" size="small" icon={copied ? <CheckOutlined style={{ color: '#52c41a' }} /> : <CopyOutlined />} onClick={handleCopy} />
         </Space>
       </div>
-      <SyntaxHighlighter style={oneLight} language={language} PreTag="div" customStyle={{ margin: 0, padding: '12px', background: '#fff', fontSize: '13px' }}>{children}</SyntaxHighlighter>
+      <SyntaxHighlighter 
+        style={oneLight} 
+        language={language} 
+        PreTag="div" 
+        wrapLongLines={true}
+        customStyle={{ 
+          margin: 0, 
+          padding: '12px', 
+          background: '#fff', 
+          fontSize: '13px', 
+          whiteSpace: 'pre-wrap', 
+          wordBreak: 'break-word',
+          overflowWrap: 'break-word',
+          maxWidth: '100%'
+        }}
+        codeTagProps={{
+          style: {
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            display: 'block'
+          }
+        }}
+      >
+        {children}
+      </SyntaxHighlighter>
     </div>
   );
 };
@@ -125,7 +149,10 @@ const MessageContent = React.memo(({ content, loading, onOpenCanvas, collaborati
   collaborationStatus?: { agentName?: string, content?: string, state: 'active' | 'completed' | null } 
 }) => {
   const textContent = typeof content === 'string' ? content : (Array.isArray(content) ? content.map(item => item.type === 'text' ? item.text : '').join('\n') : '');
-  const preprocessMath = (text: string) => text.replace(/\\\[/g, '$$$$').replace(/\\\]/g, '$$$$').replace(/\\\(/g, '$$').replace(/\\\)/g, '$$');
+  const preprocessMath = (text: string) => text
+    .replace(/\\\[/g, '$$$$').replace(/\\\]/g, '$$$$')
+    .replace(/\\\(/g, '$$').replace(/\\\)/g, '$$')
+    .replace(/\\r\\n/g, '\n').replace(/\\r/g, '\n');
   
   // 状态归并逻辑：
   // 如果当前消息所属的模型正在通过全局协作条显示进度，则气泡内不再显示重复的长占位符
@@ -209,7 +236,7 @@ const MessageContent = React.memo(({ content, loading, onOpenCanvas, collaborati
   };
 
   return (
-    <div className="message-markdown-content" style={{ fontSize: '14px', lineHeight: '1.6' }}>
+    <div className="message-markdown-content" style={{ fontSize: '14px', lineHeight: '1.6', wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: '100%', overflowWrap: 'break-word' }}>
       {renderParts()}
       {loading && !isExpertActive && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#1890ff', fontSize: '12px', marginTop: 8 }}><SyncOutlined spin />续写中...</div>}
     </div>
@@ -273,7 +300,7 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                       <div style={{ display: 'flex', flexDirection: isUser ? 'row-reverse' : 'row', gap: '16px', maxWidth: '98%', position: 'relative' }}>
                         <div style={{ flexShrink: 0, width: 34 }}><Avatar size={34} icon={isUser ? <UserOutlined /> : <RobotOutlined />} style={{ background: isUser ? '#1890ff' : '#fff', color: isUser ? '#fff' : '#1890ff', border: '1px solid #eee' }} /></div>
                         
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', flex: 1 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', flex: 1, minWidth: 0 }}>
                           <div style={{ position: 'relative', width: isAssistant ? '100%' : 'auto' }}>
                             {turn.messages.map((m, mIdx) => {
                                const isLastInTurn = mIdx === turn.messages.length - 1;
@@ -298,8 +325,11 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                                         boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
                                         border: isUser ? 'none' : '1px solid #f0f0f0', 
                                         position: 'relative', 
-                                        width: 'fit-content', 
-                                        maxWidth: '100%'
+                                        width: isUser ? 'fit-content' : '100%', 
+                                        maxWidth: '100%',
+                                        wordBreak: 'break-word',
+                                        overflowWrap: 'break-word',
+                                        boxSizing: 'border-box'
                                       }}>
                                         {m.agentName && isAssistant && turn.messages.length > 1 && (
                                           <div style={{ fontSize: '11px', fontWeight: 600, color: isUser ? '#fff' : '#1890ff', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, opacity: isUser ? 0.9 : 1 }}>
@@ -410,12 +440,12 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
             </Space>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, background: '#f9f9f9', border: '1px solid #e8e8e8', borderRadius: '16px', padding: '8px 12px' }}>
-            <Button type="text" shape="circle" icon={<PlusOutlined style={{ fontSize: 20, color: '#999' }} />} onClick={() => document.getElementById('img-upload')?.click()} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#f9f9f9', border: '1px solid #e8e8e8', borderRadius: '24px', padding: '4px 12px' }}>
+            <Button type="text" shape="circle" icon={<PlusOutlined style={{ fontSize: 20, color: '#999' }} />} onClick={() => document.getElementById('img-upload')?.click()} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, flexShrink: 0 }} />
             <input type="file" id="img-upload" style={{ display: 'none' }} accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onload = (ev) => setPendingImages(prev => [...prev, ev.target?.result as string]); reader.readAsDataURL(file); } }} />
-            <Input.TextArea placeholder={currentAgent ? `向 ${currentAgent.name} 发送指令...` : "请先选择一个专家"} autoSize={{ minRows: 1, maxRows: 12 }} variant="borderless" style={{ flex: 1, padding: '8px 0', fontSize: '15px' }} value={inputText} onChange={e => setInputText(e.target.value)} onCompositionStart={() => setIsIME(true)} onCompositionEnd={() => setIsIME(false)} onKeyDown={(e) => { if (e.key === 'Enter' && !isIME && !e.shiftKey) { e.preventDefault(); onSend(); } }} />
-            <div style={{ paddingBottom: 4 }}>
-                {loading ? <Button type="primary" shape="circle" danger icon={<StopOutlined />} onClick={onStop} /> : <Button type="primary" shape="circle" icon={<SendOutlined />} onClick={onSend} disabled={!currentAgent || (!inputText.trim() && pendingImages.length === 0)} />}
+            <Input.TextArea placeholder={currentAgent ? `向 ${currentAgent.name} 发送指令...` : "请先选择一个专家"} autoSize={{ minRows: 1, maxRows: 12 }} variant="borderless" style={{ flex: 1, padding: '8px 0', fontSize: '15px', lineHeight: '20px' }} value={inputText} onChange={e => setInputText(e.target.value)} onCompositionStart={() => setIsIME(true)} onCompositionEnd={() => setIsIME(false)} onKeyDown={(e) => { if (e.key === 'Enter' && !isIME && !e.shiftKey) { e.preventDefault(); onSend(); } }} />
+            <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                {loading ? <Button type="primary" shape="circle" danger icon={<BorderOutlined style={{ fontSize: 10 }} />} onClick={onStop} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32 }} /> : <Button type="primary" shape="circle" icon={<SendOutlined style={{ fontSize: 16 }} />} onClick={onSend} disabled={!currentAgent || (!inputText.trim() && pendingImages.length === 0)} style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />}
             </div>
           </div>
         </div>

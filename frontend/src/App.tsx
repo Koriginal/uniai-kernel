@@ -4,7 +4,7 @@ import {
   ThunderboltOutlined, HistoryOutlined, AppstoreOutlined,
   DatabaseOutlined, PlusOutlined, RobotOutlined, DeleteOutlined,
   ToolOutlined, BarChartOutlined, KeyOutlined, EditOutlined, UserOutlined,
-  LockOutlined, AppstoreAddOutlined
+  LockOutlined, AppstoreAddOutlined, NodeIndexOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -19,6 +19,7 @@ import UserManager from './components/UserManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
 import SettingsCenter from './components/SettingsView';
 import Login from './components/Login';
+import GraphTracePanel from './components/GraphTracePanel';
 import type { Message, Agent } from './components/ChatView';
 
 const { Header, Content, Sider } = Layout;
@@ -94,6 +95,9 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('enableAutoCanvas');
     return saved === null ? true : saved === 'true';
   });
+  
+  // --- Graph Trace State ---
+  const [graphTraceVisible, setGraphTraceVisible] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('enableAutoCanvas', String(enableAutoCanvas));
@@ -858,14 +862,24 @@ const App: React.FC = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               {activeView === 'chat' && (
-                <Tooltip title={canvasVisible ? "关闭侧边看板" : "打开侧边看板"}>
-                  <Button
-                    type="text"
-                    icon={<AppstoreAddOutlined style={{ fontSize: 16, color: canvasVisible ? '#1890ff' : 'rgba(0,0,0,0.45)' }} />}
-                    onClick={() => setCanvasVisible(!canvasVisible)}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  />
-                </Tooltip>
+                <Space size="small">
+                  <Tooltip title={graphTraceVisible ? "隐藏图执行轨迹" : "查看图执行轨迹"}>
+                    <Button
+                      type="text"
+                      icon={<NodeIndexOutlined style={{ fontSize: 16, color: graphTraceVisible ? '#1890ff' : 'rgba(0,0,0,0.45)' }} />}
+                      onClick={() => setGraphTraceVisible(!graphTraceVisible)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    />
+                  </Tooltip>
+                  <Tooltip title={canvasVisible ? "关闭侧边看板" : "打开侧边看板"}>
+                    <Button
+                      type="text"
+                      icon={<AppstoreAddOutlined style={{ fontSize: 16, color: canvasVisible ? '#1890ff' : 'rgba(0,0,0,0.45)' }} />}
+                      onClick={() => setCanvasVisible(!canvasVisible)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    />
+                  </Tooltip>
+                </Space>
               )}
               {user && (
                 <Dropdown
@@ -949,6 +963,12 @@ const App: React.FC = () => {
                   if (lang) setCanvasLanguage(lang);
                   setCanvasVisible(true);
                 }}
+              />
+              <GraphTracePanel
+                visible={graphTraceVisible}
+                onClose={() => setGraphTraceVisible(false)}
+                currentAgentName={currentAgent?.name}
+                isStreaming={loading}
               />
               <ArtifactCanvas
                 visible={canvasVisible}
