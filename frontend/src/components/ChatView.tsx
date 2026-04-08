@@ -118,7 +118,7 @@ const CollaborationBlock: React.FC<{ title: string; children: React.ReactNode; i
   );
 };
 
-const MessageContent = ({ content, loading, onOpenCanvas, collaborationStatus }: { 
+const MessageContent = React.memo(({ content, loading, onOpenCanvas, collaborationStatus }: { 
   content: string | any[], 
   loading?: boolean, 
   onOpenCanvas?: any,
@@ -214,7 +214,15 @@ const MessageContent = ({ content, loading, onOpenCanvas, collaborationStatus }:
       {loading && !isExpertActive && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#1890ff', fontSize: '12px', marginTop: 8 }}><SyncOutlined spin />续写中...</div>}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // 只有当内容、加载状态或协作状态发生变化时才更新
+  return (
+    prevProps.content === nextProps.content && 
+    prevProps.loading === nextProps.loading &&
+    prevProps.collaborationStatus?.state === nextProps.collaborationStatus?.state &&
+    prevProps.collaborationStatus?.content === nextProps.collaborationStatus?.content
+  );
+});
 
 const ChatView: React.FC<ChatViewProps> = (props) => {
   const { messages, loading, collaborationStatus, inputText, setInputText, currentAgent, enableMemory, setEnableMemory, enableSwarm, setEnableSwarm, onSend, onStop, onDeleteMessage, onEditMessage, onFeedbackMessage, onRegenerate, pendingImages, setPendingImages, onOpenCanvas, enableAutoCanvas, setEnableAutoCanvas } = props;

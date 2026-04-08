@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**企业级 Agentic OS 内核** - 基于 FastAPI 和 LangGraph 构建的高性能多租户 AI 编排引擎。内置先进的 Swarm 智能协作体系、实时 Artifacts 交互看板以及生产级可观测性监控。
+**企业级 AI 开发框架** - 基于 FastAPI、LangGraph 和 LiteLLM 构建，支持多租户模型管理、智能记忆系统和流式对话。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)

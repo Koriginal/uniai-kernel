@@ -212,6 +212,7 @@ const App: React.FC = () => {
       });
       const newSession = res.data;
       setCurrentSessionId(newSession.id);
+      setSessionRestored(true); // [FIX] 防止新会话触发 useEffect 中的 loadSession 导致闪烁
       if (autoClear) {
         setMessages([]);
       }
@@ -596,11 +597,11 @@ const App: React.FC = () => {
                     toolCallsBuffer[idx].function.arguments += tc.function.arguments;
                     const currentTC = toolCallsBuffer[idx];
 
-                    if (currentTC.function.name === 'upsert_canvas' || toolCallsBuffer[idx].isCanvasUpdate) {
+                    if (enableAutoCanvas && (currentTC.function.name === 'upsert_canvas' || toolCallsBuffer[idx].isCanvasUpdate)) {
                       toolCallsBuffer[idx].isCanvasUpdate = true;
                       const argsStr = currentTC.function.arguments;
 
-                      // 展示 Loading 骨架，减少等待感
+                      // 仅在 enableAutoCanvas=true 时自动展开看板
                       if (!canvasVisible) setCanvasVisible(true);
 
                       const sContent = extractPartialJsonField(argsStr, "content");
@@ -622,11 +623,25 @@ const App: React.FC = () => {
               }
 
               if (delta?.content || delta?.tool_calls) {
-                setMessages(prev => prev.map(m =>
-                  // 只要 ID 没变或者是正在流式更新的气泡，就持续喂入内容块
-                  (m.id === assistantMsgId || m.id === initialTempId) ?
-                    { ...m, content: accumulatedContent, tool_calls: toolCallsBuffer.filter(Boolean) } : m
-                ));
+                setMessages(prev => {
+                  const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
+                  if (targetIndex === -1) return prev;
+                  
+                  const targetMsg = prev[targetIndex];
+                  // 只有当内容或工具调用确实发生变化时才更新 state，防止过度渲染
+                  const newToolCalls = toolCallsBuffer.filter(Boolean);
+                  if (targetMsg.content === accumulatedContent && JSON.stringify(targetMsg.tool_calls) === JSON.stringify(newToolCalls)) {
+                    return prev;
+                  }
+
+                  const newMsgs = [...prev];
+                  newMsgs[targetIndex] = { 
+                    ...targetMsg, 
+                    content: accumulatedContent, 
+                    tool_calls: newToolCalls 
+                  };
+                  return newMsgs;
+                });
               }
             } catch (err) {
               console.warn("[App] SSE parse error:", err);
@@ -635,22 +650,24 @@ const App: React.FC = () => {
         }
       }
       // 物理级结案对齐逻辑 (Final Consensus)
-      // [IMPORTANT] 采用“倒序优先”策略：确保在多轮接力中，看板展现的是主控最终确认的最新版本
-      const finalCanvasTC = [...toolCallsBuffer].reverse().find(tc => tc && tc.function.name === 'upsert_canvas');
-      if (finalCanvasTC) {
-        try {
-          const finalArgs = JSON.parse(finalCanvasTC.function.arguments);
-          if (finalArgs.content) {
-            setCanvasContent(finalArgs.content);
-            if (!canvasVisible) setCanvasVisible(true);
+      // [IMPORTANT] 采用"倒序优先"策略：确保在多轮接力中，看板展现的是主控最终确认的最新版本
+      // 仅在 enableAutoCanvas=true 时才自动更新/弹出看板
+      if (enableAutoCanvas) {
+        const finalCanvasTC = [...toolCallsBuffer].reverse().find(tc => tc && tc.function.name === 'upsert_canvas');
+        if (finalCanvasTC) {
+          try {
+            const finalArgs = JSON.parse(finalCanvasTC.function.arguments);
+            if (finalArgs.content) {
+              setCanvasContent(finalArgs.content);
+              if (!canvasVisible) setCanvasVisible(true);
+            }
+            if (finalArgs.title) setCanvasTitle(finalArgs.title);
+            if (finalArgs.type) setCanvasType(finalArgs.type);
+          } catch (e) {
+            console.warn("[App] Final alignment failed:", e);
           }
-          if (finalArgs.title) setCanvasTitle(finalArgs.title);
-          if (finalArgs.type) setCanvasType(finalArgs.type);
-        } catch (e) {
-          console.warn("[App] Final alignment failed:", e);
         }
       }
-
       fetchSessions();
     } catch (err: any) {
       if (err.name === 'AbortError') {

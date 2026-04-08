@@ -161,28 +161,41 @@ class AgentService:
                     yield " " # Keep-alive heartbeat
                     
                     tool_calls_buffer = {}
-                    
+                    echo_states = {} # 追踪每一路工具调用的回响状态（是否已发送 Markdown 栅栏）
                     # 动态注入当前活跃实体的系统提示词
                     current_sys_prompt = agent_profile.system_prompt if agent_profile and agent_profile.system_prompt else "你是一个有用的 AI 助手。"
                     
-                    # 智慧归还协议注入：专家无权更新看板，主控是唯一看板发布者
-                    if agent_id != orchestrator_agent_id:
-                        protocol_instr = f"\n\n[COLLABORATION PROTOCOL]: \n" \
-                                         f"1. MANDATORY: You MUST first output your reasoning or code summary as plain text in the chat response. \n" \
-                                         f"2. CRITICAL - CODE VISIBILITY: If you are generating code/scripts, you MUST ALWAYS output the FULL raw code block wrapped in Markdown directly in your chat response. This is the ONLY way the user can read your source code. \n" \
-                                         f"3. DUAL-OUTPUT: After (or while) typing the code in the chat, you MUST ALSO use the 'upsert_canvas' tool to display it on the right side. Do NOT skip the chat output. \n" \
-                                         f"4. ZERO-SILENCE: You must NEVER return a response with an empty text content field while calling tools. Always explain what you are doing. \n" \
-                                         f"5. HANDBACK: Once the code is written in both the chat AND the tool, call 'transfer_to_agent' with id='{orchestrator_agent_id}' to return control."
-                        
-                        current_sys_prompt += protocol_instr
+                    # --- 1. [SIDEBAR CANVAS MODE] ---
+                    if enable_canvas:
+                        # 开启状态：要求纯净源码，告知后端会自动包裹围栏同步到对话框
+                        canvas_instr = "\n\n[SIDEBAR CANVAS: ENABLED]: \n" \
+                                       "1. PURE SOURCE: In 'upsert_canvas' content field, provide RAW code ONLY. NO markdown fences (```). \n" \
+                                       "2. AUTO-MIRROR: The system will automatically mirror your tool call to the chat with syntax highlighting. Do NOT repeat code in text. \n" \
+                                       "3. SINGLE CALL: Only call 'upsert_canvas' once per turn with the final complete version."
+                        current_sys_prompt += canvas_instr
                     else:
-                        # 极度强化主控协同约束：强迫主控使用具象化工具，绝不自行打印源码
-                        orchestrator_instr = "\n\n[ORCHESTRATOR DUTY]: \n" \
-                                             "You ARE the sole authority to update the canvas. \n" \
-                                             "If experts provided any code/html/widgets, you MUST use the 'upsert_canvas' tool to display it immediately as a final Publication step. This ensures the user sees the final expert results even after handoff. \n" \
-                                             "CRITICAL: Do NOT output the raw code directly in your chat response. ALWAYS rely on 'upsert_canvas' when sharing code. \n" \
-                                             "When experts finish, call the tool first, then provide a brief one-line summary."
-                        current_sys_prompt += orchestrator_instr
+                        # 关闭状态：强力阻断指令，严禁调用工具，要求手动输出围栏
+                        fallback_instr = "\n\n[SIDEBAR CANVAS: DISABLED]: \n" \
+                                         "1. NO TOOL: The 'upsert_canvas' tool is REMOVED. NEVER attempt to call it. \n" \
+                                         "2. MANUAL FENCES: You MUST output all code segments directly in your chat response using standard Markdown triple backticks (```). \n" \
+                                         "3. NO MENTION: Do NOT mention the 'sidebar' or 'canvas' to the user."
+                        current_sys_prompt += fallback_instr
+
+                    # --- 2. [COLLABORATION & SWARM PROTOCOL] ---
+                    if enable_swarm and agent_id != orchestrator_agent_id:
+                        protocol_instr = f"\n\n[COLLABORATION PROTOCOL]: \n" \
+                                         f"1. MANDATORY: Output your logic/reasoning first. \n" \
+                                         f"2. ZERO-SILENCE: Always explain what you are providing. \n" \
+                                         f"3. HANDBACK: Call 'transfer_to_agent' with id='{orchestrator_agent_id}' to finish."
+                        current_sys_prompt += protocol_instr
+                    
+                    # --- 3. [ORCHESTRATOR STEWARDSHIP] ---
+                    if agent_id == orchestrator_agent_id:
+                        steward_instr = "\n\n[ORCHESTRATOR DUTY]: \n" \
+                                        "1. NO REPETITION: Do NOT repeat code blocks from experts. \n" \
+                                        "2. BRIEF: Keep final response to 1-2 professional sentences. \n" \
+                                        "3. FALLBACK: Direct 'upsert_canvas' (RAW ONLY) only if expert failed."
+                        current_sys_prompt += steward_instr
 
                     full_sys_content = (expert_prompt_catalog + "\n\n" + current_sys_prompt).strip()
 
@@ -241,17 +254,18 @@ class AgentService:
                         
                         if wrapping_expert_id and wrapping_expert_id != agent_id:
                             closing_tag = "\n</collaboration>\n"
-                            yield f"data: {json.dumps({'choices': [{'index': 0, 'delta': {'content': closing_tag}}]})}\n\n"
+                            yield f"data: {ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=closing_tag))]).model_dump_json(exclude_none=True)}\n\n"
                             total_assistant_content += closing_tag
                             wrapping_expert_id = None
 
                         iter_text = ""
-                        
-                        if is_expert and wrapping_expert_id != agent_id:
+                        # 注意：如果我们即将开始镜像，我们将延迟开启标签
+                        # 但这里是迭代起始，我们先检测是否是专家
+                        if is_expert and not wrapping_expert_id:
                             opening_tag = f"\n<collaboration title='{agent_profile.name if agent_profile else 'Expert'}'>\n"
-                            wrapping_expert_id = agent_id
-                            yield f"data: {json.dumps({'choices': [{'index': 0, 'delta': {'content': opening_tag}}]})}\n\n"
+                            yield f"data: {ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=opening_tag))]).model_dump_json(exclude_none=True)}\n\n"
                             total_assistant_content += opening_tag
+                            wrapping_expert_id = agent_id
                         
                         # 向前端透传更细粒度的原子状态
                         state_msg = "正在深入分析中..." if is_expert else "正在进行最后汇总..."
@@ -278,28 +292,94 @@ class AgentService:
                                 for tc in delta.tool_calls:
                                     idx = tc.index
                                     if idx not in tool_calls_buffer:
-                                        tool_calls_buffer[idx] = {"id": tc.id, "type": "function", "function": {"name": getattr(tc.function, "name", ""), "arguments": ""}}
-                                    if getattr(tc.function, "arguments", None): 
-                                        new_args = tc.function.arguments
-                                        tool_calls_buffer[idx]["function"]["arguments"] += new_args
+                                        tool_calls_buffer[idx] = {"id": tc.id, "type": "function", "function": {"name": "", "arguments": ""}}
+                                    
+                                    # [FIX] 保护名称：只有当 tc.function.name 非空时才创建或更新名称，防止被后续 chunk 覆盖为空
+                                    if getattr(tc.function, "name", None):
+                                        tool_calls_buffer[idx]["function"]["name"] = tc.function.name
                                         
-                                        # 专家内容回响机制 (Content Echoing)
-                                        if is_expert and (tool_calls_buffer[idx]["function"]["name"] == "upsert_canvas"):
-                                            # 我们只需要在 arguments 中提取最新的 content 部分并透传
-                                            if '"content"' in tool_calls_buffer[idx]["function"]["arguments"]:
-                                                import re
-                                                # 尝试提取最近推入的字符串内容部分
-                                                echo_text = new_args.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
-                                                # 过滤掉 JSON 结构字符，只保留业务文本（启发式）
-                                                echo_text = re.sub(r'["{}:,]', '', echo_text).strip()
-                                                
-                                                if echo_text and len(echo_text) > 1:
-                                                    echo_chunk = ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=echo_text))])
+                                    if getattr(tc.function, "arguments", None): 
+                                        tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
+                                        
+                                        # 【万能镜像回响】：无论 enable_canvas 是否开启，只要模型由于幻觉或需要产生工具调用，均进行回响备份
+                                        if tool_calls_buffer[idx]["function"]["name"] == "upsert_canvas":
+                                            # 【破圈逻辑】：镜像开始前，如果处于协作折叠框内，立即将其闭合，使代码直接泄露到主聊天流中
+                                            if wrapping_expert_id:
+                                                closing_tag = "\n</collaboration>\n"
+                                                yield f"data: {ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=closing_tag))]).model_dump_json(exclude_none=True)}\n\n"
+                                                total_assistant_content += closing_tag
+                                                wrapping_expert_id = None
+
+                                            if idx not in echo_states:
+                                                echo_states[idx] = {"opened": False, "closed": False, "language": "markdown", "yielded_len": 0}
+                                            
+                                            args_so_far = tool_calls_buffer[idx]["function"]["arguments"]
+                                            
+                                            # [Smart Detection] 持续探测语言信息，直到围栏开启为止
+                                            if not echo_states[idx]["opened"] or echo_states[idx]["language"] == "markdown":
+                                                lang_match = re.search(r'"language"\s*:\s*"([^"]*)"', args_so_far)
+                                                if lang_match:
+                                                    echo_states[idx]["language"] = lang_match.group(1) or "markdown"
+
+                                            # 【精准提取】寻找 content 字段的内容起始位置
+                                            content_match = re.search(r'"content"\s*:\s*"', args_so_far)
+                                            if content_match:
+                                                # 如果还没有发送开场围栏，现在发送
+                                                if not echo_states[idx]["opened"]:
+                                                    # 发送围栏时，采用目前能探测到的最精准语言（默认为 markdown）
+                                                    lang = echo_states[idx]["language"]
+                                                    open_fence = f"\n\n```{lang}\n"
+                                                    echo_chunk = ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=open_fence))])
                                                     yield f"data: {echo_chunk.model_dump_json(exclude_none=True)}\n\n"
-                                                    total_assistant_content += echo_text
+                                                    total_assistant_content += open_fence
+                                                    echo_states[idx]["opened"] = True
+                                                
+                                                # 提取当前已生成的全部 content 内容
+                                                # 我们寻找 content 字段的起始引号之后，到当前末尾（或结束引号之前）的部分
+                                                content_start_pos = content_match.end()
+                                                # 查找下一个未转义的引号作为结束
+                                                # 注意：因为是流式，可能还没结束
+                                                content_val_raw = args_so_far[content_start_pos:]
+                                                
+                                                # 尝试截断掉可能的结束引号及其之后的内容
+                                                actual_end = -1
+                                                for i in range(len(content_val_raw)):
+                                                    if content_val_raw[i] == '"' and (i == 0 or content_val_raw[i-1] != '\\'):
+                                                        actual_end = i
+                                                        break
+                                                
+                                                is_fully_closed = (actual_end != -1)
+                                                current_full_val = content_val_raw[:actual_end] if is_fully_closed else content_val_raw
+                                                
+                                                # 处理转义字符还原
+                                                decoded_val = current_full_val.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\').replace('\\t', '\t')
+                                                
+                                                # 【增量发送】
+                                                new_text = decoded_val[echo_states[idx]["yielded_len"]:]
+                                                if new_text:
+                                                    echo_chunk = ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=new_text))])
+                                                    yield f"data: {echo_chunk.model_dump_json(exclude_none=True)}\n\n"
+                                                    total_assistant_content += new_text
+                                                    echo_states[idx]["yielded_len"] += len(new_text)
+                                                
+                                                # 如果内容已闭合且尚未发送结束围栏
+                                                if is_fully_closed and not echo_states[idx]["closed"]:
+                                                    close_fence = "\n```\n"
+                                                    echo_chunk = ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=close_fence))])
+                                                    yield f"data: {echo_chunk.model_dump_json(exclude_none=True)}\n\n"
+                                                    total_assistant_content += close_fence
+                                                    echo_states[idx]["closed"] = True
                             
                             if delta and getattr(delta, "content", None):
                                 c = delta.content
+                                
+                                # [Smart Resume] 如果镜像回响导致了标签提前闭合，而现在又有新的文字内容，重新开启专家折叠框
+                                if is_expert and not wrapping_expert_id:
+                                    opening_tag = f"\n<collaboration title='{agent_profile.name if agent_profile else 'Expert'}'>\n"
+                                    yield f"data: {ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=opening_tag))]).model_dump_json(exclude_none=True)}\n\n"
+                                    total_assistant_content += opening_tag
+                                    wrapping_expert_id = agent_id
+
                                 iter_text += c
                                 total_assistant_content += c
                                 chunk_resp = ChatCompletionChunk(id=current_msg_id, model=request.model, choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=c))])

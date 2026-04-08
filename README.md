@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Enterprise-grade Agentic OS Kernel** - A high-performance, multi-tenant AI orchestration engine built with FastAPI and LangGraph. It features a sophisticated Swarm intelligence system, real-time Artifacts visualization, and production-ready observability.
+**Enterprise-level AI Development Framework** - Built with FastAPI, LangGraph, and LiteLLM, supporting multi-tenant model management, intelligent memory systems, and streaming chat.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
