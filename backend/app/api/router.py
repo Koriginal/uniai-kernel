@@ -14,7 +14,8 @@ from app.api.endpoints import (
     dynamic_tools,
     auth,
     users,
-    messages as messages_ep
+    messages as messages_ep,
+    orchestration as orch_ep
 )
 
 api_router = APIRouter()
@@ -45,5 +46,6 @@ mgmt_router.include_router(dynamic_tools.router, prefix="/dynamic-tools", tags=[
 # --- 3. [图引擎面] LangGraph 图拓扑与调试 ---
 from app.api.endpoints import graph as graph_ep
 mgmt_router.include_router(graph_ep.router, prefix="/graph", tags=["Graph Engine"])
+mgmt_router.include_router(orch_ep.router, prefix="/orchestration", tags=["Orchestration Engine"])
 
 api_router.include_router(mgmt_router)

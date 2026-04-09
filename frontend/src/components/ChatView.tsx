@@ -3,7 +3,8 @@ import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, mess
 import { 
   AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
-  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined 
+  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined, InfoCircleOutlined,
+  LineChartOutlined, CheckCircleOutlined, ThunderboltFilled
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

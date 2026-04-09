@@ -3,12 +3,15 @@ import {
   Typography, Button, List, Card, Avatar, Switch, Modal,
   Input, Select, Checkbox, Tag, Space, Empty, Form, message, Tabs
 } from 'antd';
-import { PlusOutlined, RobotOutlined, SettingOutlined, DeleteOutlined, InfoCircleOutlined, NodeIndexOutlined } from '@ant-design/icons';
+import { 
+  PlusOutlined, RobotOutlined, SettingOutlined, DeleteOutlined, 
+  InfoCircleOutlined, NodeIndexOutlined, SyncOutlined 
+} from '@ant-design/icons';
 import axios from 'axios';
 import type { Agent } from './ChatView';
 import AgentTopologyGraph from './AgentTopologyGraph';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 interface ActionMeta {
   name: string;
@@ -25,10 +28,99 @@ interface AgentManagerProps {
   onRefresh: () => void;
 }
 
+// 子组件：Agent 卡片，包含实时统计数据
+const AgentCard: React.FC<{ 
+  agent: Agent, 
+  onEdit: () => void, 
+  onDelete: () => void, 
+  onToggle: (c: boolean) => void 
+}> = ({ agent, onEdit, onDelete, onToggle }) => {
+  const [stats, setStats] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      setLoadingStats(true);
+      try {
+        const res = await axios.get(`/api/v1/agents/${agent.id}/stats`);
+        setStats(res.data);
+      } catch (err) {
+        console.error("Failed to fetch stats for agent:", agent.id, err);
+      } finally {
+        setLoadingStats(false);
+      }
+    };
+    if (agent.id) {
+      fetchStats();
+    }
+  }, [agent.id]);
+
+  return (
+    <Card
+      hoverable
+      actions={[
+        <SettingOutlined key="edit" onClick={onEdit} />,
+        <DeleteOutlined key="delete" onClick={onDelete} style={{ color: '#ff4d4f' }} />,
+        <Switch key="status" size="small" checked={agent.is_active} onChange={onToggle} />
+      ]}
+      style={{ opacity: agent.is_active ? 1 : 0.6, height: '100%', display: 'flex', flexDirection: 'column' }}
+      bodyStyle={{ flex: 1 }}
+    >
+      <Card.Meta
+        avatar={<Avatar icon={<RobotOutlined />} style={{ backgroundColor: agent.is_active ? '#1890ff' : '#ccc' }} />}
+        title={
+          <Space>
+            <Text strong>{agent.name}</Text>
+            {agent.is_public && <Tag color="gold" style={{ fontSize: '10px' }}>🛡️ 全域</Tag>}
+          </Space>
+        }
+        description={
+          <div>
+            <Text type="secondary" ellipsis={{ tooltip: true }} style={{ display: 'block', fontSize: '12px', marginBottom: 8 }}>
+              {agent.description || '无描述'}
+            </Text>
+            
+            {/* 实时评分统计 */}
+            {stats && stats.total_calls > 0 ? (
+                <div style={{ marginTop: 8, padding: '8px', background: '#fafafa', borderRadius: 4, display: 'flex', gap: 12, justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <Text type="secondary" style={{ fontSize: 10 }}>调用次数</Text>
+                        <Text strong style={{ fontSize: 12 }}>{stats.total_calls}</Text>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <Text type="secondary" style={{ fontSize: 10 }}>成功率</Text>
+                        <Text strong style={{ fontSize: 12, color: stats.success_rate > 0.8 ? '#52c41a' : '#faad14' }}>
+                            {(stats.success_rate * 100).toFixed(1)}%
+                        </Text>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <Text type="secondary" style={{ fontSize: 10 }}>Avg Latency</Text>
+                        <Text strong style={{ fontSize: 12 }}>
+                            {stats.avg_duration_ms < 1000 ? `${Math.round(stats.avg_duration_ms)}ms` : `${(stats.avg_duration_ms/1000).toFixed(1)}s`}
+                        </Text>
+                    </div>
+                </div>
+            ) : (
+                loadingStats ? <SyncOutlined spin style={{ fontSize: 12, color: '#bfbfbf', marginTop: 8 }} /> : null
+            )}
+
+            <div style={{ marginTop: 12 }}>
+              {(agent.tools || []).slice(0, 3).map(t => (
+                <Tag key={t} style={{ fontSize: '10px', marginBottom: 2 }}>{t}</Tag>
+              ))}
+              {(agent.tools || []).length > 3 && <Text type="secondary" style={{ fontSize: 10 }}>...</Text>}
+            </div>
+          </div>
+        }
+      />
+    </Card>
+  );
+};
+
+// 主组件：Agent 管理器
 const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelConfigs, msgApi, onRefresh }) => {
   const [form] = Form.useForm();
   
-  // 核心修复：定义一个可靠的通知函数
   const notify = {
     success: (content: string) => {
       if (msgApi?.success) msgApi.success(content);
@@ -45,17 +137,16 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   const [registeredTools, setRegisteredTools] = useState<ActionMeta[]>([]);
 
   useEffect(() => {
+    const fetchTools = async () => {
+      try {
+        const res = await axios.get('/api/v1/registry/actions');
+        setRegisteredTools(res.data);
+      } catch (err) {
+        console.warn("Tools registry is empty or unavailable");
+      }
+    };
     fetchTools();
   }, []);
-
-  const fetchTools = async () => {
-    try {
-      const res = await axios.get('/api/v1/registry/actions');
-      setRegisteredTools(res.data);
-    } catch {
-      // 工具注册表可能为空
-    }
-  };
 
   const openEditor = (agent?: Agent) => {
     if (agent) {
@@ -71,15 +162,13 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     } else {
       setEditingAgent(null);
       form.resetFields();
-      form.setFieldsValue({ is_public: false });
+      form.setFieldsValue({ is_public: false, tools: [] });
     }
     setModalVisible(true);
   };
 
   const handleSubmit = async (values: any) => {
-    console.log('AgentManager submitting values:', values);
     try {
-      // 预处理 values，确保模型 ID 是数字
       const payload = {
         ...values,
         model_config_id: Number(values.model_config_id)
@@ -95,8 +184,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       setModalVisible(false);
       onRefresh();
     } catch (err: any) {
-      console.error('Agent save error:', err);
-      // 如果后端报错，notify 将显示详细的 500 错误信息（已在后端捕获）
       const detail = err.response?.data?.detail || '操作失败';
       notify.error(detail);
     }
@@ -124,6 +211,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   const toggleStatus = async (agent: Agent, checked: boolean) => {
     try {
       await axios.put(`/api/v1/agents/${agent.id}`, { is_active: checked });
+      // 乐观更新
       setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_active: checked } : a));
       notify.success(`${agent.name} 已${checked ? '上线' : '下线'}`);
     } catch {
@@ -132,10 +220,13 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   };
 
   return (
-    <div style={{ padding: '24px', overflowY: 'auto', height: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
-        <Title level={3} style={{ margin: 0 }}>专家集群管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>
+    <div style={{ padding: '24px', overflowY: 'auto', height: '100%', background: '#fff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', alignItems: 'center' }}>
+        <Space>
+          <RobotOutlined style={{ fontSize: 24, color: '#1890ff' }} />
+          <Title level={3} style={{ margin: 0 }}>专家集群管理</Title>
+        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()} size="large">
           新增专家
         </Button>
       </div>
@@ -143,59 +234,22 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       <AgentTopologyGraph agents={agents} onClickNode={openEditor} />
 
       {agents.length === 0 ? (
-        <Empty description="暂无专家，点击上方按钮创建" />
+        <Empty description="暂无专家，点击右上角按钮创建" style={{ marginTop: 40 }} />
       ) : (
         <List
-          grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3, xl: 4 }}
+          grid={{ gutter: 20, xs: 1, sm: 2, md: 3, lg: 3, xl: 4 }}
           dataSource={agents}
           renderItem={a => (
             <List.Item>
-              <Card
-                hoverable
-                actions={[
-                  <SettingOutlined key="edit" onClick={() => openEditor(a)} />,
-                  <DeleteOutlined key="delete" onClick={() => handleDelete(a)} style={{ color: '#ff4d4f' }} />,
-                  <Switch key="status" size="small" checked={a.is_active} onChange={c => toggleStatus(a, c)} />
-                ]}
-                style={{ opacity: a.is_active ? 1 : 0.6 }}
-              >
-                <Card.Meta
-                  avatar={<Avatar icon={<RobotOutlined />} style={{ backgroundColor: a.is_active ? '#1890ff' : '#ccc' }} />}
-                  title={
-                    <Space>
-                      <Text strong>{a.name}</Text>
-                      {a.is_public && <Tag color="gold" style={{ fontSize: '10px' }}>🛡️ 全域专家</Tag>}
-                    </Space>
-                  }
-                  description={
-                    <div>
-                      <Text type="secondary" ellipsis={{ tooltip: true }} style={{ display: 'block', fontSize: '12px' }}>
-                        {a.description || '无描述'}
-                      </Text>
-                      <div style={{ marginTop: 8 }}>
-                        {(a.tools || []).map(t => (
-                          <Tag key={t} style={{ fontSize: '10px', marginBottom: 2 }}>{t}</Tag>
-                        ))}
-                        {(!a.tools || a.tools.length === 0) && (
-                          <Text type="secondary" style={{ fontSize: '11px' }}>无工具</Text>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                        <div style={{
-                          width: 8, height: 8, borderRadius: '50%',
-                          background: a.is_active ? '#52c41a' : '#bfbfbf',
-                          boxShadow: a.is_active ? '0 0 6px rgba(82,196,26,0.4)' : 'none'
-                        }} />
-                        <Text type="secondary" style={{ fontSize: '11px' }}>
-                          {a.is_active ? '在线' : '离线'}
-                        </Text>
-                      </div>
-                    </div>
-                  }
-                />
-              </Card>
+              <AgentCard 
+                agent={a} 
+                onEdit={() => openEditor(a)} 
+                onDelete={() => handleDelete(a)} 
+                onToggle={c => toggleStatus(a, c)} 
+              />
             </List.Item>
           )}
+          style={{ marginTop: 24 }}
         />
       )}
 
@@ -205,18 +259,17 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
         open={modalVisible}
         onOk={() => form.submit()}
         onCancel={() => setModalVisible(false)}
-        okText={editingAgent ? '保存' : '创建'}
-        cancelText="取消"
-        width={640}
+        width={720}
         destroyOnClose
+        bodyStyle={{ paddingTop: 16 }}
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit} initialValues={{ tools: [] }}>
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Tabs defaultActiveKey="1" items={[
             {
               key: '1',
               label: <span><SettingOutlined /> 基础配置</span>,
               children: (
-                <div style={{ paddingTop: 8 }}>
+                <div style={{ minHeight: 400 }}>
                   <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
                     <Input placeholder="e.g. 法律顾问" />
                   </Form.Item>
@@ -227,95 +280,56 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
 
                   <Form.Item name="model_config_id" label="核心大脑 (LLM Base)" rules={[{ required: true, message: '请选择模型' }]}>
                     <Select 
-                      placeholder="请通过搜索或分类选择专家的大脑..." 
+                      placeholder="请选择专家的大脑..." 
                       showSearch 
                       optionLabelProp="label"
-                      defaultValue={undefined}
-                      listHeight={400}
-                      dropdownStyle={{ borderRadius: 8, padding: 8 }}
-                      filterOption={(input, option: any) =>
-                        String(option?.search ?? '').toLowerCase().includes(input.toLowerCase())
-                      }
                     >
-                      {(() => {
-                        // 定义核心大脑白名单分组 (仅保留具备生成能力的模型)
-                        const typeMap: Record<string, { icon: string, label: string, color: string }> = {
-                           'chat': { icon: '💬', label: '通用对话', color: '#1890ff' },
-                           'vision': { icon: '👁️', label: '视觉理解', color: '#722ed1' },
-                           'reasoning': { icon: '🧠', label: '逻辑推理', color: '#eb2f96' }
-                        };
-
-                        // 增强后的前端语义识别与分组
-                        const grouped: Record<string, any[]> = {};
-                        modelConfigs.forEach(p => {
-                            (p.models || []).forEach((m: any) => {
-                                let t = m.model_type === 'llm' ? 'chat' : m.model_type;
-                                const lowerName = m.model_name.toLowerCase();
-                                
-                                // 智能降级/语义辨识：即使 DB 数据陈旧，前端也能正确分类
-                                if (lowerName.includes('vl') || lowerName.includes('vision')) t = 'vision';
-                                else if (lowerName.includes('-r1') || lowerName.includes('reasoner') || lowerName.startsWith('o1') || lowerName.startsWith('o3')) t = 'reasoning';
-                                
-                                if (!grouped[t]) grouped[t] = [];
-                                grouped[t].push({ ...m, provider_name: p.display_name });
+                        {(() => {
+                            const typeMap: Record<string, string> = { 'chat': '💬 通用', 'vision': '👁️ 视觉', 'reasoning': '🧠 推理' };
+                            const grouped: Record<string, any[]> = {};
+                            modelConfigs.forEach(p => {
+                                (p.models || []).forEach((m: any) => {
+                                    let t = m.model_type === 'llm' ? 'chat' : m.model_type;
+                                    const n = m.model_name.toLowerCase();
+                                    if (n.includes('vl') || n.includes('vision')) t = 'vision';
+                                    else if (n.includes('-r1') || n.includes('reasoner')) t = 'reasoning';
+                                    if (!grouped[t]) grouped[t] = [];
+                                    grouped[t].push({ ...m, provider: p.display_name });
+                                });
                             });
-                        });
-
-                        return Object.entries(typeMap).map(([type, meta]) => {
-                            const models = grouped[type] || [];
-                            if (models.length === 0) return null;
-                            return (
-                                <Select.OptGroup key={type} label={<span>{meta.icon} {meta.label}</span>}>
-                                    {models.map(m => (
-                                        <Select.Option 
-                                            key={m.id} 
-                                            value={m.id}
-                                            label={`${meta.icon} ${m.model_name}`}
-                                            search={`${m.model_name} ${m.provider_name}`}
-                                        >
-                                            <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <Space size={4}>
-                                                    <span style={{ fontSize: '13px' }}>{m.model_name}</span>
-                                                    <span style={{ fontSize: '11px', color: '#bfbfbf' }}>({m.provider_name})</span>
-                                                </Space>
-                                                <Text type="secondary" style={{ fontSize: '10px' }}>
-                                                    {m.context_length >= 1024 ? `${Math.round(m.context_length/1024)}K` : m.context_length}
-                                                </Text>
+                            return Object.entries(typeMap).map(([t, label]) => (
+                                <Select.OptGroup key={t} label={label}>
+                                    {(grouped[t] || []).map(m => (
+                                        <Select.Option key={m.id} value={m.id} label={m.model_name}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span>{m.model_name} <small style={{ color: '#ccc' }}>({m.provider})</small></span>
                                             </div>
                                         </Select.Option>
                                     ))}
                                 </Select.OptGroup>
-                            );
-                        });
-                      })()}
+                            ));
+                        })()}
                     </Select>
                   </Form.Item>
 
-                  <Form.Item name="is_public" label="全域专家权限" valuePropName="checked">
-                    <Switch checkedChildren="全域公开" unCheckedChildren="私有" />
+                  <Form.Item name="is_public" label="全域公开" valuePropName="checked">
+                    <Switch checkedChildren="公开" unCheckedChildren="私有" />
                   </Form.Item>
 
-                  <Form.Item name="system_prompt" label="系统指令 (System Prompt)">
-                    <Input.TextArea placeholder="定义专家的行为准则、专业背景与回复风格..." rows={4} />
+                  <Form.Item name="system_prompt" label="系统指令">
+                    <Input.TextArea placeholder="定义专家的行为注入..." rows={6} />
                   </Form.Item>
 
                   <Form.Item name="tools" label="工具装备">
-                    {registeredTools.length > 0 ? (
-                      <Checkbox.Group style={{ width: '100%' }}>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          {registeredTools.map(t => (
-                            <Checkbox key={t.name} value={t.name}>
-                              <Text strong>{t.label}</Text>
-                              <Text type="secondary" style={{ marginLeft: 8, fontSize: '12px' }}>{t.description}</Text>
-                            </Checkbox>
-                          ))}
-                        </Space>
-                      </Checkbox.Group>
-                    ) : (
-                      <Paragraph type="secondary">
-                        内核暂无已注册工具。请在 backend/app/tools/ 中添加工具实现。
-                      </Paragraph>
-                    )}
+                    <Checkbox.Group style={{ width: '100%' }}>
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        {registeredTools.map(t => (
+                          <Checkbox key={t.name} value={t.name}>
+                            <Text strong>{t.label}</Text> <Text type="secondary" style={{ fontSize: 12 }}>- {t.description}</Text>
+                          </Checkbox>
+                        ))}
+                      </Space>
+                    </Checkbox.Group>
                   </Form.Item>
                 </div>
               )
@@ -324,30 +338,17 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
               key: '2',
               label: <span><NodeIndexOutlined /> 图路由配置</span>,
               children: (
-                <div style={{ padding: '24px 0', minHeight: 300, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                   <div style={{ padding: 16, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8 }}>
-                       <Space align="start">
-                           <InfoCircleOutlined style={{ color: '#52c41a', marginTop: 4 }} />
-                           <div>
-                               <Text strong style={{ display: 'block' }}>基于 LangGraph 的意图路由</Text>
-                               <Text type="secondary" style={{ fontSize: 13 }}>由于该专家受信任度较高，主控节点(Orchestrator) 将在检测到特定意图时，沿图中 <b>Handoff 条件边</b> 自动放弃控制权并唤醒此专家。</Text>
-                           </div>
-                       </Space>
+                <div style={{ padding: '8px 0', minHeight: 400 }}>
+                   <div style={{ padding: 16, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, marginBottom: 24 }}>
+                       基于 LangGraph 的自动路由。触发后专家将接管会话，执行完毕后自动归还控制权。
                    </div>
-                   
-                   <Form.Item label="前置路由意图 (Routing Intent)" extra="主控节点检测到以下意图时，将自动移交通信信道。">
-                       <Select 
-                           mode="tags" 
-                           placeholder="输入意图关键词，如: '搜索', '股票', '查询数据库' 回车确认"
-                           defaultValue={[]} 
-                       />
+                   <Form.Item label="前置意图关键词 (Routing Keywords)" extra="多个关键词请用回车分隔">
+                       <Select mode="tags" placeholder="输入关键词，如: 法律, 合同, 纠纷" />
                    </Form.Item>
-
-                   <Form.Item label="图节点衔接策略 (Edge Action)">
+                   <Form.Item label="接管策略">
                        <Select defaultValue="return">
                            <Select.Option value="return">执行完毕后主动归还控制权 (推荐)</Select.Option>
-                           <Select.Option value="end">执行完毕后直接结束当前回合 (END Node)</Select.Option>
-                           <Select.Option value="pass">将上下文顺延给下一个关联专家 (暂不开放)</Select.Option>
+                           <Select.Option value="end">执行完毕后直接结束回合</Select.Option>
                        </Select>
                    </Form.Item>
                 </div>

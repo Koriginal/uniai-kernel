@@ -32,6 +32,7 @@ from app.services.swarm_service import swarm_service
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.agents.graph_builder import build_conversation_graph
+from app.agents.graph_registry import graph_registry
 from app.agents.stream_callback import StreamCallback
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,8 @@ class AgentService:
     """
 
     def __init__(self):
-        # 预编译图（单例，应用启动时完成）
-        self.graph = build_conversation_graph()
+        # 预编译图在 chat_stream 中异步初始化
+        pass
 
     async def chat_stream(
         self,
@@ -131,6 +132,9 @@ class AgentService:
                 "total_tool_calls_list": [],
                 "global_tool_index_offset": 0,
                 "iter_text": "",
+                "recovery_count": 0,
+                "last_healthy_node": None,
+                "execution_trace": [],
             }
 
             # ── 7. 图执行配置（不可变上下文） ──
@@ -157,7 +161,13 @@ class AgentService:
             # ── 8. 异步启动图执行（后台任务） ──
             async def _run_graph():
                 try:
-                    await self.graph.ainvoke(initial_state, graph_config)
+                    # 优先根据请求中的 template_id 获取动态图，否则回退到标准图
+                    template_id = request.graph_template_id or "standard"
+                    graph = await graph_registry.get_compiled_graph(template_id)
+                    await graph.ainvoke(initial_state, graph_config)
+                    # ── 图执行成功结束后，在关闭前发送 DONE 标记 ──
+                    await callback.emit("data: [DONE]\n\n")
+                    logger.info(f"[AgentService] Graph execution finished for session {session_id}")
                 except Exception as e:
                     logger.error(f"[AgentService] Graph execution failed: {e}")
                     err_chunk = ChatCompletionChunk(
@@ -186,7 +196,7 @@ class AgentService:
                     except asyncio.CancelledError:
                         pass
 
-            # ── 10. 最终收尾事件 ──
+            # ── 10. 最终收尾事件 (仅发送 final_chunk，DONE 已由 _run_graph 发送) ──
             final_chunk = ChatCompletionChunk(
                 id=req_id, model=request.model,
                 choices=[ChatCompletionChunkChoice(

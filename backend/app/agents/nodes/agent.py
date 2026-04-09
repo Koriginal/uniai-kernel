@@ -127,7 +127,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         from app.services.swarm_service import swarm_service
         openai_tools.append(swarm_service.get_handoff_tool_definition())
 
-    # ---- 3. 协作标签开场 ----
+    # ---- 3. 协作/状态开场 ----
     if is_expert and not wrapping_expert_id:
         opening_tag = f"\n<collaboration title='{agent_profile.get('name', 'Expert') if agent_profile else 'Expert'}'>\n"
         chunk_data = ChatCompletionChunk(
@@ -138,8 +138,10 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         total_assistant_content += opening_tag
         wrapping_expert_id = current_agent_id
 
+    # 统一推送状态事件，确保前端 UI 有响应
     state_msg = "正在深入分析中..." if is_expert else "正在进行最后汇总..."
-    await callback.emit(f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': agent_profile.get('name', 'Assistant') if agent_profile else 'Assistant', 'content': state_msg})}\n\n")
+    agent_name = (agent_profile.get('name', 'Assistant') if agent_profile else 'Assistant')
+    await callback.emit(f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': agent_name, 'content': state_msg}, ensure_ascii=False)}\n\n")
 
     # ---- 4. 流式调用 LLM ----
     cleaned_internal = _clean_messages(messages)
@@ -166,19 +168,38 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
 
         async for chunk in response_stream:
-            if not chunk or not chunk.choices:
+            if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
                 continue
+            
             delta = chunk.choices[0].delta if chunk.choices else None
+            if not delta:
+                continue
 
             # 处理 tool_calls 流
-            if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+            if hasattr(delta, "tool_calls") and delta.tool_calls:
+                # 统一修正 ID 和索引，并确保 Pydantic 序列化兼容
                 for tc in delta.tool_calls:
                     tc.index += global_tool_index_offset
+                    # 维护全局索引偏移量所需的最大索引
                     if (tc.index - global_tool_index_offset + 1) > max_idx_in_iter:
                         max_idx_in_iter = (tc.index - global_tool_index_offset + 1)
+                
+                # 转换工具调用对象为字典，确保 Pydantic 验证兼容
+                cleaned_tool_calls = []
+                for tc in delta.tool_calls:
+                    tc_dict = tc.to_dict() if hasattr(tc, "to_dict") else (dict(tc) if not isinstance(tc, dict) else tc)
+                    cleaned_tool_calls.append(tc_dict)
 
-                chunk.id = current_msg_id
-                await callback.emit(f"data: {chunk.model_dump_json(exclude_none=True)}\n\n")
+                # 包装为标准 Chunk 避免 LiteLLM 对象属性赋值报错
+                out_chunk = ChatCompletionChunk(
+                    id=current_msg_id,
+                    model=model_name,
+                    choices=[ChatCompletionChunkChoice(
+                        index=0,
+                        delta=ChatCompletionChunkDelta(tool_calls=cleaned_tool_calls)
+                    )]
+                )
+                await callback.emit(f"data: {out_chunk.model_dump_json(exclude_none=True)}\n\n")
 
                 for tc in delta.tool_calls:
                     idx = tc.index
@@ -284,9 +305,14 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                 ).model_dump_json(exclude_none=True)
                 await callback.emit(f"data: {text_chunk}\n\n")
 
-            if getattr(chunk, "usage", None):
-                total_prompt_tokens += chunk.usage.prompt_tokens
-                total_completion_tokens += chunk.usage.completion_tokens
+            if getattr(chunk, "usage", None) and chunk.usage:
+                total_prompt_tokens += getattr(chunk.usage, "prompt_tokens", 0)
+                total_completion_tokens += getattr(chunk.usage, "completion_tokens", 0)
+
+        if iter_text:
+            logger.info(f"[AgentNode] LLM iteration finished. Total text length: {len(iter_text)}")
+        if tool_calls_buffer:
+            logger.info(f"[AgentNode] LLM iteration finished. Total tool calls: {len(tool_calls_buffer)}")
 
     except Exception as e:
         logger.error(f"[AgentNode] LLM call failed: {e}")

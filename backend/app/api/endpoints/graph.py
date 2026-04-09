@@ -6,6 +6,8 @@
 import logging
 from fastapi import APIRouter, Depends
 from app.agents.graph_builder import get_graph_mermaid, build_conversation_graph
+from app.agents.health_monitor import health_monitor
+from app.core.db import SessionLocal
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,7 +20,7 @@ async def get_graph_topology():
 
     前端可直接将此字符串渲染为可视化流程图。
     """
-    mermaid = get_graph_mermaid()
+    mermaid = await get_graph_mermaid()
     return {
         "mermaid": mermaid,
         "nodes": ["context", "agent", "tool_executor", "handoff", "synthesize"],
@@ -69,4 +71,28 @@ async def get_graph_nodes():
                 "color": "#eb2f96"
             }
         ]
+    }
+
+
+@router.get("/metrics")
+async def get_graph_metrics(window: int = 60):
+    """
+    返回最近 N 分钟的图执行指标。
+    """
+    async with SessionLocal() as db:
+        stats = await health_monitor.get_node_stats(db, window)
+        return stats
+
+
+@router.get("/health")
+async def get_graph_health(window: int = 60):
+    """
+    返回图引擎健康诊断报告。
+    """
+    report = await health_monitor.diagnose(window)
+    return {
+        "status": report.overall_status,
+        "diagnostics": report.diagnostics,
+        "node_stats": report.node_stats,
+        "timestamp": report.timestamp.isoformat()
     }

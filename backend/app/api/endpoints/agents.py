@@ -122,6 +122,38 @@ async def update_agent_profile(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
 
+@router.get("/{agent_id}/stats")
+async def get_agent_stats(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取智能体的执行统计指标 (评分卡)"""
+    from app.models.agent_score import AgentScoreHistory
+    # 获取最新的评分记录
+    stmt = (
+        select(AgentScoreHistory)
+        .where(AgentScoreHistory.agent_id == agent_id)
+        .order_by(AgentScoreHistory.computed_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    score = result.scalar_one_or_none()
+    
+    if not score:
+        return {
+            "total_calls": 0,
+            "success_rate": 0,
+            "avg_duration_ms": 0,
+            "avg_quality_score": 0
+        }
+    
+    return {
+        "total_calls": score.total_calls,
+        "success_rate": score.success_rate,
+        "avg_duration_ms": score.avg_duration_ms,
+        "avg_quality_score": score.avg_quality_score
+    }
+
 @router.delete("/{agent_id}")
 async def delete_agent_profile(
     agent_id: str,

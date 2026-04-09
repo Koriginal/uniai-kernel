@@ -13,15 +13,30 @@ interface GraphTracePanelProps {
   onClose: () => void;
   currentAgentName?: string;
   isStreaming: boolean;
+  nodeEvents: any[];
 }
 
-const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming }) => {
+const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents }) => {
   const [nodes, setNodes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 模拟节点执行状态的推进
-  // 实际生产环境中，这应该通过后端的 SSE 事件增量更新
-  const [activeStep, setActiveStep] = useState(0);
+  // 根据实时事件计算当前活跃步骤和节点状态
+  const getActiveStep = () => {
+    if (nodeEvents.length === 0) return 0;
+    
+    // 找到最后一个 start 事件
+    const lastStart = [...nodeEvents].reverse().find(e => e.event === 'start');
+    if (!lastStart) return 0;
+    
+    // 映射节点 ID 到步骤索引
+    const nodeOrder = ['context', 'agent', 'tool_executor', 'handoff', 'synthesize'];
+    const idx = nodeOrder.indexOf(lastStart.node);
+    return idx === -1 ? 0 : idx;
+  };
+
+  const activeStep = getActiveStep();
+  const completedNodes = nodeEvents.filter(e => e.event === 'end').map(e => e.node);
+  const errorNodes = nodeEvents.filter(e => e.event === 'end' && e.payload?.status === 'error').map(e => e.node);
 
   useEffect(() => {
     if (visible) {
@@ -30,19 +45,8 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
   }, [visible]);
 
   useEffect(() => {
-    if (visible && isStreaming) {
-       // 模拟流式推进
-       const timer = setInterval(() => {
-          setActiveStep(prev => {
-              if (prev < 4) return prev + 1;
-              return prev;
-          });
-       }, 800);
-       return () => clearInterval(timer);
-    } else if (visible && !isStreaming) {
-        setActiveStep(5); // 完成状态
-    }
-  }, [visible, isStreaming]);
+    // 自动重置/同步逻辑 (如果需要)
+  }, [visible, isStreaming, nodeEvents]);
 
   const fetchNodes = async () => {
     setLoading(true);
@@ -113,35 +117,52 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
              direction="vertical"
              size="small"
              current={activeStep}
-             items={nodes.map((node, index) => {
-               const isActive = index === activeStep && isStreaming;
-               const isDone = index < activeStep || (!isStreaming && activeStep > 0);
-               
-               return {
-                 title: (
-                     <span style={{ fontWeight: isActive ? 600 : 400, color: isActive ? '#1890ff' : 'inherit' }}>
-                         {node.icon} {node.label}
-                     </span>
-                 ),
-                 description: (
-                     <div style={{ fontSize: 12, marginTop: 4, opacity: (isActive || isDone) ? 1 : 0.5 }}>
-                         {node.description}
-                         {isActive && (
-                             <div style={{ marginTop: 8, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                 <SyncOutlined spin /> <Text style={{ fontSize: 11, color: '#1890ff' }}>Executing Node...</Text>
-                             </div>
-                         )}
-                         {isDone && index === 1 && (
-                             <div style={{ marginTop: 4 }}>
-                                 <Tag color="blue" bordered={false} style={{ fontSize: 10 }}>Token ≈ 1.2k</Tag>
-                                 <Tag color="green" bordered={false} style={{ fontSize: 10 }}>2.1s</Tag>
-                             </div>
-                         )}
-                     </div>
-                 ),
-                 icon: isActive ? <SyncOutlined spin style={{ color: '#1890ff' }} /> : (isDone ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : undefined)
-               };
-             })}
+              items={nodes.map((node, index) => {
+                const nodeName = node.id;
+                const isCompleted = completedNodes.includes(nodeName);
+                const isError = errorNodes.includes(nodeName);
+                const isActive = index === activeStep && isStreaming;
+                
+                // 获取具体的错误信息
+                const errorEvent = nodeEvents.find(e => e.node === nodeName && e.event === 'end' && e.payload?.status === 'error');
+                const errorMessage = errorEvent?.payload?.message;
+                
+                return {
+                  title: (
+                      <span style={{ 
+                        fontWeight: isActive ? 600 : 400, 
+                        color: isError ? '#ff4d4f' : (isActive ? '#1890ff' : 'inherit') 
+                      }}>
+                          {node.icon} {node.label}
+                      </span>
+                  ),
+                  description: (
+                      <div style={{ fontSize: 12, marginTop: 4, opacity: (isActive || isCompleted || isError) ? 1 : 0.5 }}>
+                          {node.description}
+                          {isActive && (
+                              <div style={{ marginTop: 8, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <SyncOutlined spin /> <Text style={{ fontSize: 11, color: '#1890ff' }}>Executing Node...</Text>
+                              </div>
+                          )}
+                          {isError && (
+                              <div style={{ marginTop: 8, color: '#ff4d4f', fontSize: 11 }}>
+                                  <Tooltip title={errorMessage}>
+                                      <span>⚠️ 执行异常: {errorMessage?.substring(0, 20)}...</span>
+                                  </Tooltip>
+                              </div>
+                          )}
+                          {isCompleted && !isError && index === activeStep && !isStreaming && (
+                              <div style={{ marginTop: 4 }}>
+                                  <Tag color="green" bordered={false} style={{ fontSize: 10 }}>Completed</Tag>
+                              </div>
+                          )}
+                      </div>
+                  ),
+                  icon: isActive ? <SyncOutlined spin style={{ color: '#1890ff' }} /> : 
+                        (isError ? <CheckCircleOutlined style={{ color: '#ff4d4f' }} /> : 
+                        (isCompleted ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : undefined))
+                };
+              })}
            />
         )}
       </div>

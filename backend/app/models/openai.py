@@ -5,13 +5,14 @@ import time
 # --- Requests ---
 
 class ChatCompletionMessageFunction(BaseModel):
-    name: str
-    arguments: str
+    name: Optional[str] = None
+    arguments: Optional[str] = None
 
 class ChatCompletionMessageToolCall(BaseModel):
-    id: str
-    type: Literal["function"] = "function"
-    function: ChatCompletionMessageFunction
+    id: Optional[str] = None
+    index: Optional[int] = None
+    type: Optional[Literal["function"]] = "function"
+    function: Optional[ChatCompletionMessageFunction] = None
 
 class ChatCompletionMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool", "function"]
@@ -35,6 +36,7 @@ class ChatCompletionRequest(BaseModel):
     
     # UniAI 扩展字段
     session_id: Optional[str] = None
+    graph_template_id: Optional[str] = "standard"  # 图拓扑模板 ID
     enable_memory: bool = False
     enable_swarm: bool = True
     enable_canvas: bool = True

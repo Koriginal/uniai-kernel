@@ -43,6 +43,10 @@ class AgentGraphState(TypedDict):
     total_tool_calls_list: list
     global_tool_index_offset: int
     iter_text: str
+    # --- [New: Phase 2] 自维护字段 ---
+    recovery_count: int           # 本会话累计恢复次数
+    last_healthy_node: Optional[str]        # 最后成功执行的节点名称
+    execution_trace: list         # 执行节点路径追踪 [node_name, ...]
 
 
 class GraphConfig(TypedDict, total=False):

@@ -37,6 +37,21 @@ class StreamCallback:
             return
         await self._queue.put(data)
 
+    async def emit_node_event(self, event_type: str, node_name: str, payload: dict = None):
+        """
+        推送图节点执行进度事件给前端。
+        event_type: "start" | "end"
+        """
+        import json
+        event_data = {
+            "type": "node_event",
+            "event": event_type,
+            "node": node_name,
+            "payload": payload or {}
+        }
+        sse_data = f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+        await self.emit(sse_data)
+
     async def close(self):
         """标记流结束"""
         self._closed = True

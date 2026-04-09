@@ -46,11 +46,13 @@ graph TD
 - **Quick Environment Setup**: One-click start using `.env`
 - **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
 - **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
-- **🧠 Graph-Native Swarm Collaboration**: Orchestrates specialized agents using **LangGraph**. Provides deep-link execution tracing, self-reflection loops, and dynamic handoffs between heterogeneous models.
-- **🔍 Real-Time Execution Tracing**: A new **Graph Trace** dashboard in the UI for monitoring internal node transitions and agent reasoning steps.
-- **🎨 Artifacts Visual Canvas**: Dedicated side panel for rendering code, HTML, and rich data. Experts can "upsert" to the canvas while chatting.
-- **🔑 Multi-Tenant Model Gateway**: Complete with isolated credentials (AES-GCM encryption). Switch between 100+ global models using `LiteLLM`.
-- **📊 Production Observability**: Full traceability of representative node transitions, tool calls, and nested task lifecycles with cost/token tracking.
+### 🧠 Dynamic & Self-Healing Orchestration
+- **Adaptive Self-Healing Engine**: Integrated pre-node checks and error recovery. Automatically retries or rolls back to the last healthy state on failure, ensuring high reliability for complex tasks.
+- **Dynamic Graph Registry (Topological JSON)**: Define execution flows via database entries. Update agent routing, inject compliance nodes, or modify task sequences without rebooting the kernel.
+- **Real-Time Execution Streaming**: Monitor live node transitions and internal agent reasoning steps via the **Graph Trace** dashboard.
+- **🎨 Real-Time Artifact Canvas**: Concurrent rendering of code and rich data. Separates "Reasoning" (Chat) from "Delivery" (Canvas).
+- **📈 Agent Performance Scorecards**: Digital governance of the expert swarm. Click an agent's avatar to see live KPIs: success rate, total calls, avg. duration, and quality scores.
+- **💾 Industrial Persistence**: Leverages **PostgreSQL Checkpointer** for cross-session state recovery and continuous execution support.
 - **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
 
 ### 🚀 Developer Friendly

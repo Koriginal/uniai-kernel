@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Layout, Menu, Typography, Avatar, Space, message, Modal, Tag, Dropdown, Button, Tooltip } from 'antd';
+import { Layout, Menu, Typography, Avatar, Space, message, Modal, Tag, Dropdown, Button, Tooltip, Popover, Progress, Statistic, Row, Col, Empty } from 'antd';
 import {
   ThunderboltOutlined, HistoryOutlined, AppstoreOutlined,
   DatabaseOutlined, PlusOutlined, RobotOutlined, DeleteOutlined,
   ToolOutlined, BarChartOutlined, KeyOutlined, EditOutlined, UserOutlined,
-  LockOutlined, AppstoreAddOutlined, NodeIndexOutlined
+  LockOutlined, AppstoreAddOutlined, NodeIndexOutlined, ThunderboltFilled,
+  SyncOutlined, CheckCircleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -33,6 +34,118 @@ interface Session {
   status: string;
   created_at: string;
 }
+
+// 子组件：全局专家评分卡
+const AgentScorecard: React.FC<{ agent: Agent }> = ({ agent }) => {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      setLoading(true);
+      try {
+        const res = await axios.get(`/api/v1/agents/${agent.id}/stats`);
+        setStats(res.data);
+      } catch (err) {
+        console.error("Scorecard fetch failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (agent?.id) fetchStats();
+  }, [agent?.id]);
+
+  if (loading) return <div style={{ padding: '32px', textAlign: 'center', width: 320 }}><SyncOutlined spin style={{ fontSize: 24, color: '#1890ff' }} /><div style={{ marginTop: 12, color: '#999', fontSize: 13 }}>计算最新效能指标...</div></div>;
+  if (!stats) return <div style={{ width: 320, padding: '32px' }}><Empty description="暂无历史评分" /></div>;
+
+  const successRate = (stats.success_rate || 0) * 100;
+  // 动态主题色
+  const themeColor = successRate > 90 ? '#52c41a' : (successRate > 70 ? '#1890ff' : '#faad14');
+  
+  return (
+    <div style={{ width: 320, padding: '6px' }}>
+      {/* 头部：身份识别 */}
+      <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ position: 'relative' }}>
+          <Avatar size={48} icon={<RobotOutlined />} style={{ background: 'linear-gradient(135deg, #69c0ff 0%, #1890ff 100%)', boxShadow: '0 4px 10px rgba(24,144,255,0.2)' }} />
+          <div style={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: '50%', background: '#52c41a', border: '2px solid #fff' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 17, color: '#1a1a1a', lineHeight: 1.2 }}>{agent.name}</div>
+          <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>{agent.description?.substring(0, 50)}{agent.description?.length > 50 ? '...' : ''}</Text>
+        </div>
+      </div>
+
+      {/* 核心板块：效能仪表盘 */}
+      <div style={{ 
+        background: 'linear-gradient(160deg, #f0f5ff 0%, #ffffff 100%)', 
+        borderRadius: 16, border: '1px solid #e6f7ff',
+        padding: '18px 12px', marginBottom: 16 
+      }}>
+        <Row gutter={16} align="middle">
+          <Col span={11} style={{ textAlign: 'center', borderRight: '1px solid rgba(0,0,0,0.05)' }}>
+            <Progress 
+              type="dashboard" 
+              percent={Math.round(successRate)} 
+              size={80} 
+              strokeWidth={10}
+              strokeColor={{ '0%': '#1890ff', '100%': themeColor }}
+              format={p => <div style={{ translate: '0 4px' }}><span style={{ fontSize: 18, fontWeight: 800, color: '#1a1a1a' }}>{p}</span><span style={{ fontSize: 11, color: '#999', marginLeft: 1 }}>%</span></div>}
+            />
+            <div style={{ fontSize: 11, color: '#8c8c8c', fontWeight: 500, marginTop: -4 }}>平均成功率</div>
+          </Col>
+          <Col span={13} style={{ paddingLeft: 20 }}>
+            <Statistic 
+              title={<span style={{ fontSize: 12, color: '#8c8c8c', fontWeight: 500 }}>累计处理任务</span>} 
+              value={stats.total_calls} 
+              valueStyle={{ fontSize: 24, fontWeight: 800, color: '#1a1a1a', fontFamily: 'Inter, system-ui' }}
+              prefix={<ThunderboltFilled style={{ fontSize: 16, color: '#faad14', marginRight: 4 }} />}
+            />
+            <div style={{ marginTop: 4 }}>
+               <Tag color="green" bordered={false} style={{ fontSize: 10, borderRadius: 10, padding: '0 8px' }}>高可靠性</Tag>
+            </div>
+          </Col>
+        </Row>
+      </div>
+
+      {/* 次要板块：响应与评分 */}
+      <Row justify="space-between" style={{ padding: '0 8px 12px' }}>
+         <Col>
+            <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 2 }}>平均耗时</div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#262626' }}>
+              {stats.avg_duration_ms < 1000 ? `${Math.round(stats.avg_duration_ms)}ms` : `${(stats.avg_duration_ms/1000).toFixed(2)}s`}
+            </div>
+         </Col>
+         <Col style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 2 }}>反馈质量分</div>
+            <div style={{ color: '#faad14', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+              {(stats.avg_quality_score * 5).toFixed(1)}
+              <span style={{ fontSize: 11, color: '#bfbfbf', fontWeight: 400 }}>/ 5.0</span>
+            </div>
+         </Col>
+      </Row>
+
+      {/* 底部：技能标签 */}
+      {agent.tools && agent.tools.length > 0 && (
+        <div style={{ marginTop: 4, paddingTop: 16, borderTop: '1px dotted #f0f0f0' }}>
+           <div style={{ fontSize: 11, color: '#8c8c8c', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ width: 3, height: 10, background: '#1890ff', borderRadius: 2 }} />
+              核心专长领域
+           </div>
+           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {agent.tools.slice(0, 8).map(t => (
+                <Tag key={t} bordered={false} style={{ 
+                  fontSize: 11, background: '#f5f5f5', color: '#595959', 
+                  borderRadius: 4, margin: 0, padding: '1px 8px', border: '1px solid #f0f0f0'
+                }}>{t}</Tag>
+              ))}
+              {agent.tools.length > 8 && <Tag bordered={false} style={{ fontSize: 11, background: 'transparent', color: '#bfbfbf' }}>+ {agent.tools.length - 8}</Tag>}
+           </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -98,6 +211,7 @@ const App: React.FC = () => {
   
   // --- Graph Trace State ---
   const [graphTraceVisible, setGraphTraceVisible] = useState(false);
+  const [nodeEvents, setNodeEvents] = useState<any[]>([]); // 实时节点事件流
 
   useEffect(() => {
     localStorage.setItem('enableAutoCanvas', String(enableAutoCanvas));
@@ -429,6 +543,7 @@ const App: React.FC = () => {
     }
 
     setLoading(true);
+    setNodeEvents([]); // 发起新请求前重置事件流
 
     // 若无会话，自动创建 (Lazy Creation)
     let sessionId = currentSessionId;
@@ -548,6 +663,17 @@ const App: React.FC = () => {
                   isExpertRef.current = false; // 同步解锁
                   setCollaborationStatus({ state: 'completed' });
                 }
+                continue;
+              }
+
+              // 处理图节点事件 (用于实时轨迹展示)
+              if (data.type === 'node_event') {
+                setNodeEvents(prev => [...prev, {
+                  node: data.node,
+                  event: data.event,
+                  timestamp: Date.now(),
+                  payload: data.payload || {}
+                }]);
                 continue;
               }
 
@@ -843,13 +969,23 @@ const App: React.FC = () => {
           }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               {activeView === 'chat' && currentAgent ? (
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <Avatar size="small" icon={<RobotOutlined />} style={{ backgroundColor: '#1890ff', marginRight: 10 }} />
-                  <div>
-                    <Text strong style={{ fontSize: 14 }}>{currentAgent.name}</Text>
-                    <Text type="secondary" style={{ fontSize: '11px', marginLeft: 8 }}>{currentAgent.description}</Text>
+                <Popover 
+                  content={<AgentScorecard agent={currentAgent} />} 
+                  placement="bottomLeft" 
+                  trigger="click"
+                  overlayStyle={{ paddingTop: 10 }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '4px 12px', borderRadius: 8, transition: 'all 0.2s', background: 'rgba(24,144,255,0.05)' }} className="agent-header-link">
+                    <Avatar size="small" icon={<RobotOutlined />} style={{ backgroundColor: '#1890ff', marginRight: 10 }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 'normal' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Text strong style={{ fontSize: 14 }}>{currentAgent.name}</Text>
+                        <ThunderboltFilled style={{ fontSize: 10, color: '#faad14' }} />
+                      </div>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>在线 (点击查看评分卡)</Text>
+                    </div>
                   </div>
-                </div>
+                </Popover>
               ) : (
                 <Text strong style={{ fontSize: 14 }}>
                   {activeView === 'agents' ? '专家集群管理'
@@ -969,6 +1105,7 @@ const App: React.FC = () => {
                 onClose={() => setGraphTraceVisible(false)}
                 currentAgentName={currentAgent?.name}
                 isStreaming={loading}
+                nodeEvents={nodeEvents}
               />
               <ArtifactCanvas
                 visible={canvasVisible}

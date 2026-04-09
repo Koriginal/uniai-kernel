@@ -6,6 +6,7 @@ import logging
 from app.models.agent import AgentProfile
 from app.models.session import ChatSession
 from app.core.plugins import registry
+from app.agents.agent_scorecard import scorecard
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +68,28 @@ class SwarmService:
         )
         result = await db.execute(stmt)
         profiles = result.scalars().all()
+        expert_ids = [p.id for p in profiles]
+        
+        # --- [New: Phase 3] 接入评分卡进行排名 ---
+        ranked_scores = await scorecard.rank_experts_for_task(db, "general", expert_ids)
+        # 将 profile 对象按排名顺序重新整理
+        profile_map = {p.id: p for p in profiles}
+        ranked_profiles = [profile_map[s.agent_id] for s in ranked_scores if s.agent_id in profile_map]
         
         prompt = "### 🤝 专家协作名录 (EXPERT_DIRECTORY)\n"
         prompt += "当且仅当用户请求涉及以下专业领域且你无法独自高质量回复时，方可调用 `transfer_to_agent`：\n"
         
-        if profiles:
-            for p in profiles:
-                prompt += f"- Expert_ID: `{p.id}`, 名称: **{p.name}**, 职责: {p.description or '专业领域协助'}\n"
+        if ranked_profiles:
+            for p in ranked_profiles:
+                # 寻找对应的评分数据
+                s = next((score for score in ranked_scores if score.agent_id == p.id), None)
+                score_str = f" [成功率: {s.success_rate*100:.0f}%, 质量: {s.avg_quality_score:.1f}]" if s else ""
+                prompt += f"- Expert_ID: `{p.id}`, 名称: **{p.name}**{score_str}, 职责: {p.description or '专业领域协助'}\n"
+            
             prompt += "\n**协作准则 (CRITICAL RULES)**：\n"
-            prompt += "1. 你是对话的唯一主体。专家仅为你提供推演内容。你必须审阅并在协作气泡结束后给出最终 MD 格式回复。\n"
-            prompt += "2. **严控 ID 匹配**：仅允许使用上方列表中的 Expert_ID 字符串。**严禁** 将 UI 文本、专家名称（如 'Swarm 专家协同建议'）作为移交目标。\n"
+            prompt += "1. 优先调用上方排位靠前、评分较高的专家。\n"
+            prompt += "2. 你是对话的唯一主体。专家仅为你提供推演内容。你必须审阅并在协作气泡结束后给出最终 MD 格式回复。\n"
+            prompt += "3. **严控 ID 匹配**：仅允许使用上方列表中的 Expert_ID 字符串。**严禁** 将 UI 文本、专家名称（如 'Swarm 专家协同建议'）作为移交目标。\n"
         else:
             prompt += "\n目前暂无其他在线专家。请根据自身知识库独立回复。"
             

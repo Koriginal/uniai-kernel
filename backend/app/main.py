@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import os
 import warnings
 from fastapi import FastAPI
@@ -16,7 +17,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动加载流水线
+    # -1. 应急：强制清理数据库中可能导致 DDL 锁定的僵尸连接
+    from app.core.db_cleanup import cleanup_stale_connections
+    await cleanup_stale_connections()
+
+    # 0. 初始化全局异步数据库连接池 (单例 Psycopg Pool)
+    from app.core.db_pool import db_pool_manager
+    await db_pool_manager.init_pool()
+
+    # 1. 启动加载流水线
     logger.info("UniAI Kernel 启动加载流水线...")
     
     from app.core.plugins import registry
@@ -28,6 +37,15 @@ async def lifespan(app: FastAPI):
     
     await auto_configure_admin()
     
+    try:
+        from app.agents.graph_registry import graph_registry
+        from app.services.score_sync import score_sync
+        await graph_registry.initialize_system_templates()
+        asyncio.create_task(score_sync.start_background_loop(interval_seconds=3600))
+        logger.info("[Startup] ✅ Graph templates and score sync initialized.")
+    except Exception as e:
+        logger.error(f"[Startup] ❌ Startup initialization failed: {e}")
+    
     # 加载数据库中的动态工具
     async with SessionLocal() as session:
         await registry.load_dynamic_tools(session)
@@ -35,6 +53,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"已加载内核扩展能力：{[t.metadata.name for t in registry.get_all_actions()]}")
     
     yield
+    
+    # 清理资源
+    from app.core.db_pool import db_pool_manager
+    await db_pool_manager.close_pool()
+    
     logger.info("UniAI Kernel 正在安全关闭...")
 
 app = FastAPI(

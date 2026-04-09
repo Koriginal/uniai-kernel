@@ -15,8 +15,8 @@ import logging
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import RunnableConfig
-
 from app.core.graph_state import AgentGraphState
+
 from app.agents.nodes import (
     context_node,
     agent_node,
@@ -24,6 +24,10 @@ from app.agents.nodes import (
     handoff_node,
     synthesize_node,
 )
+from app.agents.graph_telemetry import telemetry
+from app.agents.pg_checkpointer import create_pg_checkpointer
+from app.agents.auto_heal import auto_heal
+from app.agents.adaptive_router import router
 
 logger = logging.getLogger(__name__)
 
@@ -32,45 +36,9 @@ logger = logging.getLogger(__name__)
 # 路由函数（条件边）
 # ─────────────────────────────────────────────
 
-def should_continue(state: AgentGraphState, config: RunnableConfig) -> str:
-    """
-    从 agent_node 出发的路由决策。
-
-    决策树：
-    1. 超过最大迭代次数 → END（防死循环）
-    2. 有 pending_tool_calls：
-       a. 包含 transfer_to_agent → handoff
-       b. 仅普通工具 → tool_executor
-    3. 无 tool_calls：
-       a. 当前是专家（非 orchestrator）→ synthesize（归还主控）
-       b. 当前是主控 → END（完成）
-    """
-    c = config.get("configurable", {})
-    max_iter = c.get("max_iterations", 10)
-    orchestrator_id = c.get("orchestrator_agent_id", "")
-
-    # 防无限循环
-    if state["iteration_count"] >= max_iter:
-        logger.warning(f"[Router] Max iterations ({max_iter}) reached, forcing END")
-        return END
-
-    pending = state.get("pending_tool_calls", [])
-
-    if pending:
-        has_handoff = any(
-            tc.get("function", {}).get("name") == "transfer_to_agent"
-            for tc in pending
-        )
-        if has_handoff:
-            return "handoff"
-        return "tool_executor"
-
-    # 无 tool_calls
-    current_agent_id = state.get("current_agent_id", "")
-    if current_agent_id != orchestrator_id:
-        return "synthesize"
-
-    return END
+async def adaptive_route(state: AgentGraphState, config: RunnableConfig) -> str:
+    """包装自适应路由器"""
+    return await router.route(state, config)
 
 
 def route_after_tools(state: AgentGraphState, config: RunnableConfig) -> str:
@@ -95,7 +63,47 @@ def route_after_handoff(state: AgentGraphState, config: RunnableConfig) -> str:
 _compiled_graph = None  # 模块级单例，避免重复编译
 
 
-def build_conversation_graph():
+def wrap_telemetry(node_func, name):
+    """辅助函数：为节点包裹遥测记录与自愈逻辑"""
+    async def wrapped(state, config):
+        # 1. 执行前自检与追踪
+        heal_state = await auto_heal.pre_node_check(state, name)
+        state.update(heal_state)
+        
+        # ── 获取流式回调 (推送实时轨迹给前端) ──
+        callback = config.get("configurable", {}).get("stream_callback")
+        if callback:
+            await callback.emit_node_event("start", name)
+        
+        async with telemetry.trace_node(name, state, config):
+            try:
+                result = await node_func(state, config)
+                # 2. 执行成功后登记
+                success_state = await auto_heal.post_node_success(state, name)
+                
+                # 推送结束事件
+                if callback:
+                    await callback.emit_node_event("end", name, {"status": "success"})
+                
+                if result and isinstance(result, dict):
+                    result.update(success_state)
+                return result
+            except Exception as e:
+                # 3. 故障处理
+                error_state = await auto_heal.handle_error(state, name, e)
+                state.update(error_state)
+                
+                # 推送错误事件
+                if callback:
+                    await callback.emit_node_event("end", name, {
+                        "status": "error", 
+                        "message": str(e)
+                    })
+                raise e
+    return wrapped
+
+
+async def build_conversation_graph():
     """
     编译并返回对话状态图（单例模式）。
 
@@ -108,21 +116,21 @@ def build_conversation_graph():
 
     workflow = StateGraph(AgentGraphState)
 
-    # ── 注册节点 ──
-    workflow.add_node("context", context_node)
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tool_executor", tool_executor_node)
-    workflow.add_node("handoff", handoff_node)
-    workflow.add_node("synthesize", synthesize_node)
+    # ── 注册节点 (带遥测包裹) ──
+    workflow.add_node("context", wrap_telemetry(context_node, "context"))
+    workflow.add_node("agent", wrap_telemetry(agent_node, "agent"))
+    workflow.add_node("tool_executor", wrap_telemetry(tool_executor_node, "tool_executor"))
+    workflow.add_node("handoff", wrap_telemetry(handoff_node, "handoff"))
+    workflow.add_node("synthesize", wrap_telemetry(synthesize_node, "synthesize"))
 
     # ── 固定边 ──
     workflow.set_entry_point("context")
     workflow.add_edge("context", "agent")
 
-    # ── 条件边：agent 出口 ──
+    # ── 条件边：agent 出口 (自适应路由) ──
     workflow.add_conditional_edges(
         "agent",
-        should_continue,
+        adaptive_route,
         {
             "handoff": "handoff",
             "tool_executor": "tool_executor",
@@ -148,8 +156,13 @@ def build_conversation_graph():
     # ── synthesize 后回 agent（让主控做最终收尾） ──
     workflow.add_edge("synthesize", "agent")
 
-    # ── 挂载 MemorySaver（阶段1：内存 checkpoint） ──
-    checkpointer = MemorySaver()
+    # ── 挂载 PostgreSQL Checkpointer (阶段2：持久化) ──
+    try:
+        checkpointer = await create_pg_checkpointer()
+    except Exception as e:
+        logger.warning(f"[GraphBuilder] Fallback to MemorySaver due to: {e}")
+        checkpointer = MemorySaver()
+        
     _compiled_graph = workflow.compile(checkpointer=checkpointer)
 
     logger.info("[GraphBuilder] ✅ Conversation graph compiled successfully")
@@ -158,9 +171,9 @@ def build_conversation_graph():
     return _compiled_graph
 
 
-def get_graph_mermaid() -> str:
+async def get_graph_mermaid() -> str:
     """返回当前图的 Mermaid 表示，用于前端可视化"""
-    graph = build_conversation_graph()
+    graph = await build_conversation_graph()
     try:
         return graph.get_graph().draw_mermaid()
     except Exception as e:
