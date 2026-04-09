@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1] - 2026-04-09
+### Added
+- **Concurrent Initialization Safety**: Implemented `_init_lock` and 30s timeout protection for `AsyncPostgresSaver` in `pg_checkpointer.py` to prevent DDL deadlocks during high-concurrency boot.
+- **Smart Expert Ranking**: Integrated performance scoring into the `EXPERT_DIRECTORY`. Highly successful agents are now automatically prioritized in the system prompt for better orchestrator decision-making.
+- **Improved Handoff Context**: Captured and propagated handoff reasons and agent transfer histories to ensure intent continuity.
+- **Database Fallback Engine**: Enhanced `GraphRegistry` with graceful degradation logic; if the DB is unavailable, the kernel now automatically falls back to the hardcoded default graph.
+
+### Fixed
+- Resolved potential race conditions during graph compilation.
+- Fixed UI inconsistencies in the `AgentManager` after bulk deletion or activation toggles.
+
 ## [2.2.0] - 2026-04-09
 ### Added
 - **Advanced Agent Governance**: Introduced explicit roles (`orchestrator`/`expert`), dynamic routing keywords, and a "Silent Validation" API for pre-deployment checks.

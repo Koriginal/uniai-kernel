@@ -41,6 +41,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     enable_swarm = c.get("enable_swarm", True)
     orchestrator_agent_id = c["orchestrator_agent_id"]
     expert_prompt_catalog = c.get("expert_prompt_catalog", "")
+    orchestrator_prompt_catalog = c.get("orchestrator_prompt_catalog", "")
 
     messages = list(state["messages"])
     current_agent_id = state["current_agent_id"]
@@ -52,7 +53,9 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     wrapping_expert_id = state["wrapping_expert_id"]
     iteration_count = state["iteration_count"] + 1
 
-    is_expert = current_agent_id != orchestrator_agent_id
+    runtime_mode = (agent_profile or {}).get("runtime_mode", "root_orchestrator" if current_agent_id == orchestrator_agent_id else "expert")
+    is_expert = runtime_mode == "expert"
+    is_delegate_orchestrator = runtime_mode == "delegate_orchestrator"
 
     # ---- 1. 构建本轮 System Prompt ----
     current_sys_prompt = (agent_profile.get("system_prompt") if agent_profile else None) or "你是一个有用的 AI 助手。"
@@ -83,6 +86,16 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += protocol_instr
 
+    if enable_swarm and is_delegate_orchestrator:
+        delegate_instr = (
+            "\n\n[SUB-ORCHESTRATOR PROTOCOL]: \n"
+            "1. You are acting as a delegated application, not the root orchestrator. \n"
+            "2. Focus only on the delegated subtask and produce a reusable sub-result for the caller. \n"
+            "3. You may still consult experts when necessary, but avoid unnecessary delegation fan-out. \n"
+            "4. The system will automatically return control to the caller after you finish this turn."
+        )
+        current_sys_prompt += delegate_instr
+
     if current_agent_id == orchestrator_agent_id:
         steward_instr = (
             "\n\n[ORCHESTRATOR DUTY]: \n"
@@ -92,7 +105,8 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += steward_instr
 
-    full_sys_content = (expert_prompt_catalog + "\n\n" + current_sys_prompt).strip()
+    directory_catalog = "\n\n".join([part for part in [expert_prompt_catalog, orchestrator_prompt_catalog] if part]).strip()
+    full_sys_content = (directory_catalog + "\n\n" + current_sys_prompt).strip()
 
     # 确保 system 消息处于首位且更新
     sys_found = False
@@ -123,9 +137,12 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         if canvas_tool and not any(t.get("function", {}).get("name") == "upsert_canvas" for t in openai_tools):
             openai_tools.append(canvas_tool.to_openai_format())
 
-    if enable_swarm and not any(t.get("function", {}).get("name") == "transfer_to_agent" for t in openai_tools):
+    if enable_swarm:
         from app.services.swarm_service import swarm_service
-        openai_tools.append(swarm_service.get_handoff_tool_definition())
+        if not any(t.get("function", {}).get("name") == "transfer_to_agent" for t in openai_tools):
+            openai_tools.append(swarm_service.get_handoff_tool_definition())
+        if current_agent_id == orchestrator_agent_id and not any(t.get("function", {}).get("name") == "invoke_orchestrator" for t in openai_tools):
+            openai_tools.append(swarm_service.get_orchestrator_tool_definition())
 
     # ---- 3. 协作/状态开场 ----
     if is_expert and not wrapping_expert_id:

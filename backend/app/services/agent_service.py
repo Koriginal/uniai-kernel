@@ -102,12 +102,18 @@ class AgentService:
                     "tools": agent_profile.tools or [],
                     "model_config_id": agent_profile.model_config_id,
                     "is_public": agent_profile.is_public,
+                    "role": agent_profile.role,
+                    "routing_keywords": agent_profile.routing_keywords or [],
+                    "handoff_strategy": agent_profile.handoff_strategy,
+                    "runtime_mode": "root_orchestrator" if agent_profile.role == "orchestrator" else "expert",
                 }
 
             # ── 3. 加载专家目录（用于 System Prompt 注入） ──
             expert_prompt_catalog = ""
+            orchestrator_prompt_catalog = ""
             if enable_swarm:
                 expert_prompt_catalog = await swarm_service.get_expert_directory(db, user_id, agent_id)
+                orchestrator_prompt_catalog = await swarm_service.get_orchestrator_directory(db, user_id, agent_id)
 
             # ── 4. 确保会话存在 ──
             if session_id:
@@ -152,6 +158,7 @@ class AgentService:
                     "enable_memory": enable_memory,
                     "max_iterations": settings.MAX_AGENT_ITERATIONS,
                     "expert_prompt_catalog": expert_prompt_catalog,
+                    "orchestrator_prompt_catalog": orchestrator_prompt_catalog,
                     "stream_callback": callback,
                     "skip_save_user": skip_save_user,
                     "db": db,

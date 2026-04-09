@@ -25,6 +25,13 @@ async def lifespan(app: FastAPI):
     from app.core.db_pool import db_pool_manager
     await db_pool_manager.init_pool()
 
+    # 0.1 提前初始化持久化检查点，防止请求时并发 DDL 锁定
+    from app.agents.pg_checkpointer import create_pg_checkpointer
+    try:
+        await create_pg_checkpointer()
+    except Exception as e:
+        logger.error(f"[Startup] ❌ Checkpointer initialization failed: {e}")
+
     # 1. 启动加载流水线
     logger.info("UniAI Kernel 启动加载流水线...")
     

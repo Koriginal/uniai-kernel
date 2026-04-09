@@ -107,6 +107,35 @@ class SwarmService:
             
         return prompt
 
+    async def get_orchestrator_directory(self, db: AsyncSession, user_id: str, current_agent_id: str) -> str:
+        """
+        获取可被当前主控委托的子应用（其他主控）目录。
+        """
+        from sqlalchemy import or_
+        stmt = select(AgentProfile).where(
+            or_(AgentProfile.user_id == user_id, AgentProfile.is_public == True),
+            AgentProfile.is_active == True,
+            AgentProfile.role == "orchestrator",
+            AgentProfile.id != current_agent_id
+        )
+        result = await db.execute(stmt)
+        profiles = result.scalars().all()
+
+        prompt = "### 🧩 子应用目录 (ORCHESTRATOR_DIRECTORY)\n"
+        prompt += "当用户请求更适合交给另一个主控应用整体处理时，可调用 `invoke_orchestrator` 委托子编排。\n"
+
+        if profiles:
+            for profile in profiles:
+                prompt += f"- App_ID: `{profile.id}`, 名称: **{profile.name}**, 适用范围: {profile.description or '独立编排应用'}\n"
+            prompt += "\n**委托准则**：\n"
+            prompt += "1. 仅当目标主控在职责边界上明显更合适时再委托。\n"
+            prompt += "2. 子主控返回的是子任务结果，你仍需在主控侧完成最终整合。\n"
+            prompt += "3. 仅允许使用目录中的 App_ID，严禁凭名称猜测。\n"
+        else:
+            prompt += "\n当前没有其他可委托的在线主控应用。"
+
+        return prompt
+
     def get_handoff_tool_definition(self) -> Dict[str, Any]:
         """
         返回内置的 transfer_to_agent 工具定义（OpenAI 格式）。
@@ -127,6 +156,32 @@ class SwarmService:
                             "type": "string",
                             "description": "移交原因简述。"
                         }
+                    },
+                    "required": ["agent_id"]
+                }
+            }
+        }
+
+    def get_orchestrator_tool_definition(self) -> Dict[str, Any]:
+        """
+        返回内置的 invoke_orchestrator 工具定义（OpenAI 格式）。
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": "invoke_orchestrator",
+                "description": "将当前子任务委托给另一个主控应用处理，并在其完成后回收结果继续整合。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "目标主控应用的唯一 ID，必须从 ORCHESTRATOR_DIRECTORY 中精确选择"
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "委托给子主控的明确任务说明"
+                        },
                     },
                     "required": ["agent_id"]
                 }

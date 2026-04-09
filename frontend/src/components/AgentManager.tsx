@@ -114,7 +114,7 @@ const ROLE_STYLES = {
 };
 
 const ROLE_CHANGE_HINTS = {
-  orchestrator: '改成主控后，它会退出专家协作目录，其他主控不能再通过专家移交直接调用它。',
+  orchestrator: '改成主控后，它会退出专家协作目录，其他主控不能再通过专家移交直接调用它，但可作为子应用被根主控委托。',
   expert: '改成专家后，它会重新进入专家协作目录，可被主控按路由关键词命中。',
 } as const;
 
@@ -363,6 +363,18 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     return options;
   }, [modelConfigs]);
 
+  const orchestratorApps = useMemo(
+    () =>
+      mergedAgents
+        .filter((agent) => agent.role === 'orchestrator')
+        .map((agent) => ({
+          ...agent,
+          attachedExpertCount: mergedAgents.filter((item) => item.role === 'expert' && item.is_active).length,
+          mountedToolCount: agent.tools?.length || 0,
+        })),
+    [mergedAgents],
+  );
+
   return (
     <div style={{ padding: 24, background: '#edf3fb', minHeight: '100%', overflow: 'auto' }}>
       <div style={{ maxWidth: 1500, margin: '0 auto' }}>
@@ -438,6 +450,54 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                 </Button>
               </Space>
             </div>
+            {orchestratorApps.length > 0 && (
+              <Row gutter={[12, 12]}>
+                {orchestratorApps.map((app) => (
+                  <Col key={app.id} xs={24} md={12} xl={8}>
+                    <Card
+                      hoverable
+                      onClick={() => setTopologyScopeId(app.id)}
+                      style={{
+                        borderRadius: 18,
+                        border: `1px solid ${topologyScopeId === app.id ? '#2563eb' : '#dbeafe'}`,
+                        background: topologyScopeId === app.id ? 'linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)' : '#fff',
+                        boxShadow: topologyScopeId === app.id ? '0 14px 32px rgba(37,99,235,0.12)' : '0 8px 20px rgba(15,23,42,0.04)',
+                      }}
+                      bodyStyle={{ padding: 16 }}
+                    >
+                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                        <Space wrap size={8}>
+                          <Avatar size={40} icon={<CrownOutlined />} style={{ background: '#faad14' }} />
+                          <div>
+                            <Text strong style={{ fontSize: 16 }}>{app.name}</Text>
+                            <div>
+                              <Tag color="gold" style={{ marginTop: 6 }}>主控应用</Tag>
+                            </div>
+                          </div>
+                        </Space>
+                        <Text type="secondary" style={{ minHeight: 40 }}>
+                          {app.description || '当前主控应用的编排入口。'}
+                        </Text>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
+                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>模板</Text>
+                            <div><Text strong>standard</Text></div>
+                          </div>
+                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>在线专家</Text>
+                            <div><Text strong>{app.attachedExpertCount}</Text></div>
+                          </div>
+                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>已装能力</Text>
+                            <div><Text strong>{app.mountedToolCount}</Text></div>
+                          </div>
+                        </div>
+                      </Space>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            )}
             <div style={{ borderRadius: 18, overflow: 'hidden' }}>
               <AgentTopologyEditor
                 agents={agents}
@@ -765,16 +825,30 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                           </div>
                         </Checkbox.Group>
                       </Form.Item>
+                      <Form.Item shouldUpdate={(prev, curr) => prev.role !== curr.role} noStyle>
+                        {({ getFieldValue }) =>
+                          getFieldValue('role') === 'expert' ? (
+                            <>
+                              <Form.Item name="routing_keywords" label="路由关键词" extra="多个关键词按回车分隔，主控将据此判断是否移交给该专家。">
+                                <Select mode="tags" placeholder="例如 合同、翻译、调试、前端" />
+                              </Form.Item>
 
-                      <Form.Item name="routing_keywords" label="路由关键词" extra="多个关键词按回车分隔，主控将据此判断是否移交给该专家。">
-                        <Select mode="tags" placeholder="例如 合同、翻译、调试、前端" />
-                      </Form.Item>
-
-                      <Form.Item name="handoff_strategy" label="接管策略">
-                        <Select>
-                          <Select.Option value="return">执行完成后归还主控</Select.Option>
-                          <Select.Option value="end">执行完成后结束当前回合</Select.Option>
-                        </Select>
+                              <Form.Item name="handoff_strategy" label="接管策略">
+                                <Select>
+                                  <Select.Option value="return">执行完成后归还主控</Select.Option>
+                                  <Select.Option value="end">执行完成后结束当前回合</Select.Option>
+                                </Select>
+                              </Form.Item>
+                            </>
+                          ) : (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="主控应用不参与专家路由命中"
+                              description="当前角色是主控，因此不会出现在专家协作目录里。路由关键词不会再用于被其他主控命中，后续更适合给它配置独立的应用编排。"
+                            />
+                          )
+                        }
                       </Form.Item>
                     </Space>
                   ),

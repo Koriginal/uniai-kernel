@@ -17,7 +17,7 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
     """
     工具执行节点：并行执行所有普通工具调用。
 
-    transfer_to_agent 由 router 分流到 handoff_node，此节点只处理常规工具。
+    transfer_to_agent / invoke_orchestrator 由 router 分流到 handoff_node，此节点只处理常规工具。
     """
     c = config["configurable"]
     callback = c["stream_callback"]
@@ -27,7 +27,10 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
     iter_text = state["iter_text"]
 
     # 先将 assistant 消息（含 tool_calls）追加到消息列表
-    tool_calls_for_msg = [tc for tc in pending_tool_calls if tc.get("function", {}).get("name") != "transfer_to_agent"]
+    tool_calls_for_msg = [
+        tc for tc in pending_tool_calls
+        if tc.get("function", {}).get("name") not in {"transfer_to_agent", "invoke_orchestrator"}
+    ]
     all_tc_in_buffer = list(pending_tool_calls)
 
     messages.append({

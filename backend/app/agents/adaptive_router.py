@@ -24,7 +24,7 @@ class DeterministicStrategy(RoutingStrategy):
         pending = state.get("pending_tool_calls", [])
         if pending:
             has_handoff = any(
-                tc.get("function", {}).get("name") == "transfer_to_agent"
+                tc.get("function", {}).get("name") in {"transfer_to_agent", "invoke_orchestrator"}
                 for tc in pending
             )
             return "handoff" if has_handoff else "tool_executor"

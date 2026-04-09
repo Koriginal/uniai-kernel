@@ -48,6 +48,8 @@ graph TD
 - **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
 - **🧠 Advanced Agent Governance**: Full control over Agent roles (`Orchestrator`/`Expert`), dynamic routing keywords, and handoff strategy configuration.
 - **🗺️ Visual Topology Editor**: Introducing **AgentTopologyEditor** for designing, snapshotting, and rolling back LangGraph execution flows directly from the UI.
+- **🛡️ Production Stability**: Integrated concurrent initialization locks, DDL timeout protection, and graceful database degradation for high-availability deployments.
+- **⚡ Smart Expert Ranking**: Collaborative directories are automatically ranked based on agent success rates and latency, optimizing orchestrator decisions.
 - **🔌 Dynamic Tool Validation Bus**: V2 plugin registry supports hot-loading of API/MCP/CLI tools with a built-in "Execution Test" suite for real-time connectivity verification.
 - **📈 Comprehensive Governance Console**: Centralized management for Agent performance (Scorecards), tool registries, and high-fidelity audit trails.
 - **💾 Industrial Persistence**: Leverages **PostgreSQL Checkpointer** for state recovery and continuous execution.

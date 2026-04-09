@@ -154,7 +154,7 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
         warnings.append("主控通常建议使用 return，以便在多专家协作后继续汇总回复。")
 
     if data.get("role") == "orchestrator":
-        warnings.append("当前主控不会再作为 transfer_to_agent 的专家目标；若后续需要主控调用主控，建议走独立的子应用/子编排调用链路。")
+        warnings.append("当前主控不会再作为 transfer_to_agent 的专家目标；它会以子应用的形式出现在主控应用目录中。")
 
     return data, warnings
 

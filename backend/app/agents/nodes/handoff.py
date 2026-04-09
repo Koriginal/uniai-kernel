@@ -30,9 +30,11 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     called_expert_ids = list(state["called_expert_ids"])
     iter_text = state["iter_text"]
 
-    # 找出 transfer_to_agent 调用
-    handoff_calls = [tc for tc in pending_tool_calls if tc.get("function", {}).get("name") == "transfer_to_agent"]
-    other_calls = [tc for tc in pending_tool_calls if tc.get("function", {}).get("name") != "transfer_to_agent"]
+    # 找出 transfer_to_agent / invoke_orchestrator 调用
+    handoff_calls = [
+        tc for tc in pending_tool_calls
+        if tc.get("function", {}).get("name") in {"transfer_to_agent", "invoke_orchestrator"}
+    ]
 
     # 先将 assistant 消息追加到历史（含所有 tool_calls，包括 handoff）
     messages.append({
@@ -48,53 +50,59 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         try:
             args = json.loads(tc["function"]["arguments"])
             tid = args.get("agent_id")
+            tool_name = tc["function"]["name"]
             if not tid or tid in called_expert_ids:
                 # 已调用过，追加失败消息
                 messages.append({
                     "role": "tool",
-                    "name": "transfer_to_agent",
+                    "name": tool_name,
                     "content": f"Skipped: agent '{tid}' already consulted.",
                     "tool_call_id": tc["id"]
                 })
                 continue
 
-            expert = await swarm_service.handle_handoff(db, session_id, tid)
-            if expert:
+            target_agent = await swarm_service.handle_handoff(db, session_id, tid)
+            if target_agent:
                 called_expert_ids.append(tid)
-                new_agent_id = expert.id
+                new_agent_id = target_agent.id
                 new_agent_profile = {
-                    "id": expert.id,
-                    "name": expert.name,
-                    "description": expert.description,
-                    "system_prompt": expert.system_prompt,
-                    "tools": expert.tools or [],
-                    "model_config_id": expert.model_config_id,
-                    "role": expert.role,
-                    "routing_keywords": expert.routing_keywords,
-                    "handoff_strategy": expert.handoff_strategy,
-                    "is_public": expert.is_public,
+                    "id": target_agent.id,
+                    "name": target_agent.name,
+                    "description": target_agent.description,
+                    "system_prompt": target_agent.system_prompt,
+                    "tools": target_agent.tools or [],
+                    "model_config_id": target_agent.model_config_id,
+                    "role": target_agent.role,
+                    "routing_keywords": target_agent.routing_keywords,
+                    "handoff_strategy": target_agent.handoff_strategy,
+                    "is_public": target_agent.is_public,
+                    "runtime_mode": "delegate_orchestrator" if tool_name == "invoke_orchestrator" else "expert",
                 }
                 await callback.emit(
-                    f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': expert.name, 'content': '正在分析任务细节...'})}\n\n"
+                    f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': target_agent.name, 'content': '正在分析任务细节...'})}\n\n"
                 )
                 messages.append({
                     "role": "tool",
-                    "name": "transfer_to_agent",
-                    "content": f"Successfully consulted expert: {expert.name}",
+                    "name": tool_name,
+                    "content": (
+                        f"Successfully invoked sub-orchestrator: {target_agent.name}"
+                        if tool_name == "invoke_orchestrator"
+                        else f"Successfully consulted expert: {target_agent.name}"
+                    ),
                     "tool_call_id": tc["id"]
                 })
             else:
                 messages.append({
                     "role": "tool",
-                    "name": "transfer_to_agent",
-                    "content": f"Expert Error: target agent '{tid}' not found.",
+                    "name": tool_name,
+                    "content": f"Agent Error: target agent '{tid}' unavailable for {tool_name}.",
                     "tool_call_id": tc["id"]
                 })
         except Exception as ee:
             logger.error(f"[HandoffNode] Handoff failed: {ee}")
             messages.append({
                 "role": "tool",
-                "name": "transfer_to_agent",
+                "name": tc["function"]["name"],
                 "content": f"Expert Error: {ee}",
                 "tool_call_id": tc["id"]
             })

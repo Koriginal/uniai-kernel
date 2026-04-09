@@ -37,6 +37,18 @@ async def cleanup_stale_connections():
         else:
             logger.info("[DB-Cleanup] No stale connections found.")
             
+        # [NEW] 监控被阻塞的 DDL 操作
+        waiters = await conn.fetch("""
+            SELECT pid, query, wait_event_type, wait_event 
+            FROM pg_stat_activity 
+            WHERE wait_event_type = 'Lock' 
+            AND state = 'active';
+        """)
+        if waiters:
+            logger.warning(f"[DB-Cleanup] ⚠️ Found {len(waiters)} sessions waiting for locks. This might cause timeouts.")
+            for row in waiters:
+                logger.info(f"[DB-Cleanup] Blocked PID {row['pid']} is waiting for lock on query: {row['query'][:100]}")
+
         await conn.close()
     except Exception as e:
         logger.error(f"[DB-Cleanup] ❌ Failed to cleanup database: {e}")
