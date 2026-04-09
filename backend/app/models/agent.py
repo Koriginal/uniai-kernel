@@ -29,7 +29,16 @@ class AgentProfile(Base):
     # 如果为 None 或空列表，则不开启任何工具。如果包含 "*" 则开启全部（不推荐）。
     tools = Column(JSON, default=[])
     
-    # 私有性设置
+    # [NEW] 角色定义：'orchestrator' (主控) 或 'expert' (专家)
+    role = Column(String, default="expert", nullable=False)
+    
+    # [NEW] 专家接管的意图关键词列表
+    routing_keywords = Column(JSON, default=[], nullable=False)
+    
+    # [NEW] 执行完毕后的控制权策略：'return' (归还) 或 'end' (结束)
+    handoff_strategy = Column(String, default="return", nullable=False)
+    
+    # 私有性设置 (仍保留作为可见性控制，但不作为主控逻辑判断)
     is_public = Column(Boolean, default=False)
     
     is_active = Column(Boolean, default=True)

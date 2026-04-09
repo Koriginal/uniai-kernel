@@ -47,19 +47,19 @@ async def tool_node(state: AgentState):
     if "tool_calls" not in last_message or not last_message["tool_calls"]:
         return {"messages": messages}
         
-    tools_dict = {t.metadata.name: t for t in registry.get_all_actions()}
-    
     for tool_call in last_message["tool_calls"]:
         func_name = tool_call["function"]["name"]
-        func_args = json.loads(tool_call["function"]["arguments"])
+        raw_args = tool_call["function"].get("arguments") or "{}"
         
-        logger.info(f"[Graph] Executing tool: {func_name} with args: {func_args}")
+        logger.info(f"[Graph] Executing tool: {func_name} with args: {raw_args}")
         
-        if func_name in tools_dict:
-            tool_instance = tools_dict[func_name]
-            result = await tool_instance.execute(**func_args)
-        else:
-            result = f"Error: Tool {func_name} not found."
+        try:
+            func_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            if not isinstance(func_args, dict):
+                raise ValueError("Tool arguments must be a JSON object")
+            result = await registry.execute_action(func_name, **func_args)
+        except Exception as e:
+            result = f"Tool Error: {e}"
             
         messages.append({
             "role": "tool",

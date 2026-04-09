@@ -44,23 +44,17 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
             await callback.emit(
                 f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': agent_name, 'content': f'正在执行 {func_name}...'})}\n\n"
             )
-            action = registry.get_action(func_name)
-            if action:
-                args = json.loads(tc["function"]["arguments"])
-                res = await action.execute(**args)
-                messages.append({
-                    "role": "tool",
-                    "name": func_name,
-                    "content": str(res),
-                    "tool_call_id": tc["id"]
-                })
-            else:
-                messages.append({
-                    "role": "tool",
-                    "name": func_name,
-                    "content": f"Error: Tool '{func_name}' not found in registry.",
-                    "tool_call_id": tc["id"]
-                })
+            raw_args = tc["function"].get("arguments") or "{}"
+            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            if not isinstance(args, dict):
+                raise ValueError("Tool arguments must be a JSON object")
+            res = await registry.execute_action(func_name, **args)
+            messages.append({
+                "role": "tool",
+                "name": func_name,
+                "content": str(res),
+                "tool_call_id": tc["id"]
+            })
         except Exception as te:
             logger.error(f"[ToolExecutor] Tool '{func_name}' execution failed: {te}")
             messages.append({

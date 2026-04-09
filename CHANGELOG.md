@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0] - 2026-04-09
+### Added
+- **Advanced Agent Governance**: Introduced explicit roles (`orchestrator`/`expert`), dynamic routing keywords, and a "Silent Validation" API for pre-deployment checks.
+- **Topology Version Control**: Full support for snapshotting graph topologies. Users can now edit workflows, save versions, and switch between active snapshots in real-time.
+- **Dynamic Tools V2**: Added real-time validation and a "Test" execution engine for API, MCP, and CLI tools.
+- **Enhanced Audit Dashboard**: Aggregated summary statistics for agents, including success rate heatmaps and performance trend analysis.
+- **Multimodal Chat Support**: Updated the agent-specific chat API to support multimodal content (images/text arrays).
+
+### Changed
+- Replaced `AgentTopologyGraph` with the interactive `AgentTopologyEditor`.
+- Refactored `PluginRegistry` to support lazy-loading and hot-swapping of dynamic tools via database triggers.
+
 ## [2.1.0] - 2026-04-09
 ### Added
 - **Dynamic Graph Registry**: Support for loading graph topologies from the database via JSON definitions.

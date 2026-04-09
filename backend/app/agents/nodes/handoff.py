@@ -69,6 +69,9 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                     "system_prompt": expert.system_prompt,
                     "tools": expert.tools or [],
                     "model_config_id": expert.model_config_id,
+                    "role": expert.role,
+                    "routing_keywords": expert.routing_keywords,
+                    "handoff_strategy": expert.handoff_strategy,
                     "is_public": expert.is_public,
                 }
                 await callback.emit(

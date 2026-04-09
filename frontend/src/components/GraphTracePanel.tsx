@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Typography, Steps, Tag, Space, Spin, Tooltip } from 'antd';
 import { 
   ThunderboltOutlined, CheckCircleOutlined, SyncOutlined, 
-  LeftCircleOutlined, RightCircleOutlined, NodeIndexOutlined
+  LeftCircleOutlined, NodeIndexOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 

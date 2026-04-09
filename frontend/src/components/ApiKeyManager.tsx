@@ -1,11 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message, Tag, Space, Typography, Card, Tooltip } from 'antd';
-import { 
-  KeyOutlined, 
-  PlusOutlined, 
-  DeleteOutlined, 
-  CopyOutlined, 
-  SafetyCertificateOutlined 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Collapse,
+  Form,
+  Input,
+  List,
+  Modal,
+  Row,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import {
+  ApiOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  GlobalOutlined,
+  KeyOutlined,
+  PlusOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import type { AxiosInstance } from 'axios';
 import dayjs from 'dayjs';
@@ -13,194 +31,400 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 
 dayjs.extend(relativeTime);
 
-const { Title, Text, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 
 interface ApiKeyManagerProps {
-    api: AxiosInstance;
-    user: any;
+  api: AxiosInstance;
+  user: any;
 }
 
+interface ApiKeyItem {
+  id: string;
+  name: string;
+  key: string;
+  is_active: boolean;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
+const CodeBlock = ({ code, onCopy }: { code: string; onCopy: (value: string) => void }) => (
+  <div style={{ position: 'relative' }}>
+    <Button
+      size="small"
+      icon={<CopyOutlined />}
+      style={{ position: 'absolute', right: 12, top: 12, zIndex: 1 }}
+      onClick={() => onCopy(code)}
+    >
+      复制
+    </Button>
+    <pre
+      style={{
+        margin: 0,
+        padding: '16px',
+        borderRadius: 12,
+        background: '#0b1220',
+        color: '#d6e4ff',
+        overflow: 'auto',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontSize: 13,
+        lineHeight: 1.6,
+      }}
+    >
+      {code}
+    </pre>
+  </div>
+);
+
 const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ api, user }) => {
-    const [loading, setLoading] = useState(true);
-    const [keys, setKeys] = useState<any[]>([]);
-    const [isModalVisible, setIsModalVisible] = useState(false);
-    const [form] = Form.useForm();
-    const [newKeyDetails, setNewKeyDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [keys, setKeys] = useState<ApiKeyItem[]>([]);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [newKeyDetails, setNewKeyDetails] = useState<ApiKeyItem | null>(null);
+  const [form] = Form.useForm();
 
-    // 移除硬编码：现在使用 props 中的 user.id 或后端自动关联 Token 身份
+  const origin = window.location.origin;
+  const openAIBaseUrl = `${origin}/api/v1`;
 
-    const fetchKeys = async () => {
-        setLoading(true);
-        try {
-            const res = await api.get(`/api/v1/user/api-keys/`);
-            setKeys(res.data);
-        } catch (error) {
-            message.error("加载 API 秘钥失败");
-        } finally {
-            setLoading(false);
-        }
-    };
+  const curlExample = useMemo(
+    () => `curl ${openAIBaseUrl}/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: <YOUR_API_KEY>" \\
+  -d '{
+    "model": "default",
+    "stream": false,
+    "messages": [
+      { "role": "user", "content": "你好，请介绍一下你自己" }
+    ]
+  }'`,
+    [openAIBaseUrl]
+  );
 
-    useEffect(() => {
-        fetchKeys();
-    }, []);
+  const pythonExample = useMemo(
+    () => `from openai import OpenAI
 
-    const handleCreate = async (values: any) => {
-        try {
-            const res = await api.post('/api/v1/user/api-keys/', {
-                ...values
-            });
-            message.success("API 秘钥创建成功");
-            setIsModalVisible(false);
-            form.resetFields();
-            setNewKeyDetails(res.data); // 展示给用户看一次
-            fetchKeys();
-        } catch (error) {
-            message.error("创建失败");
-        }
-    };
+client = OpenAI(
+    api_key="<YOUR_API_KEY>",
+    base_url="${openAIBaseUrl}"
+)
 
-    const handleDelete = async (id: string) => {
-        try {
-            await api.delete(`/api/v1/user/api-keys/${id}`);
-            message.success("秘钥已吊销");
-            fetchKeys();
-        } catch (error) {
-            message.error("操作失败");
-        }
-    };
+resp = client.chat.completions.create(
+    model="default",
+    messages=[
+        {"role": "user", "content": "帮我总结今天的任务重点"}
+    ]
+)
 
-    const copyToClipboard = (text: string) => {
-        navigator.clipboard.writeText(text);
-        message.success("已复制到剪贴板");
-    };
+print(resp.choices[0].message.content)`,
+    [openAIBaseUrl]
+  );
 
-    const columns = [
-        {
-            title: '名称',
-            dataIndex: 'name',
-            key: 'name',
-            render: (text: string) => <Text strong>{text}</Text>,
-        },
-        {
-            title: '秘钥',
-            dataIndex: 'key',
-            key: 'key',
-            render: (key: string) => (
-                <Space>
-                    <Text code>{key.substring(0, 10)}****************{key.substring(key.length - 4)}</Text>
-                    <Tooltip title="复制完整秘钥">
-                        <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => copyToClipboard(key)} />
-                    </Tooltip>
-                </Space>
-            ),
-        },
-        {
-            title: '状态',
-            dataIndex: 'is_active',
-            key: 'is_active',
-            render: (active: boolean) => (
-                <Tag color={active ? 'green' : 'red'}>{active ? '有效' : '已禁用'}</Tag>
-            ),
-        },
-        {
-            title: '最后使用时间',
-            dataIndex: 'last_used_at',
-            key: 'last_used_at',
-            render: (text: string) => text ? dayjs(text).fromNow() : '从未使用',
-        },
-        {
-            title: '创建时间',
-            dataIndex: 'created_at',
-            key: 'created_at',
-            render: (text: string) => dayjs(text).format('YYYY-MM-DD HH:mm'),
-        },
-        {
-            title: '操作',
-            key: 'action',
-            render: (_: any, record: any) => (
-                <Button 
-                    type="link" 
-                    danger 
-                    icon={<DeleteOutlined />} 
-                    onClick={() => Modal.confirm({
-                        title: '确定要吊销此 API 秘钥吗？',
-                        content: '删除后，所有使用此秘钥的应用将无法访问内核。',
-                        onOk: () => handleDelete(record.id)
-                    })}
-                >
-                    吊销
-                </Button>
-            ),
-        }
-    ];
+  const jsExample = useMemo(
+    () => `import OpenAI from "openai";
 
-    return (
-        <div style={{ padding: '24px', background: '#fff', minHeight: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-                <div>
-                    <Title level={4}><KeyOutlined /> API 秘钥管理</Title>
-                    <Text type="secondary">用户 {user?.username} 的秘钥。使用 API 秘钥从 Dify、LobeChat 等第三方应用接入 UniAI-Kernel 能力。</Text>
-                </div>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
-                    创建新秘钥
-                </Button>
-            </div>
+const client = new OpenAI({
+  apiKey: "<YOUR_API_KEY>",
+  baseURL: "${openAIBaseUrl}",
+});
 
-            <Card bordered={false} bodyStyle={{ padding: 0 }}>
-                <Table 
-                    columns={columns} 
-                    dataSource={keys} 
-                    rowKey="id" 
-                    loading={loading}
-                    pagination={false}
-                />
+const resp = await client.chat.completions.create({
+  model: "default",
+  messages: [
+    { role: "user", content: "给我一份 3 条的接入建议" },
+  ],
+});
+
+console.log(resp.choices[0].message.content);`,
+    [openAIBaseUrl]
+  );
+
+  const fetchKeys = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/api/v1/user/api-keys/');
+      setKeys(res.data || []);
+    } catch {
+      message.error('加载 API 秘钥失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchKeys();
+  }, []);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    message.success('已复制到剪贴板');
+  };
+
+  const handleCreate = async (values: { name: string }) => {
+    try {
+      const res = await api.post('/api/v1/user/api-keys/', values);
+      setNewKeyDetails(res.data);
+      setIsModalVisible(false);
+      form.resetFields();
+      message.success('API 秘钥创建成功');
+      fetchKeys();
+    } catch {
+      message.error('创建失败');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await api.delete(`/api/v1/user/api-keys/${id}`);
+      message.success('秘钥已吊销');
+      fetchKeys();
+    } catch {
+      message.error('操作失败');
+    }
+  };
+
+  const columns = [
+    {
+      title: '名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (value: string) => <Text strong>{value}</Text>,
+    },
+    {
+      title: '秘钥预览',
+      dataIndex: 'key',
+      key: 'key',
+      render: (value: string) => <Text code>{value}</Text>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? '有效' : '禁用'}</Tag>,
+    },
+    {
+      title: '最后使用',
+      dataIndex: 'last_used_at',
+      key: 'last_used_at',
+      render: (value: string) => (value ? dayjs(value).fromNow() : '从未使用'),
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm'),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      fixed: 'right' as const,
+      width: 92,
+      render: (_: unknown, record: ApiKeyItem) => (
+        <Button
+          type="link"
+          danger
+          icon={<DeleteOutlined />}
+          onClick={() =>
+            Modal.confirm({
+              title: '确定要吊销此 API 秘钥吗？',
+              content: '删除后，所有使用此秘钥的应用将无法继续访问当前内核。',
+              onOk: () => handleDelete(record.id),
+            })
+          }
+        >
+          吊销
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div style={{ padding: 24, background: '#f5f7fb', minHeight: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 1480, margin: '0 auto' }}>
+        <Row gutter={[16, 16]} align="top">
+          <Col xs={24} xxl={10}>
+          <Card
+            bordered={false}
+            style={{ borderRadius: 20, overflow: 'hidden' }}
+            title={
+              <Space>
+                <KeyOutlined />
+                <span>API 秘钥管理</span>
+              </Space>
+            }
+            extra={
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)}>
+                创建新秘钥
+              </Button>
+            }
+          >
+            <Space direction="vertical" size={12} style={{ width: '100%', marginBottom: 16 }}>
+              <Text type="secondary">
+                当前登录用户 {user?.username || user?.email || '当前用户'} 的开发者秘钥。适合接入外部客户端、工作流平台和自定义应用。
+              </Text>
+              <Alert
+                type="info"
+                showIcon
+                message="安全提示"
+                description="完整 API Key 只会在创建成功时展示一次。列表页仅显示脱敏预览。"
+              />
+            </Space>
+
+            <Card
+              size="small"
+              style={{ marginBottom: 16, borderRadius: 14, background: '#fafcff' }}
+              bodyStyle={{ padding: 14 }}
+            >
+              <Row gutter={[12, 12]}>
+                <Col xs={24} sm={12}>
+                  <Text type="secondary">OpenAI 兼容基地址</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text code>{openAIBaseUrl}</Text>
+                  </div>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Text type="secondary">鉴权头</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text code>X-API-Key: &lt;YOUR_API_KEY&gt;</Text>
+                  </div>
+                </Col>
+              </Row>
             </Card>
 
-            {/* 创建弹窗 */}
-            <Modal
-                title="创建 API 秘钥"
-                visible={isModalVisible}
-                onCancel={() => setIsModalVisible(false)}
-                onOk={() => form.submit()}
-                destroyOnClose
-            >
-                <Form form={form} layout="vertical" onFinish={handleCreate}>
-                    <Form.Item 
-                        name="name" 
-                        label="秘钥名称" 
-                        rules={[{ required: true, message: '请输入名称' }]}
-                        initialValue="Default Key"
-                    >
-                        <Input placeholder="例如：Dify 集成、测试 Key" maxLength={32} />
-                    </Form.Item>
-                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                        API 基地址: <Text code>{window.location.origin}/v1</Text>
-                    </Text>
-                </Form>
-            </Modal>
+            <Table
+              columns={columns}
+              dataSource={keys}
+              rowKey="id"
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+            />
+          </Card>
+        </Col>
 
-            {/* 成功展示弹窗 */}
-            <Modal
-                title={<span><SafetyCertificateOutlined style={{ color: '#52c41a' }} /> 秘钥创建成功</span>}
-                visible={!!newKeyDetails}
-                onCancel={() => setNewKeyDetails(null)}
-                footer={[<Button key="close" type="primary" onClick={() => setNewKeyDetails(null)}>我已保存</Button>]}
-            >
-                <Paragraph>
-                    请务必立即复制并保存您的 API 秘钥。出于安全考虑，<Text strong type="danger">您之后将无法再次查看完整秘钥</Text>。
-                </Paragraph>
-                <Card size="small" style={{ background: '#f6f8fa', border: '1px solid #d0d7de' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text strong style={{ fontSize: '16px', fontFamily: 'monospace' }}>
-                            {newKeyDetails?.key}
-                        </Text>
-                        <Button type="link" icon={<CopyOutlined />} onClick={() => copyToClipboard(newKeyDetails?.key)} />
-                    </div>
-                </Card>
-            </Modal>
-        </div>
-    );
+          <Col xs={24} xxl={14}>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Card
+                bordered={false}
+                style={{ borderRadius: 20 }}
+                title={
+                  <Space>
+                    <ApiOutlined />
+                    <span>开发者接入指南</span>
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={[
+                    `Base URL: ${openAIBaseUrl}`,
+                    '鉴权方式: 推荐使用 `X-API-Key: <YOUR_API_KEY>`',
+                    '兼容接口: `POST /chat/completions`',
+                    '请求格式: OpenAI Chat Completions 风格',
+                  ]}
+                  renderItem={(item) => <List.Item>{item}</List.Item>}
+                />
+              </Card>
+
+              <Card
+                bordered={false}
+                style={{ borderRadius: 20 }}
+                title={
+                  <Space>
+                    <GlobalOutlined />
+                    <span>快速示例</span>
+                  </Space>
+                }
+              >
+                <Collapse
+                  defaultActiveKey={['curl']}
+                  items={[
+                    {
+                      key: 'curl',
+                      label: 'cURL 示例',
+                      children: <CodeBlock code={curlExample} onCopy={copyToClipboard} />,
+                    },
+                    {
+                      key: 'python',
+                      label: 'Python 示例',
+                      children: <CodeBlock code={pythonExample} onCopy={copyToClipboard} />,
+                    },
+                    {
+                      key: 'javascript',
+                      label: 'JavaScript 示例',
+                      children: <CodeBlock code={jsExample} onCopy={copyToClipboard} />,
+                    },
+                  ]}
+                />
+              </Card>
+
+              <Card size="small" style={{ borderRadius: 16, background: '#fafafa' }}>
+                <Space direction="vertical" size={6}>
+                  <Text strong>接入建议</Text>
+                  <Text type="secondary">优先把 API Key 放在服务端环境变量中，不要直接写死在前端代码里。</Text>
+                  <Text type="secondary">如果你在对接 Dify、LobeChat 或自建 Agent UI，可直接将 Base URL 指向上面的地址。</Text>
+                  <Text type="secondary">如果需要多环境隔离，建议按用途分别创建不同名称的 key，便于吊销和排查。</Text>
+                </Space>
+              </Card>
+            </Space>
+          </Col>
+        </Row>
+      </div>
+
+      <Modal
+        title="创建 API 秘钥"
+        open={isModalVisible}
+        onCancel={() => setIsModalVisible(false)}
+        onOk={() => form.submit()}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={handleCreate} initialValues={{ name: 'Default Key' }}>
+          <Form.Item name="name" label="秘钥名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input placeholder="例如：Dify 生产环境 / 团队机器人 / 本地测试" maxLength={48} />
+          </Form.Item>
+          <Text type="secondary">创建后将立即显示完整 key，请当场保存。</Text>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <SafetyCertificateOutlined style={{ color: '#52c41a' }} />
+            <span>秘钥创建成功</span>
+          </Space>
+        }
+        open={!!newKeyDetails}
+        onCancel={() => setNewKeyDetails(null)}
+        footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => newKeyDetails && copyToClipboard(newKeyDetails.key)}>
+            复制秘钥
+          </Button>,
+          <Button key="close" type="primary" onClick={() => setNewKeyDetails(null)}>
+            我已保存
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Alert
+            type="warning"
+            showIcon
+            message="这是你唯一一次看到完整秘钥"
+            description="关闭后列表中只会展示脱敏预览，请先复制到密码管理器或环境变量。"
+          />
+          <Card size="small" style={{ background: '#f6f8fa', border: '1px solid #d0d7de' }}>
+            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+              <Text strong style={{ fontFamily: 'monospace', fontSize: 15 }}>
+                {newKeyDetails?.key}
+              </Text>
+              <Button type="link" icon={<CopyOutlined />} onClick={() => newKeyDetails && copyToClipboard(newKeyDetails.key)} />
+            </Space>
+          </Card>
+          <Paragraph style={{ marginBottom: 0 }}>
+            这个 key 可直接用于上面的 `curl`、Python 和 JavaScript 示例，把 {'<YOUR_API_KEY>'} 替换掉即可。
+          </Paragraph>
+        </Space>
+      </Modal>
+    </div>
+  );
 };
 
 export default ApiKeyManager;

@@ -6,19 +6,20 @@ from app.tools.base import BaseTool
 
 class ApiTool(BaseTool):
     """通过 HTTP API 调用执行外部工具"""
-    def __init__(self, name: str, label: str, description: str, url: str, method: str = "POST", headers: Dict[str, str] = None, schema: Dict[str, Any] = None):
+    def __init__(self, name: str, label: str, description: str, url: str, method: str = "POST", headers: Dict[str, str] = None, schema: Dict[str, Any] = None, timeout_seconds: float = 20.0):
         super().__init__(name, label, description, category="api")
         self.url = url
         self.method = method
         self.headers = headers or {}
         self._schema = schema or {"type": "object", "properties": {}}
+        self.timeout_seconds = timeout_seconds
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
         return self._schema
 
     async def execute(self, **kwargs) -> str:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             try:
                 if self.method.upper() == "GET":
                     resp = await client.get(self.url, params=kwargs, headers=self.headers)
@@ -32,11 +33,12 @@ class ApiTool(BaseTool):
 
 class McpTool(BaseTool):
     """Model Context Protocol (MCP) 适配器 (基于 stdio 传输)"""
-    def __init__(self, name: str, label: str, description: str, command: str, args: list = None, schema: Dict[str, Any] = None):
+    def __init__(self, name: str, label: str, description: str, command: str, args: list = None, schema: Dict[str, Any] = None, timeout_seconds: float = 30.0):
         super().__init__(name, label, description, category="mcp")
         self.command = command
         self.args = args or []
         self._schema = schema or {"type": "object", "properties": {}}
+        self.timeout_seconds = timeout_seconds
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -60,7 +62,15 @@ class McpTool(BaseTool):
             "id": 1
         }
         
-        stdout, stderr = await proc.communicate(input=json.dumps(request).encode())
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=json.dumps(request).encode()),
+                timeout=self.timeout_seconds
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return f"MCP Error: execution timed out after {self.timeout_seconds:.0f}s"
         
         if proc.returncode != 0:
             return f"MCP Error: {stderr.decode()}"
@@ -73,10 +83,11 @@ class McpTool(BaseTool):
 
 class CliTool(BaseTool):
     """本地命令行工具执行 (注意安全！)"""
-    def __init__(self, name: str, label: str, description: str, script: str, schema: Dict[str, Any] = None):
+    def __init__(self, name: str, label: str, description: str, script: str, schema: Dict[str, Any] = None, timeout_seconds: float = 30.0):
         super().__init__(name, label, description, category="cli")
         self.script = script
         self._schema = schema or {"type": "object", "properties": {}}
+        self.timeout_seconds = timeout_seconds
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -94,7 +105,12 @@ class CliTool(BaseTool):
             env={k: str(v) for k, v in env.items()}
         )
         
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return f"CLI Error: execution timed out after {self.timeout_seconds:.0f}s"
         
         if proc.returncode != 0:
             return f"CLI Error: {stderr.decode()}"
@@ -102,10 +118,11 @@ class CliTool(BaseTool):
 
 class McpSseTool(BaseTool):
     """Model Context Protocol (MCP) 适配器 (基于 SSE 传输)"""
-    def __init__(self, name: str, label: str, description: str, url: str, schema: Dict[str, Any] = None):
+    def __init__(self, name: str, label: str, description: str, url: str, schema: Dict[str, Any] = None, timeout_seconds: float = 30.0):
         super().__init__(name, label, description, category="mcp")
         self.url = url
         self._schema = schema or {"type": "object", "properties": {}}
+        self.timeout_seconds = timeout_seconds
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -120,7 +137,7 @@ class McpSseTool(BaseTool):
         """
         from urllib.parse import urljoin
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             endpoint_url = None
             
             try:

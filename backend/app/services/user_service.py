@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.models.user import User, UserApiKey
 import secrets
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ class UserService:
         )
         api_key = result.scalar_one_or_none()
         if api_key:
+            api_key.last_used_at = datetime.utcnow()
+            await db.commit()
             return await db.get(User, api_key.user_id)
         return None
 

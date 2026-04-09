@@ -43,6 +43,7 @@ async def get_kernel_status() -> Dict[str, Any]:
         "has_memory_store": registry.get_memory_store() is not None,
         "has_knowledge_base": registry.get_knowledge_base() is not None,
         "registered_actions": [a.metadata.name for a in actions],
+        "dynamic_diagnostics": registry.get_dynamic_action_diagnostics(),
         "version": "1.0.0"
     }
 
@@ -95,4 +96,3 @@ class MyCustomTool(BaseTool):
         "auto_discovery": True,
         "registration_method": "自动发现（内核启动时扫描 app.tools 包）"
     }
-

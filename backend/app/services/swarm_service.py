@@ -46,6 +46,17 @@ class SwarmService:
             logger.error(f"[Swarm] Handoff failed: Target agent {target_agent_id} not found.")
             return None
 
+        if not target_profile.is_active:
+            logger.warning(f"[Swarm] Handoff rejected: Target agent {target_agent_id} is inactive.")
+            return None
+
+        if target_profile.role != "expert":
+            logger.warning(
+                f"[Swarm] Handoff rejected: Target agent {target_agent_id} has role='{target_profile.role}', "
+                "but transfer_to_agent only supports expert targets."
+            )
+            return None
+
         if session_id:
             session = await db.get(ChatSession, session_id)
             if session:
@@ -64,6 +75,7 @@ class SwarmService:
         stmt = select(AgentProfile).where(
             or_(AgentProfile.user_id == user_id, AgentProfile.is_public == True),
             AgentProfile.is_active == True,
+            AgentProfile.role == "expert",
             AgentProfile.id != current_agent_id
         )
         result = await db.execute(stmt)

@@ -3,8 +3,7 @@ import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, mess
 import { 
   AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
-  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined, InfoCircleOutlined,
-  LineChartOutlined, CheckCircleOutlined, ThunderboltFilled
+  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -34,6 +33,9 @@ export interface Agent {
   tools?: string[];
   is_active: boolean;
   is_public: boolean;
+  role: 'orchestrator' | 'expert';
+  routing_keywords?: string[];
+  handoff_strategy?: 'return' | 'end';
   model_config_id: number;
   system_prompt?: string;
 }

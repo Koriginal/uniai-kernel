@@ -46,13 +46,11 @@ graph TD
 - **Quick Environment Setup**: One-click start using `.env`
 - **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
 - **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
-### 🧠 Dynamic & Self-Healing Orchestration
-- **Adaptive Self-Healing Engine**: Integrated pre-node checks and error recovery. Automatically retries or rolls back to the last healthy state on failure, ensuring high reliability for complex tasks.
-- **Dynamic Graph Registry (Topological JSON)**: Define execution flows via database entries. Update agent routing, inject compliance nodes, or modify task sequences without rebooting the kernel.
-- **Real-Time Execution Streaming**: Monitor live node transitions and internal agent reasoning steps via the **Graph Trace** dashboard.
-- **🎨 Real-Time Artifact Canvas**: Concurrent rendering of code and rich data. Separates "Reasoning" (Chat) from "Delivery" (Canvas).
-- **📈 Agent Performance Scorecards**: Digital governance of the expert swarm. Click an agent's avatar to see live KPIs: success rate, total calls, avg. duration, and quality scores.
-- **💾 Industrial Persistence**: Leverages **PostgreSQL Checkpointer** for cross-session state recovery and continuous execution support.
+- **🧠 Advanced Agent Governance**: Full control over Agent roles (`Orchestrator`/`Expert`), dynamic routing keywords, and handoff strategy configuration.
+- **🗺️ Visual Topology Editor**: Introducing **AgentTopologyEditor** for designing, snapshotting, and rolling back LangGraph execution flows directly from the UI.
+- **🔌 Dynamic Tool Validation Bus**: V2 plugin registry supports hot-loading of API/MCP/CLI tools with a built-in "Execution Test" suite for real-time connectivity verification.
+- **📈 Comprehensive Governance Console**: Centralized management for Agent performance (Scorecards), tool registries, and high-fidelity audit trails.
+- **💾 Industrial Persistence**: Leverages **PostgreSQL Checkpointer** for state recovery and continuous execution.
 - **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
 
 ### 🚀 Developer Friendly

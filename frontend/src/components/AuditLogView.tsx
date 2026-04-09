@@ -1,270 +1,408 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Card, Row, Col, Statistic, Tag, Typography, Button, Drawer, Descriptions, Space, Empty, List } from 'antd';
-import { Area, Pie } from '@ant-design/plots';
-import { 
-  BarChartOutlined, 
-  HistoryOutlined, 
-  ThunderboltOutlined, 
-  DollarOutlined,
-  EyeOutlined,
-  ToolOutlined
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Card,
+  Col,
+  Descriptions,
+  Drawer,
+  Empty,
+  Progress,
+  Row,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Typography,
+  List,
+} from 'antd';
+import { Column, Line, Pie } from '@ant-design/plots';
+import {
+  BarChartOutlined,
+  ClockCircleOutlined,
+  MessageOutlined,
+  PartitionOutlined,
+  RobotOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
+interface DashboardSummary {
+  total_sessions: number;
+  active_sessions: number;
+  total_messages: number;
+  user_messages: number;
+  assistant_messages: number;
+  total_executions: number;
+  tool_calls: number;
+  avg_duration_ms: number;
+  error_rate: number;
+  total_tokens: number;
+  likes: number;
+  dislikes: number;
+}
+
+interface DailyActivity {
+  date: string;
+  sessions: number;
+  messages: number;
+  tokens: number;
+  executions: number;
+  tool_calls: number;
+}
+
+interface TopAgent {
+  agent_id?: string | null;
+  agent_name: string;
+  executions: number;
+  avg_duration_ms: number;
+  success_rate: number;
+  error_count: number;
+  tool_calls: number;
+}
+
+interface TopNode {
+  node_name: string;
+  executions: number;
+  avg_duration_ms: number;
+  error_count: number;
+}
+
+interface RecentExecution {
+  id: string;
+  created_at: string;
+  session_id?: string | null;
+  request_id?: string | null;
+  node_name: string;
+  agent_id?: string | null;
+  agent_name: string;
+  status: string;
+  duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  tool_calls_count: number;
+  error_message?: string | null;
+}
+
+interface DashboardData {
+  summary: DashboardSummary;
+  daily_activity: DailyActivity[];
+  top_agents: TopAgent[];
+  top_nodes: TopNode[];
+  recent_executions: RecentExecution[];
+}
+
+const defaultData: DashboardData = {
+  summary: {
+    total_sessions: 0,
+    active_sessions: 0,
+    total_messages: 0,
+    user_messages: 0,
+    assistant_messages: 0,
+    total_executions: 0,
+    tool_calls: 0,
+    avg_duration_ms: 0,
+    error_rate: 0,
+    total_tokens: 0,
+    likes: 0,
+    dislikes: 0,
+  },
+  daily_activity: [],
+  top_agents: [],
+  top_nodes: [],
+  recent_executions: [],
+};
+
 const AuditLogView: React.FC = () => {
-    const [loading, setLoading] = useState(true);
-    const [stats, setStats] = useState<any>(null);
-    const [logs, setLogs] = useState<any[]>([]);
-    const [selectedLog, setSelectedLog] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [dashboard, setDashboard] = useState<DashboardData>(defaultData);
+  const [selectedExecution, setSelectedExecution] = useState<RecentExecution | null>(null);
 
-    const fetchData = async () => {
-        setLoading(true);
-        // 分别请求，互不干扰
-        const fetchStats = async () => {
-            try {
-                const res = await axios.get('/api/v1/audit/stats?days=7');
-                setStats(res.data);
-            } catch (err) {
-                console.error("Failed to fetch stats", err);
-            }
-        };
-
-        const fetchLogs = async () => {
-            try {
-                const res = await axios.get('/api/v1/audit/actions?limit=50');
-                setLogs(res.data);
-            } catch (err) {
-                console.error("Failed to fetch logs", err);
-            }
-        };
-
-        await Promise.all([fetchStats(), fetchLogs()]);
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      setLoading(true);
+      try {
+        const res = await axios.get('/api/v1/audit/dashboard?days=7');
+        setDashboard({
+          ...defaultData,
+          ...res.data,
+          summary: { ...defaultData.summary, ...(res.data?.summary || {}) },
+          daily_activity: res.data?.daily_activity || [],
+          top_agents: res.data?.top_agents || [],
+          top_nodes: res.data?.top_nodes || [],
+          recent_executions: res.data?.recent_executions || [],
+        });
+      } catch (err) {
+        console.error('Failed to fetch audit dashboard', err);
+      } finally {
         setLoading(false);
+      }
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    fetchDashboard();
+  }, []);
 
-    const columns = [
-        {
-            title: '时间',
-            dataIndex: 'created_at',
-            key: 'created_at',
-            render: (text: string) => dayjs(text).format('MM-DD HH:mm:ss'),
-            width: 140,
-        },
-        {
-            title: '工具/行动',
-            dataIndex: 'action_name',
-            key: 'action_name',
-            render: (text: string) => <Tag color="blue">{text}</Tag>,
-        },
-        {
-            title: '状态',
-            dataIndex: 'status',
-            key: 'status',
-            render: (status: string) => (
-                <Tag color={status === 'success' ? 'green' : 'red'}>
-                    {status?.toUpperCase() || 'UNKNOWN'}
-                </Tag>
-            ),
-        },
-        {
-            title: '耗时',
-            dataIndex: 'duration_ms',
-            key: 'duration_ms',
-            render: (ms: number) => `${(ms || 0).toFixed(0)}ms`,
-        },
-        {
-            title: 'Tokens',
-            dataIndex: 'total_tokens',
-            key: 'total_tokens',
-            render: (val: number) => <Text strong>{val || 0}</Text>,
-        },
-        {
-            title: '操作',
-            key: 'action',
-            render: (_: any, record: any) => (
-                <Button type="link" icon={<EyeOutlined />} onClick={() => setSelectedLog(record)}>
-                    详情
-                </Button>
-            ),
-        }
-    ];
+  const activitySeries = useMemo(
+    () =>
+      (dashboard.daily_activity || []).flatMap((item) => [
+        { date: item.date, type: '会话', value: item.sessions },
+        { date: item.date, type: '消息', value: item.messages },
+        { date: item.date, type: '节点执行', value: item.executions },
+      ]),
+    [dashboard.daily_activity]
+  );
 
-    const chartConfig = {
-        data: stats?.daily || [],
-        xField: 'date',
-        yField: 'tokens',
-        smooth: true,
-        areaStyle: {
-            fill: 'l(270) 0:#ffffff 0.5:#7ec2f3 1:#1890ff',
-        },
-    };
+  const nodeChartData = useMemo(
+    () =>
+      (dashboard.top_nodes || []).map((item) => ({
+        name: item.node_name,
+        value: item.executions,
+      })),
+    [dashboard.top_nodes]
+  );
 
-    const pieConfig = {
-        appendPadding: 10,
-        data: stats?.by_agent || [],
-        angleField: 'tokens',
-        colorField: 'agent_id',
-        radius: 0.8,
-        label: {
-            type: 'outer',
-            content: '{name} {percentage}',
-        },
-        interactions: [{ type: 'element-active' }],
-    };
+  const feedbackTotal = dashboard.summary.likes + dashboard.summary.dislikes;
+  const approvalRate = feedbackTotal > 0 ? dashboard.summary.likes / feedbackTotal : 0;
 
-    return (
-        <div style={{ padding: '24px', background: '#f5f6fa', flex: 1, overflow: 'auto' }}>
-            <Title level={4} style={{ marginBottom: 24 }}>
-                <BarChartOutlined /> 使用统计与审计日志
-            </Title>
+  const lineConfig = {
+    data: activitySeries,
+    xField: 'date',
+    yField: 'value',
+    seriesField: 'type',
+    smooth: true,
+    point: { size: 4 },
+    color: ['#1677ff', '#52c41a', '#fa8c16'],
+    legend: { position: 'top' as const },
+  };
 
-            {/* 汇总统计卡片 */}
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-                <Col span={6}>
-                    <Card bordered={false} hoverable>
-                        <Statistic
-                            title="累计调用次数"
-                            value={stats?.summary?.total_calls || 0}
-                            prefix={<ThunderboltOutlined style={{ color: '#1890ff' }} />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={6}>
-                    <Card bordered={false} hoverable>
-                        <Statistic
-                            title="Token 消耗总量"
-                            value={stats?.summary?.total_tokens || 0}
-                            prefix={<HistoryOutlined style={{ color: '#52c41a' }} />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={6}>
-                    <Card bordered={false} hoverable>
-                        <Statistic
-                            title="平均响应延迟"
-                            value={stats?.summary?.avg_latency || 0}
-                            precision={0}
-                            suffix="ms"
-                            prefix={<ThunderboltOutlined style={{ color: '#faad14' }} />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={6}>
-                    <Card bordered={false} hoverable>
-                        <Statistic
-                            title="预估总成本"
-                            value={stats?.summary?.total_cost || 0}
-                            precision={4}
-                            prefix={<DollarOutlined style={{ color: '#f5222d' }} />}
-                            suffix="USD"
-                        />
-                    </Card>
-                </Col>
-            </Row>
+  const pieConfig = {
+    data: nodeChartData,
+    angleField: 'value',
+    colorField: 'name',
+    radius: 0.82,
+    label: { type: 'outer', content: '{name} {percentage}' },
+    interactions: [{ type: 'element-active' }],
+  };
 
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-                {/* 使用趋势图表 */}
-                <Col span={16}>
-                    <Card title="Token 消耗趋势 (近 7 天)" bordered={false}>
-                        <div style={{ height: 350 }}>
-                            {stats?.daily?.length > 0 ? <Area {...chartConfig} /> : <Empty description="暂无趋势数据" />}
-                        </div>
-                    </Card>
-                </Col>
-                {/* 智能体分布 */}
-                <Col span={8}>
-                    <Card title="智能体 Token 分布" bordered={false}>
-                        <div style={{ height: 350 }}>
-                            {stats?.by_agent?.length > 0 ? <Pie {...pieConfig} /> : <Empty description="暂无分布数据" />}
-                        </div>
-                    </Card>
-                </Col>
-            </Row>
+  const agentColumnConfig = {
+    data: dashboard.top_agents || [],
+    xField: 'agent_name',
+    yField: 'executions',
+    label: false,
+    color: '#1677ff',
+  };
 
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-                {/* 热门工具排行 */}
-                <Col span={8}>
-                    <Card title={<span><ToolOutlined /> 热门行动排行</span>} bordered={false}>
-                        <List
-                            dataSource={stats?.top_actions || []}
-                            renderItem={(item: any, index: number) => (
-                                <List.Item>
-                                    <Space>
-                                        <Tag color={index < 3 ? 'gold' : 'blue'}>{index + 1}</Tag>
-                                        <Text strong>{item.name}</Text>
-                                    </Space>
-                                    <Text type="secondary">{item.calls} 次调用</Text>
-                                </List.Item>
-                            )}
-                        />
-                    </Card>
-                </Col>
-                {/* 审计日志列表 */}
-                <Col span={16}>
-                    <Card title={<span><HistoryOutlined /> 最近行动日志</span>} bordered={false}>
-                        <Table
-                            columns={columns}
-                            dataSource={logs}
-                            rowKey="id"
-                            loading={loading}
-                            pagination={{ pageSize: 8 }}
-                            size="small"
-                        />
-                    </Card>
-                </Col>
-            </Row>
+  const columns = [
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 150,
+      render: (value: string) => dayjs(value).format('MM-DD HH:mm:ss'),
+    },
+    {
+      title: '节点',
+      dataIndex: 'node_name',
+      key: 'node_name',
+      render: (value: string) => <Tag color="blue">{value}</Tag>,
+    },
+    {
+      title: '专家',
+      dataIndex: 'agent_name',
+      key: 'agent_name',
+      render: (value: string) => value || '-',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (value: string) => <Tag color={value === 'success' ? 'green' : 'red'}>{value}</Tag>,
+    },
+    {
+      title: '耗时',
+      dataIndex: 'duration_ms',
+      key: 'duration_ms',
+      width: 100,
+      render: (value: number) => `${Math.round(value || 0)}ms`,
+    },
+    {
+      title: '工具调用',
+      dataIndex: 'tool_calls_count',
+      key: 'tool_calls_count',
+      width: 100,
+    },
+    {
+      title: '详情',
+      key: 'action',
+      width: 90,
+      render: (_: unknown, record: RecentExecution) => (
+        <Text style={{ color: '#1677ff', cursor: 'pointer' }} onClick={() => setSelectedExecution(record)}>
+          查看
+        </Text>
+      ),
+    },
+  ];
 
-            {/* 日志详情抽屉 */}
-            <Drawer
-                title="日志详情"
-                placement="right"
-                width={600}
-                onClose={() => setSelectedLog(null)}
-                open={!!selectedLog}
-            >
-                {selectedLog && (
-                    <Descriptions column={1} bordered size="small">
-                        <Descriptions.Item label="Action ID">{selectedLog.id}</Descriptions.Item>
-                        <Descriptions.Item label="Session ID">{selectedLog.session_id || '-'}</Descriptions.Item>
-                        <Descriptions.Item label="智能体 ID">{selectedLog.agent_id || '-'}</Descriptions.Item>
-                        <Descriptions.Item label="行动名称">{selectedLog.action_name}</Descriptions.Item>
-                        <Descriptions.Item label="执行状态">
-                            <Tag color={selectedLog.status === 'success' ? 'green' : 'red'}>
-                                {selectedLog.status?.toUpperCase() || 'UNKNOWN'}
-                            </Tag>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Token 详情">
-                            <Space>
-                                <Tag>Prompt: {selectedLog.request_tokens}</Tag>
-                                <Tag>Completion: {selectedLog.response_tokens}</Tag>
-                                <Tag color="blue">Total: {selectedLog.total_tokens}</Tag>
-                            </Space>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="成本耗时">
-                            ${(selectedLog.cost || 0).toFixed(4)} / {(selectedLog.duration_ms || 0).toFixed(0)}ms
-                        </Descriptions.Item>
-                        <Descriptions.Item label="输入参数">
-                            <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 150, overflow: 'auto' }}>
-                                {JSON.stringify(selectedLog.input_params, null, 2)}
-                            </pre>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="输出结果摘要">
-                            <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                                {selectedLog.output_result}
-                            </pre>
-                        </Descriptions.Item>
-                    </Descriptions>
-                )}
-            </Drawer>
-        </div>
-    );
+  return (
+    <div style={{ padding: 24, background: '#f5f7fb', minHeight: '100%', overflow: 'auto' }}>
+      <Space direction="vertical" size={4} style={{ marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0 }}>
+          <BarChartOutlined /> 运行审计总览
+        </Title>
+        <Text type="secondary">基于当前会话、消息与图执行遥测数据的近 7 天观测结果。</Text>
+      </Space>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} lg={6}>
+          <Card bordered={false} loading={loading}>
+            <Statistic title="新增会话" value={dashboard.summary.total_sessions} prefix={<ThunderboltOutlined style={{ color: '#1677ff' }} />} />
+            <Text type="secondary">活跃中 {dashboard.summary.active_sessions}</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card bordered={false} loading={loading}>
+            <Statistic title="消息总量" value={dashboard.summary.total_messages} prefix={<MessageOutlined style={{ color: '#52c41a' }} />} />
+            <Text type="secondary">用户 {dashboard.summary.user_messages} / 助手 {dashboard.summary.assistant_messages}</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card bordered={false} loading={loading}>
+            <Statistic title="节点执行" value={dashboard.summary.total_executions} prefix={<PartitionOutlined style={{ color: '#fa8c16' }} />} />
+            <Text type="secondary">工具调用 {dashboard.summary.tool_calls}</Text>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <Card bordered={false} loading={loading}>
+            <Statistic title="平均耗时" value={dashboard.summary.avg_duration_ms} precision={0} suffix="ms" prefix={<ClockCircleOutlined style={{ color: '#722ed1' }} />} />
+            <Text type="secondary">错误率 {(dashboard.summary.error_rate * 100).toFixed(1)}%</Text>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={16}>
+          <Card title="运行活跃趋势" bordered={false} loading={loading}>
+            <div style={{ height: 320 }}>
+              {activitySeries.length > 0 ? <Line {...lineConfig} /> : <Empty description="近 7 天暂无活跃数据" />}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card title="节点分布" bordered={false} loading={loading}>
+            <div style={{ height: 320 }}>
+              {nodeChartData.length > 0 ? <Pie {...pieConfig} /> : <Empty description="暂无节点执行数据" />}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={14}>
+          <Card title="专家执行排名" bordered={false} loading={loading}>
+            <div style={{ height: 280 }}>
+              {dashboard.top_agents.length > 0 ? <Column {...agentColumnConfig} /> : <Empty description="暂无专家执行数据" />}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Card title="用户反馈" bordered={false} loading={loading}>
+            {feedbackTotal > 0 ? (
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <Statistic title="反馈总数" value={feedbackTotal} prefix={<RobotOutlined style={{ color: '#1677ff' }} />} />
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text>正向反馈占比</Text>
+                    <Text strong>{(approvalRate * 100).toFixed(1)}%</Text>
+                  </div>
+                  <Progress percent={Number((approvalRate * 100).toFixed(1))} strokeColor="#52c41a" />
+                </div>
+                <Space size={12}>
+                  <Tag color="success">LIKE {dashboard.summary.likes}</Tag>
+                  <Tag color="error">DISLIKE {dashboard.summary.dislikes}</Tag>
+                </Space>
+              </Space>
+            ) : (
+              <Empty description="暂无消息反馈数据" />
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={8}>
+          <Card title={<span><ToolOutlined /> 热点节点</span>} bordered={false} loading={loading}>
+            <List
+              dataSource={dashboard.top_nodes}
+              locale={{ emptyText: <Empty description="暂无节点数据" /> }}
+              renderItem={(item, index) => (
+                <List.Item>
+                  <Space direction="vertical" size={2} style={{ flex: 1 }}>
+                    <Space>
+                      <Tag color={index < 3 ? 'gold' : 'blue'}>{index + 1}</Tag>
+                      <Text strong>{item.node_name}</Text>
+                    </Space>
+                    <Text type="secondary">
+                      {item.executions} 次执行，平均 {Math.round(item.avg_duration_ms || 0)}ms，错误 {item.error_count}
+                    </Text>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} lg={16}>
+          <Card title="最近执行记录" bordered={false} loading={loading}>
+            <Table
+              columns={columns}
+              dataSource={dashboard.recent_executions}
+              rowKey="id"
+              pagination={{ pageSize: 8 }}
+              size="small"
+              scroll={{ x: 760 }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Drawer
+        title="执行详情"
+        placement="right"
+        width={560}
+        open={!!selectedExecution}
+        onClose={() => setSelectedExecution(null)}
+      >
+        {selectedExecution && (
+          <Descriptions bordered column={1} size="small">
+            <Descriptions.Item label="执行时间">
+              {dayjs(selectedExecution.created_at).format('YYYY-MM-DD HH:mm:ss')}
+            </Descriptions.Item>
+            <Descriptions.Item label="节点">{selectedExecution.node_name}</Descriptions.Item>
+            <Descriptions.Item label="专家">{selectedExecution.agent_name || '-'}</Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag color={selectedExecution.status === 'success' ? 'green' : 'red'}>
+                {selectedExecution.status}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="会话 ID">{selectedExecution.session_id || '-'}</Descriptions.Item>
+            <Descriptions.Item label="请求 ID">{selectedExecution.request_id || '-'}</Descriptions.Item>
+            <Descriptions.Item label="耗时">{Math.round(selectedExecution.duration_ms || 0)}ms</Descriptions.Item>
+            <Descriptions.Item label="Token">
+              输入 {selectedExecution.input_tokens} / 输出 {selectedExecution.output_tokens}
+            </Descriptions.Item>
+            <Descriptions.Item label="工具调用">{selectedExecution.tool_calls_count}</Descriptions.Item>
+            <Descriptions.Item label="错误详情">
+              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {selectedExecution.error_message || '无'}
+              </pre>
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Drawer>
+    </div>
+  );
 };
 
 export default AuditLogView;

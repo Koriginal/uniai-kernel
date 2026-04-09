@@ -5,7 +5,7 @@ import {
   DatabaseOutlined, PlusOutlined, RobotOutlined, DeleteOutlined,
   ToolOutlined, BarChartOutlined, KeyOutlined, EditOutlined, UserOutlined,
   LockOutlined, AppstoreAddOutlined, NodeIndexOutlined, ThunderboltFilled,
-  SyncOutlined, CheckCircleOutlined
+  SyncOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 

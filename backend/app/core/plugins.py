@@ -22,6 +22,8 @@ class PluginRegistry:
         
         # 挂载的行动资产 (AIP Actions / Tools)
         self._actions: Dict[str, BaseAction] = {}
+        self._dynamic_action_names: set[str] = set()
+        self._dynamic_action_diagnostics: Dict[str, Dict[str, Any]] = {}
 
     def register_memory_store(self, store: IMemoryStore):
         self._memory_store = store
@@ -45,6 +47,28 @@ class PluginRegistry:
 
     def get_action(self, name: str) -> Optional[BaseAction]:
         return self._actions.get(name)
+
+    def unregister_action(self, name: str):
+        """从运行时注册表移除指定工具。"""
+        if name in self._actions:
+            self._actions.pop(name, None)
+            logger.info(f"[Registry] Action unregistered: {name}")
+
+    def clear_dynamic_actions(self):
+        """清空当前运行时中由数据库动态加载的工具。"""
+        for name in list(self._dynamic_action_names):
+            self.unregister_action(name)
+        self._dynamic_action_names.clear()
+        self._dynamic_action_diagnostics.clear()
+
+    def get_dynamic_action_diagnostics(self) -> Dict[str, Dict[str, Any]]:
+        return dict(self._dynamic_action_diagnostics)
+
+    async def execute_action(self, name: str, **kwargs):
+        action = self.get_action(name)
+        if not action:
+            raise ValueError(f"Tool '{name}' not found in registry.")
+        return await action.execute(**kwargs)
 
     def get_all_actions(self) -> List[BaseAction]:
         """获取所有已注册的行动资产"""
@@ -107,6 +131,7 @@ class PluginRegistry:
         from sqlalchemy import select
 
         try:
+            self.clear_dynamic_actions()
             result = await db_session.execute(select(DynamicTool).where(DynamicTool.is_active == True))
             tools = result.scalars().all()
             
@@ -117,7 +142,8 @@ class PluginRegistry:
                         instance = ApiTool(
                             name=t.name, label=t.label, description=t.description,
                             url=t.config.get("url"), method=t.config.get("method", "POST"),
-                            headers=t.config.get("headers"), schema=t.parameters_schema
+                            headers=t.config.get("headers"), schema=t.parameters_schema,
+                            timeout_seconds=float(t.config.get("timeout_seconds", 20.0))
                         )
                     elif t.tool_type == "mcp":
                         transport = t.config.get("transport", "stdio")
@@ -126,24 +152,40 @@ class PluginRegistry:
                             instance = McpSseTool(
                                 name=t.name, label=t.label, description=t.description,
                                 url=t.config.get("url"),
-                                schema=t.parameters_schema
+                                schema=t.parameters_schema,
+                                timeout_seconds=float(t.config.get("timeout_seconds", 30.0))
                             )
                         else:
                             instance = McpTool(
                                 name=t.name, label=t.label, description=t.description,
                                 command=t.config.get("command"), args=t.config.get("args"),
-                                schema=t.parameters_schema
+                                schema=t.parameters_schema,
+                                timeout_seconds=float(t.config.get("timeout_seconds", 30.0))
                             )
                     elif t.tool_type == "cli":
                         instance = CliTool(
                             name=t.name, label=t.label, description=t.description,
-                            script=t.config.get("script"), schema=t.parameters_schema
+                            script=t.config.get("script"), schema=t.parameters_schema,
+                            timeout_seconds=float(t.config.get("timeout_seconds", 30.0))
                         )
                     
                     if instance:
                         self.register_action(instance)
+                        self._dynamic_action_names.add(instance.metadata.name)
+                        self._dynamic_action_diagnostics[t.name] = {
+                            "status": "loaded",
+                            "tool_type": t.tool_type,
+                            "tool_id": t.id,
+                            "error": None,
+                        }
                 except Exception as e:
                     logger.error(f"[Registry] Failed to load dynamic tool {t.name}: {e}")
+                    self._dynamic_action_diagnostics[t.name] = {
+                        "status": "error",
+                        "tool_type": t.tool_type,
+                        "tool_id": t.id,
+                        "error": str(e),
+                    }
             
             logger.info(f"[Registry] ✅ Loaded {len(tools)} dynamic tools from DB")
         except Exception as e:

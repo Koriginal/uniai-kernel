@@ -6,8 +6,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.core.graph_state import AgentGraphState
 from app.agents.pg_checkpointer import create_pg_checkpointer
 from app.models.graph_template import GraphTemplateModel
+from app.models.graph_version import GraphTopologyVersionModel
 from app.core.db import SessionLocal
-from sqlalchemy import select
+from sqlalchemy import select, and_
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,32 @@ class GraphRegistry:
         if template_id in self._compiled_cache:
             return self._compiled_cache[template_id]
             
-        # 1. 尝试从数据库加载自定义模板
+        # 1. 尝试从数据库加载自定义配置（版本优先）
         async with SessionLocal() as db:
+            # 优先查找该模板下的活跃版本
+            version_stmt = select(GraphTopologyVersionModel).where(
+                and_(
+                    GraphTopologyVersionModel.template_id == template_id,
+                    GraphTopologyVersionModel.is_active == True
+                )
+            )
+            version_res = await db.execute(version_stmt)
+            active_version = version_res.scalar_one_or_none()
+            
+            if active_version:
+                logger.info(f"[GraphRegistry] Compiling from ACTIVE VERSION for template: {template_id} (Mode: {active_version.mode})")
+                graph = await self._compile_from_topology(active_version.topology)
+                self._compiled_cache[template_id] = graph
+                return graph
+
+            # 如果没有活跃版本，退而求其次查找基础模板定义
             stmt = select(GraphTemplateModel).where(GraphTemplateModel.id == template_id)
             result = await db.execute(stmt)
             template = result.scalar_one_or_none()
             
         if template:
-            # 2. 动态编译自定义图
-            logger.info(f"[GraphRegistry] Compiling dynamic graph from template: {template_id}")
+            # 2. 动态编译基础模板
+            logger.info(f"[GraphRegistry] Compiling from BASE TEMPLATE: {template_id}")
             graph = await self._compile_from_topology(template.topology)
             self._compiled_cache[template_id] = graph
             return graph
