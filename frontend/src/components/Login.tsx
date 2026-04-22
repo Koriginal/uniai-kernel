@@ -3,10 +3,10 @@ import { Card, Form, Input, Button, Typography, message, Space } from 'antd';
 import { 
   UserOutlined, 
   LockOutlined, 
-  ThunderboltOutlined,
   SafetyCertificateOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import BrandCatIcon from './BrandCatIcon';
 
 const { Title, Text } = Typography;
 
@@ -52,7 +52,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <Card style={{ width: 400, borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
                 <div style={{ textAlign: 'center', marginBottom: 32 }}>
                     <div style={{ marginBottom: 12 }}>
-                        <ThunderboltOutlined style={{ fontSize: 48, color: '#1890ff' }} />
+                        <BrandCatIcon size={52} color="#1890ff" strokeWidth={1.8} />
                     </div>
                     <Title level={3} style={{ margin: 0 }}>UniAI Kernel</Title>
                     <Text type="secondary">智能体开发基座 - 终端登录</Text>

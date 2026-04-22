@@ -7,7 +7,9 @@ import {
   Card,
   Checkbox,
   Col,
+  Collapse,
   Drawer,
+  Divider,
   Empty,
   Form,
   Input,
@@ -18,8 +20,10 @@ import {
   Space,
   Statistic,
   Switch,
+  Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -36,6 +40,7 @@ import {
   SearchOutlined,
   SettingOutlined,
   ThunderboltOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -80,6 +85,21 @@ interface AgentDashboardSummary {
 interface AgentDashboardResponse {
   summary: AgentDashboardSummary;
   agents: AgentDashboardItem[];
+}
+
+interface GraphExecutionItem {
+  request_id?: string;
+  node_name: string;
+  status: string;
+  error_message?: string | null;
+  created_at?: string;
+}
+
+interface RouteInsight {
+  latestRouteNodes: string[];
+  latestRequestId: string;
+  failureNode?: string;
+  failureMessage?: string;
 }
 
 interface ValidationResult {
@@ -130,20 +150,48 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [topologyScopeId, setTopologyScopeId] = useState<string | null>(null);
+  const [pageMode, setPageMode] = useState<'topology' | 'operations'>('topology');
+  const [operationsView, setOperationsView] = useState<'cards' | 'table'>('cards');
+  const [selectedOpsRowKeys, setSelectedOpsRowKeys] = useState<React.Key[]>([]);
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [testQuery, setTestQuery] = useState('请用一句话介绍你的职责和适合处理的问题。');
+  const [testInteractionMode, setTestInteractionMode] = useState<'chat' | 'workflow' | 'builder' | 'analysis'>('chat');
   const [testResult, setTestResult] = useState<string>('');
+  const [routeInsight, setRouteInsight] = useState<RouteInsight | null>(null);
 
   const notify = {
     success: (content: string) => (msgApi?.success ? msgApi.success(content) : message.success(content)),
     error: (content: string) => (msgApi?.error ? msgApi.error(content) : message.error(content)),
   };
+  const editorValues = Form.useWatch([], form) || {};
+
+  const editorConflictWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const role = (editorValues?.role || editingAgent?.role || 'expert') as 'orchestrator' | 'expert';
+    const tools = Array.isArray(editorValues?.tools) ? editorValues.tools : [];
+    const keywords = Array.isArray(editorValues?.routing_keywords) ? editorValues.routing_keywords : [];
+
+    if (editingAgent && editingAgent.role !== role) {
+      warnings.push(`角色从 ${editingAgent.role === 'orchestrator' ? '主控' : '专家'} 切换为 ${role === 'orchestrator' ? '主控' : '专家'}，会影响协作链路。`);
+    }
+    if (role === 'expert' && keywords.length === 0) {
+      warnings.push('专家未配置路由关键词，主控自动分发时命中率会下降。');
+    }
+    if (role === 'orchestrator' && keywords.length > 0) {
+      warnings.push('主控的路由关键词不会用于专家协作目录，可按需清理。');
+    }
+    if (tools.length === 0) {
+      warnings.push('当前未配置任何工具，只能进行纯文本推理。');
+    }
+    return warnings;
+  }, [editorValues, editingAgent]);
 
   useEffect(() => {
     fetchTools();
     fetchDashboard();
+    fetchRouteInsight();
   }, []);
 
   useEffect(() => {
@@ -181,6 +229,32 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     }
   };
 
+  const fetchRouteInsight = async () => {
+    try {
+      const res = await axios.get('/api/v1/audit/dashboard?days=3');
+      const recent: GraphExecutionItem[] = res.data?.recent_executions || [];
+      if (!recent.length) {
+        setRouteInsight(null);
+        return;
+      }
+      const latestReq = recent[0]?.request_id;
+      const latestReqExecutions = recent
+        .filter((item) => item.request_id === latestReq)
+        .slice()
+        .reverse();
+      // 只展示“最近一次请求”里的异常，避免历史旧错长期驻留
+      const latestFailure = latestReqExecutions.find((item) => item.status === 'error');
+      setRouteInsight({
+        latestRequestId: latestReq || 'N/A',
+        latestRouteNodes: latestReqExecutions.map((item) => item.node_name).filter(Boolean),
+        failureNode: latestFailure?.node_name,
+        failureMessage: latestFailure?.error_message || undefined,
+      });
+    } catch {
+      setRouteInsight(null);
+    }
+  };
+
   const mergedAgents = useMemo(() => {
     const metricsMap = new Map((dashboard?.agents || []).map((item) => [item.id, item]));
     return agents.map((agent) => ({
@@ -201,6 +275,10 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   }, [mergedAgents, search, roleFilter]);
 
   const selectedAgent = mergedAgents.find((item) => item.id === selectedAgentId) || null;
+  const selectedOpsAgents = useMemo(
+    () => filteredAgents.filter((agent) => selectedOpsRowKeys.includes(agent.id)),
+    [filteredAgents, selectedOpsRowKeys],
+  );
 
   const sanitizeTools = (input?: string[]) => {
     const allowed = new Set(registeredTools.map((tool) => tool.name));
@@ -245,6 +323,11 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     setDetailOpen(true);
   };
 
+  useEffect(() => {
+    const keySet = new Set(filteredAgents.map((agent) => agent.id));
+    setSelectedOpsRowKeys((prev) => prev.filter((key) => keySet.has(String(key))));
+  }, [filteredAgents]);
+
   const validateConfig = async () => {
     try {
       const values = await form.validateFields();
@@ -288,6 +371,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       setEditorOpen(false);
       onRefresh();
       fetchDashboard();
+      fetchRouteInsight();
     } catch (err: any) {
       const detail = err.response?.data?.detail || '操作失败';
       if (!err?.errorFields) notify.error(detail);
@@ -308,6 +392,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
           if (selectedAgentId === agent.id) setSelectedAgentId(null);
           onRefresh();
           fetchDashboard();
+          fetchRouteInsight();
         } catch {
           notify.error('删除失败');
         }
@@ -321,6 +406,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       setAgents((prev) => prev.map((item) => (item.id === agent.id ? { ...item, is_active: checked } : item)));
       notify.success(`${agent.name} 已${checked ? '上线' : '下线'}`);
       fetchDashboard();
+      fetchRouteInsight();
     } catch (err: any) {
       notify.error(err.response?.data?.detail || '状态更新失败');
     }
@@ -331,6 +417,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       setTesting(true);
       const res = await axios.post(`/api/v1/agents/${agent.id}/test`, {
         query: testQuery,
+        interaction_mode: testInteractionMode,
         enable_canvas: false,
         enable_swarm: agent.role === 'orchestrator',
         enable_memory: false,
@@ -375,59 +462,163 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     [mergedAgents],
   );
 
+  const renderAgentActions = (agent: Agent) => (
+    <Space wrap>
+      <Button size="small" onClick={(e) => { e.stopPropagation(); openDetail(agent.id); }}>
+        查看详情
+      </Button>
+      <Button size="small" icon={<SettingOutlined />} onClick={(e) => { e.stopPropagation(); openEditor(agent); }}>
+        编辑
+      </Button>
+      <Button size="small" icon={<PoweroffOutlined />} onClick={(e) => { e.stopPropagation(); toggleStatus(agent, !agent.is_active); }}>
+        {agent.is_active ? '下线' : '上线'}
+      </Button>
+      <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); handleDelete(agent); }}>
+        删除
+      </Button>
+    </Space>
+  );
+
+  const renderTableActions = (agent: Agent) => (
+    <Space size={6} wrap={false}>
+      <Tooltip title="查看详情">
+        <Button size="small" icon={<EyeOutlined />} aria-label="查看详情" onClick={() => openDetail(agent.id)} />
+      </Tooltip>
+      <Tooltip title="编辑配置">
+        <Button size="small" icon={<SettingOutlined />} aria-label="编辑配置" onClick={() => openEditor(agent)} />
+      </Tooltip>
+      <Tooltip title={agent.is_active ? '下线专家' : '上线专家'}>
+        <Button
+          size="small"
+          icon={<PoweroffOutlined />}
+          aria-label={agent.is_active ? '下线专家' : '上线专家'}
+          onClick={() => toggleStatus(agent, !agent.is_active)}
+        />
+      </Tooltip>
+      <Tooltip title="删除专家">
+        <Button size="small" danger icon={<DeleteOutlined />} aria-label="删除专家" onClick={() => handleDelete(agent)} />
+      </Tooltip>
+    </Space>
+  );
+
+  const handleBatchToggleAgents = async (nextActive: boolean) => {
+    if (selectedOpsAgents.length === 0) {
+      notify.error('请先选择至少一个专家');
+      return;
+    }
+    try {
+      await Promise.all(
+        selectedOpsAgents.map((agent) =>
+          agent.is_active === nextActive ? Promise.resolve() : axios.put(`/api/v1/agents/${agent.id}`, { is_active: nextActive }),
+        ),
+      );
+      notify.success(nextActive ? '已批量上线所选专家' : '已批量下线所选专家');
+      setSelectedOpsRowKeys([]);
+      onRefresh();
+      fetchDashboard();
+      fetchRouteInsight();
+    } catch (err: any) {
+      notify.error(err.response?.data?.detail || '批量更新状态失败');
+    }
+  };
+
+  const handleBatchDeleteAgents = async () => {
+    if (selectedOpsAgents.length === 0) {
+      notify.error('请先选择至少一个专家');
+      return;
+    }
+    Modal.confirm({
+      title: `确认删除 ${selectedOpsAgents.length} 个专家？`,
+      content: '此操作不可恢复。',
+      okText: '确认删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await Promise.all(selectedOpsAgents.map((agent) => axios.delete(`/api/v1/agents/${agent.id}`)));
+          notify.success('已批量删除所选专家');
+          setSelectedOpsRowKeys([]);
+      onRefresh();
+      fetchDashboard();
+      fetchRouteInsight();
+        } catch {
+          notify.error('批量删除失败');
+        }
+      },
+    });
+  };
+
   return (
-    <div style={{ padding: 24, background: '#edf3fb', minHeight: '100%', overflow: 'auto' }}>
-      <div style={{ maxWidth: 1500, margin: '0 auto' }}>
+    <div style={{ padding: 18, background: '#edf2f7', minHeight: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 1560, margin: '0 auto' }}>
         <Card
           bordered={false}
           style={{
-            marginBottom: 18,
-            borderRadius: 24,
-            overflow: 'hidden',
-            background: 'linear-gradient(135deg, #111827 0%, #2563eb 40%, #dbeafe 100%)',
-            boxShadow: '0 18px 44px rgba(37,99,235,0.14)',
+            marginBottom: 12,
+            borderRadius: 14,
+            border: '1px solid #dbeafe',
+            background: '#f8fbff',
+            boxShadow: '0 8px 20px rgba(37,99,235,0.06)',
           }}
-          bodyStyle={{ padding: '18px 22px' }}
+          bodyStyle={{ padding: '10px 14px' }}
         >
-          <Row gutter={[24, 24]} align="middle">
-            <Col xs={24} xl={16}>
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                <Tag color="rgba(255,255,255,0.14)" style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.2)', padding: '2px 10px', borderRadius: 999, width: 'fit-content' }}>
-                  Swarm Control
-                </Tag>
-                <Title level={3} style={{ margin: 0, color: '#fff' }}>
-                  专家集群管理中心
-                </Title>
-                <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 14 }}>
-                  专家治理、路由编排、健康诊断和快速试跑集中在这一页完成。
-                </Text>
-                <Space wrap>
-                  <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()} style={{ background: '#fff', color: '#2563eb', borderColor: '#fff' }}>
-                    新增专家
-                  </Button>
-                  <Button icon={<ReloadOutlined />} onClick={() => { onRefresh(); fetchDashboard(); }} style={{ background: 'rgba(255,255,255,0.08)', color: '#fff', borderColor: 'rgba(255,255,255,0.2)' }}>
-                    刷新数据
-                  </Button>
+          <Row gutter={[10, 10]} align="middle">
+            <Col xs={24} xl={10}>
+              <Space direction="vertical" size={2}>
+                <Space wrap size={6}>
+                  <Tag color="blue" style={{ borderRadius: 999, margin: 0 }}>Swarm Control</Tag>
+                  <Text type="secondary" style={{ fontSize: 12 }}>专家治理 + 路由编排 + 健康诊断 + 快速试跑</Text>
+                </Space>
+                <Title level={4} style={{ margin: 0, lineHeight: 1.2 }}>专家集群管理中心</Title>
+              </Space>
+            </Col>
+            <Col xs={24} xl={9}>
+              <Space wrap size={14}>
+                <Space size={6}>
+                  <ThunderboltOutlined style={{ color: '#1d4ed8' }} />
+                  <Text type="secondary">活跃专家</Text>
+                  <Text strong style={{ fontSize: 18 }}>{dashboard?.summary.active || 0}</Text>
+                </Space>
+                <Divider type="vertical" />
+                <Space size={6}>
+                  <RadarChartOutlined style={{ color: '#0f172a' }} />
+                  <Text type="secondary">主控 / 专家</Text>
+                  <Text strong style={{ fontSize: 18 }}>
+                    {`${dashboard?.summary.orchestrators || 0} / ${dashboard?.summary.experts || 0}`}
+                  </Text>
                 </Space>
               </Space>
             </Col>
-            <Col xs={24} xl={8}>
-              <Row gutter={[12, 12]}>
-                <Col span={12}>
-                  <Card bordered={false} size="small" style={{ borderRadius: 16, background: 'rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)' }}>
-                    <Statistic title={<span style={{ color: 'rgba(255,255,255,0.72)', fontSize: 12 }}>活跃专家</span>} value={dashboard?.summary.active || 0} valueStyle={{ color: '#fff', fontSize: 28 }} prefix={<ThunderboltOutlined style={{ color: '#fff' }} />} />
-                  </Card>
-                </Col>
-                <Col span={12}>
-                  <Card bordered={false} size="small" style={{ borderRadius: 16, background: 'rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)' }}>
-                    <Statistic title={<span style={{ color: 'rgba(255,255,255,0.72)', fontSize: 12 }}>主控 / 专家</span>} value={`${dashboard?.summary.orchestrators || 0} / ${dashboard?.summary.experts || 0}`} valueStyle={{ color: '#fff', fontSize: 28 }} prefix={<RadarChartOutlined style={{ color: '#fff' }} />} />
-                  </Card>
-                </Col>
-              </Row>
+            <Col xs={24} xl={5} style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Space wrap>
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()} size="middle">
+                  新增专家
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={() => { onRefresh(); fetchDashboard(); }} size="middle">
+                  刷新
+                </Button>
+              </Space>
             </Col>
           </Row>
         </Card>
 
+        <Card bordered={false} style={{ borderRadius: 14, marginBottom: 12 }} bodyStyle={{ padding: 12 }}>
+          <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Segmented
+              value={pageMode}
+              onChange={(value) => setPageMode(value as 'topology' | 'operations')}
+              options={[
+                { label: '编排视图', value: 'topology' },
+                { label: '专家运营视图', value: 'operations' },
+              ]}
+            />
+            <Text type="secondary">
+              {pageMode === 'topology' ? '聚焦主控应用编排与连线配置' : '聚焦专家批量管理与状态运营'}
+            </Text>
+          </Space>
+        </Card>
+
+        {pageMode === 'topology' && (
         <Card bordered={false} style={{ borderRadius: 24, marginBottom: 18 }} bodyStyle={{ padding: 18 }}>
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -451,67 +642,94 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
               </Space>
             </div>
             {orchestratorApps.length > 0 && (
-              <Row gutter={[12, 12]}>
-                {orchestratorApps.map((app) => (
-                  <Col key={app.id} xs={24} md={12} xl={8}>
-                    <Card
-                      hoverable
-                      onClick={() => setTopologyScopeId(app.id)}
-                      style={{
-                        borderRadius: 18,
-                        border: `1px solid ${topologyScopeId === app.id ? '#2563eb' : '#dbeafe'}`,
-                        background: topologyScopeId === app.id ? 'linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)' : '#fff',
-                        boxShadow: topologyScopeId === app.id ? '0 14px 32px rgba(37,99,235,0.12)' : '0 8px 20px rgba(15,23,42,0.04)',
-                      }}
-                      bodyStyle={{ padding: 16 }}
-                    >
-                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                        <Space wrap size={8}>
-                          <Avatar size={40} icon={<CrownOutlined />} style={{ background: '#faad14' }} />
-                          <div>
-                            <Text strong style={{ fontSize: 16 }}>{app.name}</Text>
-                            <div>
-                              <Tag color="gold" style={{ marginTop: 6 }}>主控应用</Tag>
-                            </div>
-                          </div>
-                        </Space>
-                        <Text type="secondary" style={{ minHeight: 40 }}>
-                          {app.description || '当前主控应用的编排入口。'}
-                        </Text>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
-                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>模板</Text>
-                            <div><Text strong>standard</Text></div>
-                          </div>
-                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>在线专家</Text>
-                            <div><Text strong>{app.attachedExpertCount}</Text></div>
-                          </div>
-                          <div style={{ background: '#f8fafc', borderRadius: 12, padding: 10 }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>已装能力</Text>
-                            <div><Text strong>{app.mountedToolCount}</Text></div>
-                          </div>
-                        </div>
-                      </Space>
-                    </Card>
-                  </Col>
-                ))}
-              </Row>
+              <Collapse
+                defaultActiveKey={[]}
+                items={[
+                  {
+                    key: 'orchestrator-apps',
+                    label: `主控应用清单（${orchestratorApps.length}）`,
+                    children: (
+                      <Row gutter={[12, 12]}>
+                        {orchestratorApps.map((app) => (
+                          <Col key={app.id} xs={24} md={12} xl={8}>
+                            <Card
+                              hoverable
+                              onClick={() => setTopologyScopeId(app.id)}
+                              style={{
+                                borderRadius: 14,
+                                border: `1px solid ${topologyScopeId === app.id ? '#2563eb' : '#dbeafe'}`,
+                                background: topologyScopeId === app.id ? 'linear-gradient(135deg, #eff6ff 0%, #ffffff 100%)' : '#fff',
+                                boxShadow: topologyScopeId === app.id ? '0 10px 22px rgba(37,99,235,0.12)' : '0 6px 14px rgba(15,23,42,0.04)',
+                              }}
+                              bodyStyle={{ padding: 12 }}
+                            >
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <Space wrap size={8}>
+                                  <Avatar size={34} icon={<CrownOutlined />} style={{ background: '#faad14' }} />
+                                  <div>
+                                    <Text strong>{app.name}</Text>
+                                    <div>
+                                      <Tag color="gold" style={{ marginTop: 4, marginBottom: 0 }}>主控应用</Tag>
+                                    </div>
+                                  </div>
+                                </Space>
+                                <Text type="secondary" ellipsis>{app.description || '当前主控应用的编排入口。'}</Text>
+                                <Space size={12}>
+                                  <Text type="secondary">在线专家 {app.attachedExpertCount}</Text>
+                                  <Text type="secondary">已装能力 {app.mountedToolCount}</Text>
+                                </Space>
+                              </Space>
+                            </Card>
+                          </Col>
+                        ))}
+                      </Row>
+                    ),
+                  },
+                ]}
+              />
             )}
+            <Card size="small" style={{ borderRadius: 14, background: '#f8fafc' }}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Text strong>编排可观测性</Text>
+                {routeInsight?.latestRouteNodes?.length ? (
+                  <Space wrap size={6}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>最近路由:</Text>
+                    {routeInsight.latestRouteNodes.map((node, idx) => (
+                      <Tag key={`${node}-${idx}`} color="processing" style={{ margin: 0 }}>{node}</Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Text type="secondary">暂无最近路由记录</Text>
+                )}
+                {routeInsight?.failureNode ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={`最近异常节点：${routeInsight.failureNode}`}
+                    description={routeInsight.failureMessage || '请查看审计日志定位具体报错。'}
+                  />
+                ) : (
+                  <Alert type="success" showIcon message="最近未检测到节点级故障" />
+                )}
+              </Space>
+            </Card>
             <div style={{ borderRadius: 18, overflow: 'hidden' }}>
               <AgentTopologyEditor
                 agents={agents}
                 scopeAgentId={topologyScopeId}
                 onClickNode={(agent) => openDetail(agent.id)}
                 onAgentsUpdated={() => {
-                  onRefresh();
-                  fetchDashboard();
+      onRefresh();
+      fetchDashboard();
+      fetchRouteInsight();
                 }}
               />
             </div>
           </Space>
         </Card>
+        )}
 
+        {pageMode === 'operations' && (
         <Card bordered={false} style={{ borderRadius: 24, marginBottom: 18 }} bodyStyle={{ padding: 18 }}>
           <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
             <Input
@@ -532,11 +750,21 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                   { label: '专家', value: 'expert' },
                 ]}
               />
-              <Text type="secondary">点击专家卡片查看详情与试跑</Text>
+              <Segmented
+                value={operationsView}
+                onChange={(value) => setOperationsView(value as 'cards' | 'table')}
+                options={[
+                  { label: '卡片', value: 'cards' },
+                  { label: '表格', value: 'table' },
+                ]}
+              />
+              <Text type="secondary">{operationsView === 'table' ? '支持批量操作与高密度管理' : '点击专家卡片查看详情与试跑'}</Text>
             </Space>
           </Space>
         </Card>
+        )}
 
+        {pageMode === 'operations' && (
         <Card bordered={false} style={{ borderRadius: 24 }}>
           {loadingDashboard ? (
             <div style={{ padding: 60, textAlign: 'center' }}>
@@ -544,6 +772,116 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
             </div>
           ) : filteredAgents.length === 0 ? (
             <Empty description="没有匹配到专家" />
+          ) : operationsView === 'table' ? (
+            <Space direction="vertical" size={0} style={{ width: '100%' }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderBottom: '1px solid #eef2f7',
+                  background: 'linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Space size={10} wrap>
+                  <Tag color="blue" style={{ margin: 0 }}>
+                    已选 {selectedOpsRowKeys.length}
+                  </Tag>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    支持批量上下线和批量删除
+                  </Text>
+                </Space>
+                <Space wrap>
+                  <Button size="small" icon={<PoweroffOutlined />} disabled={selectedOpsAgents.length === 0} onClick={() => handleBatchToggleAgents(true)}>
+                    批量上线
+                  </Button>
+                  <Button size="small" icon={<PoweroffOutlined />} disabled={selectedOpsAgents.length === 0} onClick={() => handleBatchToggleAgents(false)}>
+                    批量下线
+                  </Button>
+                  <Button size="small" danger icon={<DeleteOutlined />} disabled={selectedOpsAgents.length === 0} onClick={handleBatchDeleteAgents}>
+                    批量删除
+                  </Button>
+                </Space>
+              </div>
+              <Table
+                rowKey="id"
+                size="middle"
+                dataSource={filteredAgents}
+                rowSelection={{
+                  selectedRowKeys: selectedOpsRowKeys,
+                  onChange: (keys) => setSelectedOpsRowKeys(keys),
+                  preserveSelectedRowKeys: true,
+                }}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                scroll={{ x: 1020 }}
+                columns={[
+                  {
+                    title: '专家',
+                    key: 'agent',
+                    width: 420,
+                    render: (_, agent: any) => (
+                      <Space align="start" size={10}>
+                        <Avatar
+                          size={34}
+                          icon={ROLE_STYLES[(agent.role as 'orchestrator' | 'expert')].icon}
+                          style={{ background: ROLE_STYLES[(agent.role as 'orchestrator' | 'expert')].color }}
+                        />
+                        <Space direction="vertical" size={1}>
+                          <Space size={6}>
+                            <Text strong>{agent.name}</Text>
+                            <Tag color={agent.role === 'orchestrator' ? 'gold' : 'purple'} style={{ margin: 0 }}>
+                              {ROLE_STYLES[(agent.role as 'orchestrator' | 'expert')].label}
+                            </Tag>
+                          </Space>
+                          <Text type="secondary" ellipsis style={{ maxWidth: 420 }}>
+                            {agent.description || '暂无角色描述'}
+                          </Text>
+                        </Space>
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: '状态',
+                    dataIndex: 'is_active',
+                    width: 96,
+                    render: (isActive: boolean) => (
+                      <Tag color={isActive ? 'success' : 'default'} style={{ borderRadius: 999, margin: 0 }}>
+                        {isActive ? '在线' : '离线'}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '工具',
+                    key: 'tools',
+                    width: 80,
+                    align: 'center',
+                    render: (_, agent: any) => agent.metrics?.tools_count ?? agent.tools?.length ?? 0,
+                  },
+                  {
+                    title: '成功率',
+                    key: 'success_rate',
+                    width: 90,
+                    align: 'center',
+                    render: (_, agent: any) => `${(((agent.metrics?.success_rate ?? 0) || 0) * 100).toFixed(0)}%`,
+                  },
+                  {
+                    title: '最近运行',
+                    key: 'last_run',
+                    width: 120,
+                    render: (_, agent: any) => (agent.metrics?.last_run_at ? dayjs(agent.metrics.last_run_at).fromNow() : '暂无'),
+                  },
+                  {
+                    title: '操作',
+                    key: 'actions',
+                    width: 170,
+                    render: (_, agent: any) => renderTableActions(agent),
+                  },
+                ]}
+              />
+            </Space>
           ) : (
             <Row gutter={[16, 16]}>
               {filteredAgents.map((agent) => {
@@ -596,20 +934,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                         </div>
                       </div>
 
-                      <Space wrap style={{ marginTop: 'auto' }}>
-                        <Button size="small" onClick={(e) => { e.stopPropagation(); openDetail(agent.id); }}>
-                          查看详情
-                        </Button>
-                        <Button size="small" icon={<SettingOutlined />} onClick={(e) => { e.stopPropagation(); openEditor(agent); }}>
-                          编辑
-                        </Button>
-                        <Button size="small" icon={<PoweroffOutlined />} onClick={(e) => { e.stopPropagation(); toggleStatus(agent, !agent.is_active); }}>
-                          {agent.is_active ? '下线' : '上线'}
-                        </Button>
-                        <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); handleDelete(agent); }}>
-                          删除
-                        </Button>
-                      </Space>
+                      <Space wrap style={{ marginTop: 'auto' }}>{renderAgentActions(agent)}</Space>
                     </Card>
                   </Col>
                 );
@@ -617,6 +942,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
             </Row>
           )}
         </Card>
+        )}
       </div>
 
       <Drawer
@@ -691,6 +1017,17 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                   description="默认关闭 Canvas，避免试跑时污染会话展示。"
                 />
                 <Input.TextArea rows={5} value={testQuery} onChange={(e) => setTestQuery(e.target.value)} placeholder="输入一段测试问题" />
+                <Select
+                  value={testInteractionMode}
+                  onChange={(value) => setTestInteractionMode(value as 'chat' | 'workflow' | 'builder' | 'analysis')}
+                  style={{ width: 220 }}
+                  options={[
+                    { label: '对话 Chat', value: 'chat' },
+                    { label: '流程 Workflow', value: 'workflow' },
+                    { label: '构建 Builder', value: 'builder' },
+                    { label: '分析 Analysis', value: 'analysis' },
+                  ]}
+                />
                 <Button type="primary" loading={testing} onClick={() => runAgentTest(selectedAgent)}>
                   运行测试
                 </Button>
@@ -729,6 +1066,20 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
             message="这一步不仅是填资料"
             description="建议同时明确职责边界、常用工具和路由关键词，这样主控才能更稳定地把任务分发给合适的专家。"
           />
+          {editorConflictWarnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              message="保存前冲突预检"
+              description={
+                <ul style={{ marginBottom: 0, paddingLeft: 18 }}>
+                  {editorConflictWarnings.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
 
           <Form form={form} layout="vertical">
             <Tabs

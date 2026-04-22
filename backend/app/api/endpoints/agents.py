@@ -64,6 +64,7 @@ class AgentChatRequest(BaseModel):
     query: Union[str, List[Dict[str, Any]]] # 支持图片/多模态
     session_id: Optional[str] = None
     stream: bool = True
+    interaction_mode: str = "chat"
     enable_memory: bool = False
     enable_swarm: bool = True
     enable_canvas: bool = True
@@ -92,6 +93,7 @@ class AgentProfileValidationResponse(BaseModel):
 class AgentTestRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
+    interaction_mode: str = "chat"
     enable_memory: bool = False
     enable_swarm: bool = True
     enable_canvas: bool = False
@@ -119,17 +121,26 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
     if "tools" in data:
         available_tools = {item["name"] for item in registry.get_action_catalog()}
         unique_tools = []
+        has_wildcard = False
         for tool in data.get("tools") or []:
             normalized_tool = str(tool).strip()
-            if not normalized_tool or normalized_tool in {"*", "all"}:
+            if not normalized_tool:
+                continue
+            if normalized_tool.lower() in {"*", "all", "__all__"}:
+                has_wildcard = True
                 continue
             if normalized_tool not in unique_tools:
                 unique_tools.append(normalized_tool)
         unknown_tools = [tool for tool in unique_tools if tool not in available_tools]
         if unknown_tools:
             raise HTTPException(status_code=400, detail=f"以下工具未在注册表中找到: {', '.join(unknown_tools)}")
-        data["tools"] = unique_tools
-        if not unique_tools:
+        if has_wildcard:
+            data["tools"] = ["*"]
+            if unique_tools:
+                warnings.append("检测到通配符工具配置，已按“全部工具”处理并忽略其他显式工具项。")
+        else:
+            data["tools"] = unique_tools
+        if not has_wildcard and not unique_tools:
             warnings.append("当前专家未配置任何工具，只能进行纯文本推理。")
 
     if "routing_keywords" in data:
@@ -224,6 +235,9 @@ async def update_agent_profile(
         await db.commit()
         await db.refresh(profile)
         return profile
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         logger.error(f"Error updating agent {agent_id}: {str(e)}")
         await db.rollback()
@@ -380,6 +394,7 @@ async def agent_chat(
             ChatCompletionMessage(role="user", content=request_data.query)
         ],
         stream=request_data.stream,
+        interaction_mode=request_data.interaction_mode,
         skip_save_user=request_data.skip_save_user
     )
     
@@ -426,6 +441,7 @@ async def test_agent_profile(
             model=agent_id,
             messages=[ChatCompletionMessage(role="user", content=request_data.query)],
             stream=False,
+            interaction_mode=request_data.interaction_mode,
         ),
         user_id=user_id,
         session_id=request_data.session_id,

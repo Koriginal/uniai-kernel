@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { 
   ReactFlow, 
   Background, 
@@ -24,7 +24,8 @@ import {
   Switch,
   Form,
   Input,
-  Select
+  Select,
+  Tooltip,
 } from 'antd';
 import { 
   NodeIndexOutlined, CrownOutlined, RobotOutlined, 
@@ -34,7 +35,9 @@ import {
   InfoCircleOutlined,
   DisconnectOutlined,
   DeleteOutlined,
-  PlusOutlined
+  PlusOutlined,
+  RedoOutlined,
+  UndoOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import type { Agent } from './ChatView';
@@ -45,11 +48,11 @@ const { Title, Text } = Typography;
 type FlowNodeProps = NodeProps;
 
 const handleStyle = {
-  width: 18,
-  height: 18,
+  width: 22,
+  height: 22,
   borderRadius: '50%',
   border: '3px solid #fff',
-  boxShadow: '0 0 0 8px rgba(24,144,255,0.12)',
+  boxShadow: '0 0 0 10px rgba(24,144,255,0.14)',
 } as const;
 
 // --- 类型定义 ---
@@ -278,8 +281,8 @@ interface AgentTopologyEditorProps {
 
 const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onClickNode, onAgentsUpdated, scopeAgentId }) => {
   const [edgeForm] = Form.useForm();
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<any>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [nodes, setNodes, onNodesStateChange] = useNodesState<Node<any>>([]);
+  const [edges, setEdges, onEdgesStateChange] = useEdgesState<Edge>([]);
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [versions, setVersions] = useState<any[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -293,6 +296,10 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
   const [savingEdge, setSavingEdge] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [activeVersion, setActiveVersion] = useState<any | null>(null);
+  const [history, setHistory] = useState<Array<{ nodes: Node<any>[]; edges: Edge[] }>>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isApplyingHistoryRef = useRef(false);
+  const lastSnapshotRef = useRef('');
 
   // 加载版本列表
   const fetchVersions = useCallback(async () => {
@@ -348,10 +355,18 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
     return tools.find((tool) => tool.name === toolName) || null;
   }, [selectedEdge, tools]);
 
+  const isInvokeEdge = useMemo(() => {
+    if (!selectedEdge || String(selectedEdge.id).startsWith('tool-edge-')) return false;
+    if (String(selectedEdge.id).startsWith('invoke-edge-')) return true;
+    const { sourceAgent, targetAgent } = selectedRouteAgents;
+    return sourceAgent?.role === 'orchestrator' && targetAgent?.role === 'orchestrator';
+  }, [selectedEdge, selectedRouteAgents]);
+
   const renderedEdges = useMemo(
     () =>
       edges.map((edge) => ({
         ...edge,
+        interactionWidth: edge.interactionWidth || 36,
         selected: edge.id === selectedEdgeId,
         className: edge.id === selectedEdgeId ? 'selected' : '',
       })),
@@ -393,6 +408,11 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
       ),
     );
   }, [setNodes]);
+
+  const selectedNodes = useMemo(
+    () => nodes.filter((node) => node.selected),
+    [nodes],
+  );
 
   const addAgentToCanvas = useCallback(async (agentId: string) => {
     const agent = visibleAgents.find((item) => item.id === agentId);
@@ -443,6 +463,30 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
     };
     fetchTools();
   }, []);
+
+  useEffect(() => {
+    if (mode !== 'manual') return;
+    if (isApplyingHistoryRef.current) return;
+    const snapshot = { nodes, edges };
+    const serialized = JSON.stringify({
+      nodes: snapshot.nodes.map((node) => ({ id: node.id, x: node.position.x, y: node.position.y, selected: !!node.selected })),
+      edges: snapshot.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, label: edge.label, data: edge.data || {} })),
+    });
+    if (serialized === lastSnapshotRef.current) return;
+    lastSnapshotRef.current = serialized;
+    setHistory((prev) => {
+      const base = historyIndex >= 0 ? prev.slice(0, historyIndex + 1) : prev;
+      const next = [...base, JSON.parse(JSON.stringify(snapshot))];
+      if (next.length > 60) {
+        return next.slice(next.length - 60);
+      }
+      return next;
+    });
+    setHistoryIndex((prev) => {
+      if (prev < 0) return 0;
+      return Math.min(prev + 1, 59);
+    });
+  }, [nodes, edges, mode, historyIndex]);
 
   // 节点数据同步与自动布局
   useEffect(() => {
@@ -496,14 +540,23 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
           source: edge.source,
           target: edge.target,
           label: edge.label,
+          data: edge.data || {},
+          interactionWidth: 36,
           animated: !String(edge.id || '').startsWith('tool-edge-'),
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: String(edge.id || '').startsWith('tool-edge-') ? '#93c5fd' : '#1890ff',
+            color: String(edge.id || '').startsWith('tool-edge-')
+              ? '#93c5fd'
+              : String(edge.id || '').startsWith('invoke-edge-')
+                ? '#f59e0b'
+                : '#1890ff',
           },
-          style: String(edge.id || '').startsWith('tool-edge-')
-            ? { stroke: '#93c5fd', strokeWidth: 1.5, strokeDasharray: '5 5' }
-            : { stroke: '#1890ff', strokeWidth: 2 },
+          style:
+            String(edge.id || '').startsWith('tool-edge-')
+              ? { stroke: '#93c5fd', strokeWidth: 1.5, strokeDasharray: '5 5' }
+              : String(edge.id || '').startsWith('invoke-edge-')
+                ? { stroke: '#f59e0b', strokeWidth: 2, strokeDasharray: '8 4' }
+                : { stroke: '#1890ff', strokeWidth: 2 },
           selectable: true,
         }));
 
@@ -545,6 +598,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
             id: `e-${orchestrators[0].id}-${agent.id}`,
             source: orchestrators[0].id,
             target: agent.id,
+            interactionWidth: 36,
             animated: agent.is_active,
             label: agent.routing_keywords?.[0] || '默认跳转',
             labelStyle: { fontSize: 10, fill: '#8c8c8c' },
@@ -582,6 +636,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
               id: `tool-edge-${agent.id}-${toolName}`,
               source: agent.id,
               target: `tool:${toolName}`,
+              interactionWidth: 36,
               animated: false,
               label: '能力挂载',
               labelStyle: { fontSize: 10, fill: '#60a5fa' },
@@ -622,20 +677,104 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
     setupNodes();
   }, [visibleAgents, tools, mode, activeVersionId, setNodes, setEdges, showTools, nodes.length, activeVersion, scopedOrchestrator]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (mode !== 'manual' || !selectedEdgeId) return;
-      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-      const edge = edges.find((item) => item.id === selectedEdgeId);
-      if (!edge) return;
-      event.preventDefault();
-      setSelectedEdgeId(edge.id);
-      handleDisconnectSelected(edge);
-    };
+  const onNodesChange = useCallback((changes: any) => {
+    onNodesStateChange(changes);
+  }, [onNodesStateChange]);
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, selectedEdgeId, edges]);
+  const onEdgesChange = useCallback((changes: any) => {
+    onEdgesStateChange(changes);
+  }, [onEdgesStateChange]);
+
+  const applySnapshot = useCallback((snapshot: { nodes: Node<any>[]; edges: Edge[] }) => {
+    isApplyingHistoryRef.current = true;
+    setNodes(JSON.parse(JSON.stringify(snapshot.nodes)));
+    setEdges(JSON.parse(JSON.stringify(snapshot.edges)));
+    setTimeout(() => {
+      isApplyingHistoryRef.current = false;
+    }, 0);
+  }, [setNodes, setEdges]);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndex <= 0 || history.length === 0) return;
+    const nextIndex = historyIndex - 1;
+    applySnapshot(history[nextIndex]);
+    setHistoryIndex(nextIndex);
+  }, [history, historyIndex, applySnapshot]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndex < 0 || historyIndex >= history.length - 1) return;
+    const nextIndex = historyIndex + 1;
+    applySnapshot(history[nextIndex]);
+    setHistoryIndex(nextIndex);
+  }, [history, historyIndex, applySnapshot]);
+
+  const alignSelectedNodes = useCallback((direction: 'left' | 'right' | 'top' | 'bottom') => {
+    if (mode !== 'manual' || selectedNodes.length < 2) return;
+    const xs = selectedNodes.map((node) => node.position.x);
+    const ys = selectedNodes.map((node) => node.position.y);
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    setNodes((current) =>
+      current.map((node) => {
+        if (!node.selected) return node;
+        if (direction === 'left') return { ...node, position: { ...node.position, x: left } };
+        if (direction === 'right') return { ...node, position: { ...node.position, x: right } };
+        if (direction === 'top') return { ...node, position: { ...node.position, y: top } };
+        return { ...node, position: { ...node.position, y: bottom } };
+      }),
+    );
+  }, [mode, selectedNodes, setNodes]);
+
+  const distributeSelectedNodes = useCallback((axis: 'horizontal' | 'vertical') => {
+    if (mode !== 'manual' || selectedNodes.length < 3) return;
+    const sorted = [...selectedNodes].sort((a, b) =>
+      axis === 'horizontal' ? a.position.x - b.position.x : a.position.y - b.position.y,
+    );
+    const start = axis === 'horizontal' ? sorted[0].position.x : sorted[0].position.y;
+    const end = axis === 'horizontal' ? sorted[sorted.length - 1].position.x : sorted[sorted.length - 1].position.y;
+    const step = (end - start) / (sorted.length - 1 || 1);
+    const nextMap = new Map<string, Node<any>>();
+    sorted.forEach((node, idx) => {
+      const nextPos = start + step * idx;
+      nextMap.set(
+        node.id,
+        {
+          ...node,
+          position: axis === 'horizontal'
+            ? { ...node.position, x: nextPos }
+            : { ...node.position, y: nextPos },
+        },
+      );
+    });
+    setNodes((current) => current.map((node) => nextMap.get(node.id) || node));
+  }, [mode, selectedNodes, setNodes]);
+
+  const handleAutoArrange = useCallback(() => {
+    if (mode !== 'manual' || nodes.length === 0) return;
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: 'LR', nodesep: 100, ranksep: 180 });
+    g.setDefaultEdgeLabel(() => ({}));
+    nodes.forEach((node) => {
+      g.setNode(node.id, { width: node.type === 'tool' ? 220 : 240, height: node.type === 'tool' ? 120 : 160 });
+    });
+    edges.forEach((edge) => g.setEdge(edge.source, edge.target));
+    dagre.layout(g);
+    setNodes((current) =>
+      current.map((node) => {
+        const gNode = g.node(node.id);
+        return {
+          ...node,
+          position: {
+            x: (gNode.x || 0) - (node.type === 'tool' ? 110 : 120),
+            y: (gNode.y || 0) - (node.type === 'tool' ? 60 : 80),
+          },
+        };
+      }),
+    );
+    message.success('已自动整理当前画布布局');
+  }, [mode, nodes, edges, setNodes]);
 
   // 手动连线处理
   const onConnect = useCallback(async (params: Connection) => {
@@ -672,6 +811,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
             {
               ...params,
               id: `tool-edge-${sourceAgent.id}-${targetToolName}`,
+              interactionWidth: 36,
               animated: false,
               label: '能力挂载',
               labelStyle: { fontSize: 10, fill: '#60a5fa' },
@@ -695,25 +835,33 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
       return;
     }
 
-    const nextEdgeId = `e-${params.source}-${params.target}`;
+    const isOrchestratorInvoke = sourceAgent.role === 'orchestrator' && targetAgent.role === 'orchestrator';
+    const nextEdgeId = isOrchestratorInvoke
+      ? `invoke-edge-${params.source}-${params.target}`
+      : `e-${params.source}-${params.target}`;
     setEdges((eds) =>
       addEdge(
         {
           ...params,
           id: nextEdgeId,
-          animated: true,
-          label: targetAgent.routing_keywords?.[0] || '默认跳转',
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#1890ff' },
-          style: { stroke: '#1890ff', strokeWidth: 2 },
+          interactionWidth: 36,
+          animated: !isOrchestratorInvoke,
+          label: isOrchestratorInvoke ? '子应用委托' : targetAgent.routing_keywords?.[0] || '默认跳转',
+          markerEnd: { type: MarkerType.ArrowClosed, color: isOrchestratorInvoke ? '#f59e0b' : '#1890ff' },
+          style: isOrchestratorInvoke
+            ? { stroke: '#f59e0b', strokeWidth: 2, strokeDasharray: '8 4' }
+            : { stroke: '#1890ff', strokeWidth: 2 },
+          data: isOrchestratorInvoke ? { delegated_task: '' } : {},
         },
         eds.filter((edge) => edge.id !== nextEdgeId),
       ),
     );
     setSelectedEdgeId(nextEdgeId);
     edgeForm.setFieldsValue({
-      edge_label: targetAgent.routing_keywords?.[0] || '',
-      routing_keywords: targetAgent.routing_keywords || [],
-      handoff_strategy: targetAgent.handoff_strategy || 'return',
+      edge_label: isOrchestratorInvoke ? '子应用委托' : targetAgent.routing_keywords?.[0] || '',
+      delegated_task: '',
+      routing_keywords: isOrchestratorInvoke ? [] : targetAgent.routing_keywords || [],
+      handoff_strategy: isOrchestratorInvoke ? 'return' : targetAgent.handoff_strategy || 'return',
       tool_name: undefined,
     });
     setEdgeEditorOpen(true);
@@ -732,6 +880,11 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
         ? {
             tool_name: selectedToolMeta?.name,
           }
+        : isInvokeEdge
+          ? {
+              edge_label: typeof selectedEdge.label === 'string' ? selectedEdge.label : '子应用委托',
+              delegated_task: selectedEdge.data?.delegated_task || '',
+            }
         : {
             edge_label: typeof selectedEdge.label === 'string' ? selectedEdge.label : '',
             routing_keywords: targetAgent?.routing_keywords || [],
@@ -739,7 +892,12 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
           },
     );
     setEdgeEditorOpen(true);
-  }, [selectedEdge, selectedRouteAgents, edgeForm, selectedToolMeta]);
+  }, [selectedEdge, selectedRouteAgents, edgeForm, selectedToolMeta, isInvokeEdge]);
+
+  const handleEdgeDoubleClick = useCallback((_: React.MouseEvent, edge: Edge) => {
+    setSelectedEdgeId(edge.id);
+    setTimeout(() => openEdgeEditor(), 0);
+  }, [openEdgeEditor]);
 
   const handleDisconnectSelected = useCallback(async (edgeArg?: Edge | null) => {
     const edge = edgeArg || selectedEdge;
@@ -767,6 +925,12 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
       }
 
       const targetAgent = agents.find((agent) => agent.id === edge.target);
+      if (String(edge.id).startsWith('invoke-edge-')) {
+        setEdges((current) => current.filter((item) => item.id !== edge.id));
+        setSelectedEdgeId(null);
+        message.success('已断开子应用委托连线');
+        return;
+      }
       if (targetAgent?.role === 'expert') {
         await axios.put(`/api/v1/agents/${targetAgent.id}`, {
           routing_keywords: [],
@@ -781,6 +945,36 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
       message.error(err.response?.data?.detail || '断开失败');
     }
   }, [selectedEdge, mode, agents, setEdges, onAgentsUpdated, updateAgentInCanvas]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (mode !== 'manual') return;
+      const key = event.key.toLowerCase();
+      const withMeta = event.metaKey || event.ctrlKey;
+
+      if (withMeta && key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (withMeta && (key === 'y' || (key === 'z' && event.shiftKey))) {
+        event.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedEdgeId) {
+        const edge = edges.find((item) => item.id === selectedEdgeId);
+        if (!edge) return;
+        event.preventDefault();
+        setSelectedEdgeId(edge.id);
+        handleDisconnectSelected(edge);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mode, selectedEdgeId, edges, handleUndo, handleRedo, handleDisconnectSelected]);
 
   const handleSaveEdgeConfig = useCallback(async () => {
     if (!selectedEdge) return;
@@ -814,6 +1008,22 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
         onAgentsUpdated?.();
         setSelectedEdgeId(`tool-edge-${sourceAgent.id}-${nextToolName}`);
         message.success('能力挂载已同步到专家真实配置');
+      } else if (isInvokeEdge) {
+        setEdges((current) =>
+          current.map((edge) =>
+            edge.id === selectedEdge.id
+              ? {
+                  ...edge,
+                  label: values.edge_label || '子应用委托',
+                  data: {
+                    ...(edge.data || {}),
+                    delegated_task: values.delegated_task || '',
+                  },
+                }
+              : edge,
+          ),
+        );
+        message.success('子应用委托连线已更新');
       } else {
         const { targetAgent } = selectedRouteAgents;
         if (!targetAgent) {
@@ -850,7 +1060,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
     } finally {
       setSavingEdge(false);
     }
-  }, [selectedEdge, selectedRouteAgents, edgeForm, setEdges, onAgentsUpdated, agents, updateAgentInCanvas]);
+  }, [selectedEdge, selectedRouteAgents, edgeForm, setEdges, onAgentsUpdated, agents, updateAgentInCanvas, isInvokeEdge]);
 
   // 保存新版本
   const handleSaveVersion = async () => {
@@ -867,7 +1077,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
               : { tool_name: n.data.tool.name },
           })),
         edges: edges
-          .map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label }))
+          .map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label, data: e.data || {} }))
       };
 
       await axios.post('/api/v1/graph/versions', {
@@ -956,6 +1166,67 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
 
         <Space size={8} wrap>
           {mode === 'manual' && (
+            <>
+              <Tooltip title="撤销 (⌘/Ctrl + Z)">
+                <Button
+                  size="small"
+                  icon={<UndoOutlined />}
+                  onClick={handleUndo}
+                  disabled={historyIndex <= 0 || history.length === 0}
+                />
+              </Tooltip>
+              <Tooltip title="重做 (⌘/Ctrl + Shift + Z)">
+                <Button
+                  size="small"
+                  icon={<RedoOutlined />}
+                  onClick={handleRedo}
+                  disabled={historyIndex < 0 || historyIndex >= history.length - 1}
+                />
+              </Tooltip>
+              <Tooltip title="左对齐（至少选择 2 个节点）">
+                <Button
+                  size="small"
+                  onClick={() => alignSelectedNodes('left')}
+                  disabled={selectedNodes.length < 2}
+                >
+                  左对齐
+                </Button>
+              </Tooltip>
+              <Tooltip title="顶对齐（至少选择 2 个节点）">
+                <Button
+                  size="small"
+                  onClick={() => alignSelectedNodes('top')}
+                  disabled={selectedNodes.length < 2}
+                >
+                  顶对齐
+                </Button>
+              </Tooltip>
+              <Tooltip title="水平分布（至少选择 3 个节点）">
+                <Button
+                  size="small"
+                  onClick={() => distributeSelectedNodes('horizontal')}
+                  disabled={selectedNodes.length < 3}
+                >
+                  水平分布
+                </Button>
+              </Tooltip>
+              <Tooltip title="垂直分布（至少选择 3 个节点）">
+                <Button
+                  size="small"
+                  onClick={() => distributeSelectedNodes('vertical')}
+                  disabled={selectedNodes.length < 3}
+                >
+                  垂直分布
+                </Button>
+              </Tooltip>
+              <Tooltip title="自动整理当前画布布局">
+                <Button size="small" onClick={handleAutoArrange}>
+                  自动布局
+                </Button>
+              </Tooltip>
+            </>
+          )}
+          {mode === 'manual' && (
             <Button size="small" icon={<PlusOutlined />} onClick={() => setPaletteOpen(true)}>
               加入画布
             </Button>
@@ -998,9 +1269,12 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onEdgeClick={handleEdgeClick}
+          onEdgeDoubleClick={handleEdgeDoubleClick}
           onPaneClick={() => setSelectedEdgeId(null)}
           onNodeClick={(_, node) => node.type === 'agent' && onClickNode && onClickNode(node.data.agent)}
-          connectionRadius={28}
+          connectionRadius={42}
+          selectionOnDrag
+          multiSelectionKeyCode={['Meta', 'Control']}
           fitView
           style={{ background: '#f8f9fa' }}
         >
@@ -1012,6 +1286,7 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
             <div style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.92)', borderRadius: 999, boxShadow: '0 4px 15px rgba(0,0,0,0.05)', display: 'flex', gap: 14 }}>
               <div style={{ fontSize: 12, color: '#8c8c8c' }}><InfoCircleOutlined /> 当前只展示已加入该应用画布的节点</div>
               <div style={{ fontSize: 12, color: '#8c8c8c' }}><BuildOutlined /> 手动模式可连线、改边、断边</div>
+              <div style={{ fontSize: 12, color: '#8c8c8c' }}><LinkOutlined /> 橙色虚线表示主控到主控的子应用委托</div>
             </div>
           </Panel>
         </ReactFlow>
@@ -1135,7 +1410,9 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {String(selectedEdge.id).startsWith('tool-edge-')
                     ? '这里编辑的是能力挂载边，保存时会同步更新来源专家的 tools 配置。'
-                    : '这里编辑的是路由连线，同时会同步更新目标专家的真实配置。'}
+                    : isInvokeEdge
+                      ? '这里编辑的是子应用委托边，用于主控到主控的任务委托语义。'
+                      : '这里编辑的是路由连线，同时会同步更新目标专家的真实配置。'}
                 </Text>
               </Space>
             </Card>
@@ -1156,6 +1433,23 @@ const AgentTopologyEditor: React.FC<AgentTopologyEditorProps> = ({ agents, onCli
                     }))}
                   />
                 </Form.Item>
+              ) : isInvokeEdge ? (
+                <>
+                  <Form.Item
+                    name="edge_label"
+                    label="委托标签"
+                    extra="显示在图上的子应用委托关系标签。"
+                  >
+                    <Input placeholder="例如：需求拆解子应用 / 风险评审子应用" />
+                  </Form.Item>
+                  <Form.Item
+                    name="delegated_task"
+                    label="委托任务约束"
+                    extra="用于描述委托给子主控的范围，后续可接入结构化任务本体。"
+                  >
+                    <Input.TextArea rows={4} placeholder="例如：仅负责生成实施计划，不直接改代码" />
+                  </Form.Item>
+                </>
               ) : (
                 <>
                   <Form.Item

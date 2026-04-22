@@ -12,9 +12,9 @@ from app.services.context_service import context_service
 from app.core.llm import _clean_messages
 from app.models.message import ChatMessage
 from app.models.session import ChatSession
+from app.ontology.registry import ontology_registry
 
 logger = logging.getLogger(__name__)
-
 
 async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     """
@@ -32,6 +32,7 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     messages = list(state["messages"])
     current_agent_id = state["current_agent_id"]
     agent_profile = state["current_agent_profile"]
+    preferred_mode = state.get("interaction_mode", "chat")
 
     # 提取当前用户查询
     current_query = ""
@@ -85,9 +86,20 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         current_msg_id = initial_msg_db.id
         await callback.emit(f"data: {json.dumps({'type': 'metadata', 'assistant_message_id': current_msg_id, 'agentName': agent_profile.get('name', 'Assistant') if agent_profile else 'Assistant'})}\n\n")
 
+    semantic = ontology_registry.resolver.resolve(current_query, preferred_mode=preferred_mode)
+    interaction_mode = semantic.interaction_mode
+    semantic_frame = semantic.frame.model_dump()
+    semantic_slots = semantic.slots.model_dump()
+    await callback.emit(
+        f"data: {json.dumps({'type': 'semantic', 'frame': semantic_frame}, ensure_ascii=False)}\n\n"
+    )
+
     return {
         "messages": messages,
         "current_msg_id": current_msg_id,
+        "interaction_mode": interaction_mode,
+        "semantic_frame": semantic_frame,
+        "semantic_slots": semantic_slots,
     }
 
 

@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-04-22
+### Added
+- **UI/UX Overhaul**: Reimagined sidebar with collapsible state, improved navigation hierarchy, and new "BrandCat" logo across Login and main Layout.
+- **Advanced Agent Topology Editor**: Empowered orchestration with Undo/Redo support, automatic layouting (Dagre-based), node alignment tools, and multi-selection capabilities.
+- **Sub-App Delegation (Invoke)**: Introduced application-level delegation between orchestrators via "Invoke Edges" and a dedicated backend `orchestrator_invoke_node`.
+- **Agent Governance Center**: Added "Operations View" in `AgentManager` for high-density batch management, real-time health monitoring, and routing observability insights.
+- **Semantic Ontology Layer**: Launched a new ontology package for managing structured delegation policies and semantic context across the agent graph.
+- **Wildcard Tool Support**: Agents can now be configured with `*` to automatically inherit all registered tools.
+
+### Improved
+- **Graph Execution Streaming**: Refined `handoff_node` and `synthesize_node` for more consistent status updates and chunk ID handling during streaming.
+- **Responsive Layout**: Enhanced `index.css` with specialized styles for collapsed navigation and glassmorphism-inspired card transitions.
+
 ## [2.2.1] - 2026-04-09
 ### Added
 - **Concurrent Initialization Safety**: Implemented `_init_lock` and 30s timeout protection for `AsyncPostgresSaver` in `pg_checkpointer.py` to prevent DDL deadlocks during high-concurrency boot.

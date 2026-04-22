@@ -23,10 +23,16 @@ class DeterministicStrategy(RoutingStrategy):
     async def decide_next(self, state: AgentGraphState, config: Dict[str, Any]) -> str:
         pending = state.get("pending_tool_calls", [])
         if pending:
-            has_handoff = any(
-                tc.get("function", {}).get("name") in {"transfer_to_agent", "invoke_orchestrator"}
+            has_orchestrator_invoke = any(
+                tc.get("function", {}).get("name") == "invoke_orchestrator"
                 for tc in pending
             )
+            has_handoff = any(
+                tc.get("function", {}).get("name") == "transfer_to_agent"
+                for tc in pending
+            )
+            if has_orchestrator_invoke:
+                return "orchestrator_invoke"
             return "handoff" if has_handoff else "tool_executor"
             
         orchestrator_id = config.get("configurable", {}).get("orchestrator_agent_id", "")

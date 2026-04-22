@@ -18,8 +18,9 @@ import {
   Select,
   Space,
   Spin,
-  Statistic,
+  Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import {
@@ -27,6 +28,7 @@ import {
   CheckCircleOutlined,
   CloudServerOutlined,
   ConsoleSqlOutlined,
+  CopyOutlined,
   DeleteOutlined,
   ExclamationCircleOutlined,
   GlobalOutlined,
@@ -38,6 +40,7 @@ import {
   SearchOutlined,
   ThunderboltOutlined,
   ToolOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -194,7 +197,9 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'builtin' | 'dynamic'>('all');
   const [category, setCategory] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selected, setSelected] = useState<CatalogItem | null>(null);
+  const [selectedTableRowKeys, setSelectedTableRowKeys] = useState<React.Key[]>([]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [toolType, setToolType] = useState<'api' | 'mcp' | 'cli'>('api');
@@ -430,6 +435,11 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
     });
   }, [catalog, search, filter, category]);
 
+  useEffect(() => {
+    const keySet = new Set(filteredCatalog.map((item) => item.key));
+    setSelectedTableRowKeys((prev) => prev.filter((key) => keySet.has(String(key))));
+  }, [filteredCatalog]);
+
   const previewPayload = useMemo(() => {
     try {
       return normalizePayload(formValues);
@@ -443,66 +453,166 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
     if (item.source === 'builtin') fetchToolDetail(item.name);
   };
 
+  const selectedDynamicRows = useMemo(
+    () =>
+      filteredCatalog.filter(
+        (item) => selectedTableRowKeys.includes(item.key) && item.source === 'dynamic' && item.id,
+      ),
+    [filteredCatalog, selectedTableRowKeys],
+  );
+
+  const handleBatchToggle = async (nextActive: boolean) => {
+    if (selectedDynamicRows.length === 0) {
+      msgApi.warning('请先选择至少一个动态工具');
+      return;
+    }
+    try {
+      await Promise.all(
+        selectedDynamicRows.map(async (item) => {
+          const currentlyActive = !!item.is_active;
+          if (currentlyActive !== nextActive && item.id) {
+            await axios.post(`/api/v1/dynamic-tools/${item.id}/toggle`);
+          }
+        }),
+      );
+      msgApi.success(nextActive ? '已批量启用所选动态工具' : '已批量停用所选动态工具');
+      setSelectedTableRowKeys([]);
+      fetchAll();
+    } catch {
+      msgApi.error('批量更新状态失败');
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedDynamicRows.length === 0) {
+      msgApi.warning('请先选择至少一个动态工具');
+      return;
+    }
+    Modal.confirm({
+      title: `确认删除 ${selectedDynamicRows.length} 个动态工具？`,
+      content: '删除后会从数据库和运行时注册表中移除，无法恢复。',
+      okText: '确认删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await Promise.all(
+            selectedDynamicRows.map((item) => axios.delete(`/api/v1/dynamic-tools/${item.id}`)),
+          );
+          msgApi.success('已批量删除所选动态工具');
+          setSelectedTableRowKeys([]);
+          fetchAll();
+        } catch {
+          msgApi.error('批量删除失败');
+        }
+      },
+    });
+  };
+
+  const renderToolActions = (item: CatalogItem) => (
+    <Space wrap>
+      <Button size="small" onClick={() => openDetail(item)}>查看详情</Button>
+      {item.source === 'dynamic' && item.id && (
+        <>
+          <Button size="small" icon={<PoweroffOutlined />} onClick={() => handleToggleDynamic(item.id!)}>
+            {item.is_active ? '停用' : '启用'}
+          </Button>
+          <Button
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() =>
+              Modal.confirm({
+                title: '确定删除此工具吗？',
+                content: '删除后会同时从数据库和运行时注册表中移除。',
+                onOk: () => handleDeleteDynamic(item.id!),
+              })
+            }
+          >
+            删除
+          </Button>
+        </>
+      )}
+    </Space>
+  );
+
+  const handleCopyTemplate = async () => {
+    const content = scaffold?.template || '';
+    if (!content) {
+      msgApi.warning('当前没有可复制的模板内容');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      msgApi.success('Python 模板已复制到剪贴板');
+    } catch {
+      msgApi.error('复制失败，请检查浏览器剪贴板权限');
+    }
+  };
+
   if (loading) {
     return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>;
   }
 
   return (
-    <div style={{ padding: 24, background: '#eef3f9', minHeight: '100%', overflow: 'auto' }}>
-      <div style={{ maxWidth: 1480, margin: '0 auto' }}>
+    <div style={{ padding: 18, background: '#edf2f7', minHeight: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 1560, margin: '0 auto' }}>
         <Card
           bordered={false}
           style={{
-            marginBottom: 18,
-            borderRadius: 28,
-            overflow: 'hidden',
-            background: 'linear-gradient(135deg, #0f172a 0%, #1d4ed8 45%, #dbeafe 100%)',
-            boxShadow: '0 24px 60px rgba(29,78,216,0.18)',
+            marginBottom: 12,
+            borderRadius: 14,
+            border: '1px solid #dbeafe',
+            background: '#f8fbff',
+            boxShadow: '0 8px 20px rgba(29,78,216,0.06)',
           }}
-          bodyStyle={{ padding: 28 }}
+          bodyStyle={{ padding: '10px 14px' }}
         >
-          <Row gutter={[24, 24]} align="middle">
-            <Col xs={24} xl={15}>
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <Tag color="rgba(255,255,255,0.15)" style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.2)', padding: '4px 10px', borderRadius: 999 }}>
-                  Tool Hub
-                </Tag>
-                <Title level={2} style={{ margin: 0, color: '#fff' }}>
-                  工具注册中心
-                </Title>
-                <Paragraph style={{ margin: 0, color: 'rgba(255,255,255,0.85)', fontSize: 16, maxWidth: 760 }}>
-                  把内核能力、外部 API、MCP 服务和本地脚本统一收进同一个能力目录。现在支持注册前校验、运行时同步刷新和配置预览。
-                </Paragraph>
-                <Space wrap size={12}>
-                  <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)} style={{ background: '#fff', color: '#1d4ed8', borderColor: '#fff' }}>
-                    注册外部工具
-                  </Button>
-                  <Button size="large" icon={<ReloadOutlined />} onClick={fetchAll} style={{ background: 'rgba(255,255,255,0.08)', color: '#fff', borderColor: 'rgba(255,255,255,0.2)' }}>
-                    刷新目录
-                  </Button>
+          <Row gutter={[10, 10]} align="middle">
+            <Col xs={24} xl={10}>
+              <Space direction="vertical" size={2}>
+                <Space wrap size={6}>
+                  <Tag color="blue" style={{ borderRadius: 999, margin: 0 }}>Tool Hub</Tag>
+                  <Text type="secondary" style={{ fontSize: 12 }}>内置能力 + 外部注册能力</Text>
                 </Space>
+                <Title level={4} style={{ margin: 0, lineHeight: 1.2 }}>工具注册中心</Title>
               </Space>
             </Col>
             <Col xs={24} xl={9}>
-              <Row gutter={[12, 12]}>
-                <Col span={12}>
-                  <Card bordered={false} style={{ borderRadius: 18, background: 'rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)' }}>
-                    <Statistic title={<span style={{ color: 'rgba(255,255,255,0.72)' }}>运行中能力</span>} value={kernelStatus?.actions_count || 0} valueStyle={{ color: '#fff' }} prefix={<RocketOutlined style={{ color: '#fff' }} />} />
-                  </Card>
-                </Col>
-                <Col span={12}>
-                  <Card bordered={false} style={{ borderRadius: 18, background: 'rgba(255,255,255,0.14)', backdropFilter: 'blur(10px)' }}>
-                    <Statistic title={<span style={{ color: 'rgba(255,255,255,0.72)' }}>动态工具</span>} value={dynamicTools.length} valueStyle={{ color: '#fff' }} prefix={<LinkOutlined style={{ color: '#fff' }} />} />
-                  </Card>
-                </Col>
-              </Row>
+              <Space wrap size={14}>
+                <Space size={6}>
+                  <Tooltip title="当前运行时已可调用的能力数量">
+                    <RocketOutlined style={{ color: '#1d4ed8' }} />
+                  </Tooltip>
+                  <Text type="secondary">运行中能力</Text>
+                  <Text strong style={{ fontSize: 18 }}>{kernelStatus?.actions_count || 0}</Text>
+                </Space>
+                <Divider type="vertical" />
+                <Space size={6}>
+                  <Tooltip title="通过注册中心新增的外部工具数量">
+                    <LinkOutlined style={{ color: '#0f172a' }} />
+                  </Tooltip>
+                  <Text type="secondary">动态工具</Text>
+                  <Text strong style={{ fontSize: 18 }}>{dynamicTools.length}</Text>
+                </Space>
+              </Space>
+            </Col>
+            <Col xs={24} xl={5} style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Space wrap>
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalVisible(true)} size="middle">
+                  注册外部工具
+                </Button>
+                <Button icon={<ReloadOutlined />} onClick={fetchAll} size="middle">
+                  刷新
+                </Button>
+              </Space>
             </Col>
           </Row>
         </Card>
 
         <Row gutter={[18, 18]} align="top">
-          <Col xs={24} xl={16}>
-            <Card bordered={false} style={{ borderRadius: 24, marginBottom: 18 }} bodyStyle={{ padding: 20 }}>
+          <Col xs={24} xl={17}>
+            <Card bordered={false} style={{ borderRadius: 16, marginBottom: 12 }} bodyStyle={{ padding: 14 }}>
               <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Input
                   allowClear
@@ -510,7 +620,7 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                   placeholder="搜索工具名、场景、分类"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  style={{ width: 320 }}
+                  style={{ width: 360, maxWidth: '100%' }}
                 />
                 <Space wrap>
                   <Segmented
@@ -522,59 +632,69 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                       { label: '动态', value: 'dynamic' },
                     ]}
                   />
-                  <Select value={category} onChange={setCategory} style={{ width: 150 }}>
+                  <Select value={category} onChange={setCategory} style={{ width: 160 }}>
                     {categories.map((item) => (
                       <Select.Option key={item} value={item}>
                         {item === 'all' ? '全部分类' : item}
                       </Select.Option>
                     ))}
                   </Select>
+                  <Segmented
+                    value={viewMode}
+                    onChange={(value) => setViewMode(value as 'cards' | 'table')}
+                    options={[
+                      { label: '卡片', value: 'cards', icon: <AppstoreOutlined /> },
+                      { label: '表格', value: 'table', icon: <UnorderedListOutlined /> },
+                    ]}
+                  />
                 </Space>
               </Space>
             </Card>
 
             {filteredCatalog.length === 0 ? (
-              <Card bordered={false} style={{ borderRadius: 24 }}>
+              <Card bordered={false} style={{ borderRadius: 16 }}>
                 <Empty description="没有匹配到工具" />
               </Card>
-            ) : (
-              <Row gutter={[16, 16]}>
+            ) : viewMode === 'cards' ? (
+              <Row gutter={[12, 12]}>
                 {filteredCatalog.map((item) => {
                   const accent = typeAccent[item.source === 'builtin' ? 'builtin' : item.tool_type || 'api'];
                   return (
-                    <Col key={item.key} xs={24} lg={12}>
+                    <Col key={item.key} xs={24} md={12} xxl={8}>
                       <Card
                         bordered={false}
                         hoverable
                         style={{
-                          borderRadius: 24,
+                          borderRadius: 16,
                           height: '100%',
                           overflow: 'hidden',
                           background: accent.bg,
                           border: `1px solid ${accent.border}`,
-                          boxShadow: '0 14px 35px rgba(15,23,42,0.06)',
+                          boxShadow: '0 8px 20px rgba(15,23,42,0.05)',
                         }}
-                        bodyStyle={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, minHeight: 280 }}
+                        bodyStyle={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                           <Space align="start" size={12}>
-                            <div style={{
-                              width: 42,
-                              height: 42,
-                              borderRadius: 14,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              background: '#fff',
-                              color: accent.text,
-                              boxShadow: '0 10px 24px rgba(0,0,0,0.06)',
-                              fontSize: 18,
-                            }}>
-                              {getTypeIcon(item.source, item.tool_type)}
-                            </div>
+                            <Tooltip title={item.source === 'builtin' ? '内置工具' : `动态工具 · ${(item.tool_type || 'api').toUpperCase()}`}>
+                              <div style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 12,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                background: '#fff',
+                                color: accent.text,
+                                boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
+                                fontSize: 16,
+                              }}>
+                                {getTypeIcon(item.source, item.tool_type)}
+                              </div>
+                            </Tooltip>
                             <div>
                               <Space wrap size={8}>
-                                <Text strong style={{ fontSize: 20, color: '#0f172a' }}>{item.label}</Text>
+                                <Text strong style={{ fontSize: 17, color: '#0f172a' }}>{item.label}</Text>
                                 <Tag color={item.source === 'builtin' ? 'blue' : 'purple'}>{item.source === 'builtin' ? '内置' : '动态'}</Tag>
                                 <Tag color={CATEGORY_COLORS[item.category] || 'default'}>{item.category}</Tag>
                                 {item.tool_type && <Tag>{item.tool_type.toUpperCase()}</Tag>}
@@ -602,21 +722,21 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                           />
                         </div>
 
-                        <Paragraph style={{ margin: 0, color: '#334155', minHeight: 68 }}>
+                        <Paragraph ellipsis={{ rows: 3 }} style={{ margin: 0, color: '#334155' }}>
                           {item.description}
                         </Paragraph>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 10 }}>
-                          <div style={{ padding: 12, borderRadius: 16, background: 'rgba(255,255,255,0.75)' }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>版本</Text>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.75)' }}>
+                            <Text type="secondary" style={{ fontSize: 11 }}>版本</Text>
                             <div><Text strong>{item.version || '1.0.0'}</Text></div>
                           </div>
-                          <div style={{ padding: 12, borderRadius: 16, background: 'rgba(255,255,255,0.75)' }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>来源</Text>
-                            <div><Text strong>{item.source === 'builtin' ? '内核内置' : '外部注册'}</Text></div>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.75)' }}>
+                            <Text type="secondary" style={{ fontSize: 11 }}>来源</Text>
+                            <div><Text strong>{item.source === 'builtin' ? '内置' : '外部'}</Text></div>
                           </div>
-                          <div style={{ padding: 12, borderRadius: 16, background: 'rgba(255,255,255,0.75)' }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>超时</Text>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'rgba(255,255,255,0.75)' }}>
+                            <Text type="secondary" style={{ fontSize: 11 }}>超时</Text>
                             <div><Text strong>{item.config?.timeout_seconds ? `${item.config.timeout_seconds}s` : '默认'}</Text></div>
                           </div>
                         </div>
@@ -630,41 +750,172 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                           />
                         )}
 
-                        <Space wrap style={{ marginTop: 'auto' }}>
-                          <Button onClick={() => openDetail(item)}>查看详情</Button>
-                          {item.source === 'dynamic' && item.id && (
-                            <>
-                              <Button icon={<PoweroffOutlined />} onClick={() => handleToggleDynamic(item.id!)}>
-                                {item.is_active ? '停用' : '启用'}
-                              </Button>
-                              <Button
-                                danger
-                                icon={<DeleteOutlined />}
-                                onClick={() =>
-                                  Modal.confirm({
-                                    title: '确定删除此工具吗？',
-                                    content: '删除后会同时从数据库和运行时注册表中移除。',
-                                    onOk: () => handleDeleteDynamic(item.id!),
-                                  })
-                                }
-                              >
-                                删除
-                              </Button>
-                            </>
-                          )}
-                        </Space>
+                        {renderToolActions(item)}
                       </Card>
                     </Col>
                   );
                 })}
               </Row>
+            ) : (
+              <Card bordered={false} style={{ borderRadius: 16 }} bodyStyle={{ padding: 0 }}>
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderBottom: '1px solid #eef2f7',
+                    background: 'linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Space size={10} wrap>
+                    <Tag color="blue" style={{ margin: 0 }}>
+                      已选 {selectedTableRowKeys.length}
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      仅动态工具支持批量启停和删除
+                    </Text>
+                  </Space>
+                  <Space wrap>
+                    <Button
+                      size="small"
+                      icon={<PoweroffOutlined />}
+                      disabled={selectedDynamicRows.length === 0}
+                      onClick={() => handleBatchToggle(true)}
+                    >
+                      批量启用
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<PoweroffOutlined />}
+                      disabled={selectedDynamicRows.length === 0}
+                      onClick={() => handleBatchToggle(false)}
+                    >
+                      批量停用
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      disabled={selectedDynamicRows.length === 0}
+                      onClick={handleBatchDelete}
+                    >
+                      批量删除
+                    </Button>
+                  </Space>
+                </div>
+                <Table<CatalogItem>
+                  rowKey="key"
+                  size="middle"
+                  rowSelection={{
+                    selectedRowKeys: selectedTableRowKeys,
+                    onChange: (keys) => setSelectedTableRowKeys(keys),
+                    preserveSelectedRowKeys: true,
+                  }}
+                  pagination={{ pageSize: 10, showSizeChanger: false }}
+                  dataSource={filteredCatalog}
+                  rowClassName={(_, index) => (index % 2 === 0 ? 'tool-row-even' : 'tool-row-odd')}
+                  onRow={(record) => ({
+                    onDoubleClick: () => openDetail(record),
+                  })}
+                  columns={[
+                    {
+                      title: '工具',
+                      key: 'tool',
+                      width: 320,
+                      render: (_, item) => (
+                        <Space align="start" size={10}>
+                          <Tooltip title={item.source === 'builtin' ? '内置工具' : `动态工具 · ${(item.tool_type || 'api').toUpperCase()}`}>
+                            <div
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 9,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                background: '#fff',
+                                border: '1px solid #dbeafe',
+                                color: '#2563eb',
+                                marginTop: 2,
+                              }}
+                            >
+                              {getTypeIcon(item.source, item.tool_type)}
+                            </div>
+                          </Tooltip>
+                          <Space direction="vertical" size={1}>
+                            <Space size={6} wrap>
+                              <Text strong>{item.label}</Text>
+                              <Tag color={item.source === 'builtin' ? 'blue' : 'purple'} style={{ margin: 0 }}>
+                                {item.source === 'builtin' ? '内置' : '动态'}
+                              </Tag>
+                              {item.tool_type && <Tag style={{ margin: 0 }}>{item.tool_type.toUpperCase()}</Tag>}
+                            </Space>
+                            <Text code>{item.name}</Text>
+                          </Space>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: '分类',
+                      dataIndex: 'category',
+                      key: 'category',
+                      width: 120,
+                      render: (value: string) => <Tag color={CATEGORY_COLORS[value] || 'default'}>{value}</Tag>,
+                    },
+                    {
+                      title: '状态',
+                      key: 'status',
+                      width: 130,
+                      render: (_, item) => {
+                        const isError = kernelStatus?.dynamic_diagnostics?.[item.name]?.status === 'error';
+                        const loaded = item.runtime_active;
+                        return (
+                          <Tag
+                            color={loaded ? 'success' : isError ? 'error' : 'default'}
+                            style={{ borderRadius: 999, paddingInline: 10, margin: 0 }}
+                          >
+                            {loaded ? '已加载' : isError ? '加载失败' : '未加载'}
+                          </Tag>
+                        );
+                      },
+                    },
+                    {
+                      title: '版本',
+                      dataIndex: 'version',
+                      key: 'version',
+                      width: 100,
+                      render: (value: string) => <Text code>{value || '1.0.0'}</Text>,
+                    },
+                    {
+                      title: '描述',
+                      dataIndex: 'description',
+                      key: 'description',
+                      ellipsis: true,
+                      render: (value: string) => (
+                        <Text type="secondary" ellipsis style={{ maxWidth: 360 }}>
+                          {value}
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: '操作',
+                      key: 'actions',
+                      width: 220,
+                      render: (_, item) => renderToolActions(item),
+                    },
+                  ]}
+                />
+              </Card>
             )}
           </Col>
 
-          <Col xs={24} xl={8}>
-            <Space direction="vertical" size={18} style={{ width: '100%' }}>
-              <Card bordered={false} style={{ borderRadius: 24 }}>
-                <Title level={4} style={{ marginTop: 0 }}>接入建议</Title>
+          <Col xs={24} xl={7}>
+            <Space direction="vertical" size={12} style={{ width: '100%', position: 'sticky', top: 16 }}>
+              <Card bordered={false} style={{ borderRadius: 16 }}>
+                <Title level={5} style={{ marginTop: 0, marginBottom: 10 }}>接入建议</Title>
                 <List
                   dataSource={[
                     '外部 API 适合封装 SaaS 接口、内部服务和 webhook 能力。',
@@ -682,8 +933,8 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                 />
               </Card>
 
-              <Card bordered={false} style={{ borderRadius: 24 }}>
-                <Title level={4} style={{ marginTop: 0 }}>系统状态</Title>
+              <Card bordered={false} style={{ borderRadius: 16 }}>
+                <Title level={5} style={{ marginTop: 0, marginBottom: 10 }}>系统状态</Title>
                 <Space direction="vertical" size={10} style={{ width: '100%' }}>
                   <Alert
                     type="info"
@@ -723,8 +974,8 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                 </Space>
               </Card>
 
-              <Card bordered={false} style={{ borderRadius: 24 }}>
-                <Title level={4} style={{ marginTop: 0 }}>开发者指南</Title>
+              <Card bordered={false} style={{ borderRadius: 16 }}>
+                <Title level={5} style={{ marginTop: 0, marginBottom: 10 }}>开发者指南</Title>
                 {scaffold ? (
                   <Space direction="vertical" size={14} style={{ width: '100%' }}>
                     <Alert
@@ -745,9 +996,32 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
                           key: 'python-template',
                           label: '查看 Python 模板',
                           children: (
-                            <pre style={{ margin: 0, maxHeight: 340, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                              {scaffold.template}
-                            </pre>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                <Button size="small" icon={<CopyOutlined />} onClick={handleCopyTemplate}>
+                                  复制模板
+                                </Button>
+                              </div>
+                              <pre
+                                style={{
+                                  margin: 0,
+                                  maxHeight: 340,
+                                  overflow: 'auto',
+                                  whiteSpace: 'pre',
+                                  wordBreak: 'normal',
+                                  fontFamily: 'SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                  fontSize: 12,
+                                  lineHeight: 1.6,
+                                  background: '#0b1220',
+                                  color: '#dbeafe',
+                                  borderRadius: 12,
+                                  border: '1px solid #1e293b',
+                                  padding: 12,
+                                }}
+                              >
+                                {scaffold.template}
+                              </pre>
+                            </div>
                           ),
                         },
                       ]}
@@ -761,6 +1035,24 @@ const ToolRegistry: React.FC<ToolRegistryProps> = ({ msgApi }) => {
           </Col>
         </Row>
       </div>
+
+      <style>{`
+        .tool-row-even td {
+          background: #fcfdff !important;
+        }
+        .tool-row-odd td {
+          background: #f8fbff !important;
+        }
+        .ant-table-thead > tr > th {
+          background: #f1f5f9 !important;
+          color: #0f172a !important;
+          font-weight: 700 !important;
+          border-bottom: 1px solid #e2e8f0 !important;
+        }
+        .ant-table-tbody > tr:hover > td {
+          background: #eaf2ff !important;
+        }
+      `}</style>
 
       <Drawer
         title={<span style={{ fontSize: 24, fontWeight: 700 }}>注册外部工具</span>}

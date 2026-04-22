@@ -37,6 +37,7 @@ class ChatCompletionRequest(BaseModel):
     # UniAI 扩展字段
     session_id: Optional[str] = None
     graph_template_id: Optional[str] = "standard"  # 图拓扑模板 ID
+    interaction_mode: Optional[str] = "chat"  # chat / workflow / builder / analysis / delegated_app
     enable_memory: bool = False
     enable_swarm: bool = True
     enable_canvas: bool = True

@@ -5,7 +5,7 @@ import {
   DatabaseOutlined, PlusOutlined, RobotOutlined, DeleteOutlined,
   ToolOutlined, BarChartOutlined, KeyOutlined, EditOutlined, UserOutlined,
   LockOutlined, AppstoreAddOutlined, NodeIndexOutlined, ThunderboltFilled,
-  SyncOutlined
+  SyncOutlined, MenuFoldOutlined, MenuUnfoldOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -21,6 +21,7 @@ import ChangePasswordModal from './components/ChangePasswordModal';
 import SettingsCenter from './components/SettingsView';
 import Login from './components/Login';
 import GraphTracePanel from './components/GraphTracePanel';
+import BrandCatIcon from './components/BrandCatIcon';
 import type { Message, Agent } from './components/ChatView';
 
 const { Header, Content, Sider } = Layout;
@@ -182,6 +183,16 @@ const App: React.FC = () => {
   // 使用 Ref 同步记录专家模式，解决异步判定崩溃
   const isExpertRef = useRef(false);
   const [activeView, setActiveView] = useState<ViewType>((localStorage.getItem('activeView') as ViewType) || 'chat');
+  const [siderCollapsed, setSiderCollapsed] = useState<boolean>(() => localStorage.getItem('sidebarCollapsed') === 'true');
+  const [menuOpenKeys, setMenuOpenKeys] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('sidebarMenuOpenKeys');
+      const parsed = raw ? JSON.parse(raw) : ['sessions', 'agent_switcher'];
+      return Array.isArray(parsed) ? parsed : ['sessions', 'agent_switcher'];
+    } catch {
+      return ['sessions', 'agent_switcher'];
+    }
+  });
 
   // --- Chat State ---
   const [messages, setMessages] = useState<Message[]>([]);
@@ -290,6 +301,14 @@ const App: React.FC = () => {
   }, [activeView]);
 
   useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', String(siderCollapsed));
+  }, [siderCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem('sidebarMenuOpenKeys', JSON.stringify(menuOpenKeys));
+  }, [menuOpenKeys]);
+
+  useEffect(() => {
     if (currentAgent) {
       localStorage.setItem('currentAgentId', currentAgent.id);
     }
@@ -306,11 +325,18 @@ const App: React.FC = () => {
   // --- Initial Session Restore ---
   const [sessionRestored, setSessionRestored] = useState(false);
   useEffect(() => {
-    if (token && currentSessionId && sessions.length > 0 && agents.length > 0 && !sessionRestored) {
+    if (
+      token &&
+      activeView === 'chat' &&
+      currentSessionId &&
+      sessions.length > 0 &&
+      agents.length > 0 &&
+      !sessionRestored
+    ) {
       loadSession(currentSessionId);
       setSessionRestored(true);
     }
-  }, [token, currentSessionId, sessions, agents, sessionRestored]);
+  }, [token, activeView, currentSessionId, sessions, agents, sessionRestored]);
 
   // --- Session Management ---
   const startNewChat = () => {
@@ -841,20 +867,25 @@ const App: React.FC = () => {
     <Layout style={{ height: '100vh', width: '100vw', overflow: 'hidden', background: '#f5f6fa' }}>
       {activeView !== 'settings' && (
         <Sider
+          className="uni-sider"
           width={240}
+          collapsedWidth={76}
+          collapsed={siderCollapsed}
+          trigger={null}
           theme="light"
           style={{ borderRight: '1px solid #e8e8e8', overflow: 'auto', flexShrink: 0 }}
         >
-          <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid #f0f0f0' }}>
-            <Title level={5} style={{ margin: 0, color: '#1890ff', fontSize: 16 }}>
-              <ThunderboltOutlined style={{ marginRight: 6 }} />
-              UniAI Kernel
+          <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+          <div style={{ padding: siderCollapsed ? '16px 10px 12px' : '16px 16px 12px', borderBottom: '1px solid #f0f0f0' }}>
+            <Title level={5} style={{ margin: 0, color: '#1890ff', fontSize: 16, textAlign: siderCollapsed ? 'center' : 'left' }}>
+              <BrandCatIcon size={20} style={{ marginRight: siderCollapsed ? 0 : 6, verticalAlign: 'text-bottom' }} />
+              {!siderCollapsed && 'UniAI Kernel'}
             </Title>
-            <Text type="secondary" style={{ fontSize: '10px' }}>Agentic OS v1.0</Text>
+            {!siderCollapsed && <Text type="secondary" style={{ fontSize: '10px' }}>Agentic OS v1.0</Text>}
           </div>
 
           {/* 新建会话 - 全局快速操作 */}
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ padding: siderCollapsed ? '10px' : '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
             <Button
               type="primary"
               icon={<PlusOutlined />}
@@ -862,16 +893,19 @@ const App: React.FC = () => {
               onClick={startNewChat}
               style={{ borderRadius: 8, height: 40, fontWeight: 500, boxShadow: '0 2px 4px rgba(24,144,255,0.2)' }}
             >
-              开启新会话
+              {siderCollapsed ? '' : '开启新会话'}
             </Button>
           </div>
 
+          {!siderCollapsed && <div style={{ padding: '8px 12px 4px', color: '#8c8c8c', fontSize: 12, fontWeight: 600 }}>会话与专家</div>}
           <Menu
             mode="inline"
+            inlineCollapsed={siderCollapsed}
             selectedKeys={[activeView === 'chat' ? (currentSessionId || currentAgent?.id || 'chat') : activeView]}
-            style={{ borderRight: 0, background: 'transparent' }}
+            openKeys={siderCollapsed ? [] : menuOpenKeys}
+            onOpenChange={(keys) => setMenuOpenKeys(keys as string[])}
+            style={{ borderRight: 0, background: 'transparent', margin: '0 8px', borderRadius: 10 }}
           >
-            {/* 会话管理 */}
             <Menu.SubMenu key="sessions" icon={<HistoryOutlined />} title="所有会话">
               {sessions.map(s => (
                 <Menu.Item
@@ -899,8 +933,7 @@ const App: React.FC = () => {
               ))}
             </Menu.SubMenu>
 
-            {/* 专家集群 */}
-            <Menu.SubMenu key="agents" icon={<AppstoreOutlined />} title="专家集群">
+            <Menu.SubMenu key="agent_switcher" icon={<RobotOutlined />} title="专家快捷切换">
               {agents.map(agent => (
                 <Menu.Item
                   key={agent.id}
@@ -925,32 +958,44 @@ const App: React.FC = () => {
                   </div>
                 </Menu.Item>
               ))}
-              <Menu.Item key="manage-agents" onClick={() => setActiveView('agents')}>
-                管理专家...
-              </Menu.Item>
             </Menu.SubMenu>
+          </Menu>
 
-            {/* 供应商 */}
+          {!siderCollapsed && <div style={{ padding: '12px 12px 4px', color: '#8c8c8c', fontSize: 12, fontWeight: 600 }}>系统管理</div>}
+          <Menu
+            mode="inline"
+            inlineCollapsed={siderCollapsed}
+            selectedKeys={[activeView]}
+            style={{ borderRight: 0, background: 'transparent', margin: '0 8px', borderRadius: 10 }}
+          >
+            <Menu.Item key="agents" icon={<AppstoreOutlined />} onClick={() => setActiveView('agents')}>
+              管理专家
+            </Menu.Item>
             <Menu.Item key="providers" icon={<DatabaseOutlined />} onClick={() => setActiveView('providers')}>
               模型供应商
             </Menu.Item>
-
-            {/* 工具注册表 */}
             <Menu.Item key="tools" icon={<ToolOutlined />} onClick={() => setActiveView('tools')}>
               工具注册表
             </Menu.Item>
-
-            {/* 开量/统计 */}
             <Menu.Item key="audit" icon={<BarChartOutlined />} onClick={() => setActiveView('audit')}>
               使用审计
             </Menu.Item>
-
-            {/* API 秘钥 */}
             <Menu.Item key="api_keys" icon={<KeyOutlined />} onClick={() => setActiveView('api_keys')}>
               API 秘钥
             </Menu.Item>
-
           </Menu>
+          <div style={{ marginTop: 'auto', padding: 10, borderTop: '1px solid #f0f0f0' }}>
+            <Tooltip title={siderCollapsed ? '展开侧栏' : '收起侧栏'} placement="right">
+              <Button
+                icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setSiderCollapsed((v) => !v)}
+                block
+              >
+                {siderCollapsed ? '' : '收起导航'}
+              </Button>
+            </Tooltip>
+          </div>
+          </div>
         </Sider>
       )}
 

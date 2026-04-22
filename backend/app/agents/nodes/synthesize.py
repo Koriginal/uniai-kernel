@@ -26,8 +26,10 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
     model_name = c["model_name"]
     orchestrator_agent_id = c["orchestrator_agent_id"]
     orchestrator_profile = c["orchestrator_agent_profile"]
+    request_id = c["request_id"]
 
     current_msg_id = state["current_msg_id"]
+    stream_chunk_id = str(current_msg_id or request_id)
     wrapping_expert_id = state["wrapping_expert_id"]
     total_assistant_content = state["total_assistant_content"]
     current_agent_profile = state["current_agent_profile"]
@@ -42,7 +44,7 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
     if wrapping_expert_id:
         closing_tag = "\n</collaboration>\n"
         close_chunk = ChatCompletionChunk(
-            id=current_msg_id, model=model_name,
+            id=stream_chunk_id, model=model_name,
             choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=closing_tag))]
         ).model_dump_json(exclude_none=True)
         await callback.emit(f"data: {close_chunk}\n\n")
@@ -55,4 +57,6 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
         "total_assistant_content": total_assistant_content,
         "pending_tool_calls": [],
         "iter_text": "",
+        "interaction_mode": "chat",
+        "pending_delegate_type": None,
     }

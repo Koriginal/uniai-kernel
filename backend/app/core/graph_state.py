@@ -28,6 +28,10 @@ class AgentGraphState(TypedDict):
     - total_tool_calls_list: 跨迭代累积的全部工具调用记录
     - global_tool_index_offset: 全局工具索引偏移器（防止前端 JSON 流粘连）
     - iter_text: 当前迭代产生的文本内容
+    - interaction_mode: 当前交互形态（chat/workflow/delegated_app 等）
+    - semantic_frame: 当前任务的语义框架摘要，供未来本体驱动调度使用
+    - semantic_slots: 当前任务的结构化语义槽位
+    - pending_delegate_type: 最近一次待处理移交类型（expert/orchestrator）
     """
     messages: list
     iteration_count: int
@@ -43,6 +47,10 @@ class AgentGraphState(TypedDict):
     total_tool_calls_list: list
     global_tool_index_offset: int
     iter_text: str
+    interaction_mode: str
+    semantic_frame: Optional[dict]
+    semantic_slots: dict
+    pending_delegate_type: Optional[str]
     # --- [New: Phase 2] 自维护字段 ---
     recovery_count: int           # 本会话累计恢复次数
     last_healthy_node: Optional[str]        # 最后成功执行的节点名称

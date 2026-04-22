@@ -94,6 +94,7 @@ class GraphRegistry:
                 {"id": "agent", "type": "agent"},
                 {"id": "tool_executor", "type": "tool_executor"},
                 {"id": "handoff", "type": "handoff"},
+                {"id": "orchestrator_invoke", "type": "orchestrator_invoke"},
                 {"id": "synthesize", "type": "synthesize"}
             ],
             "edges": [
@@ -106,6 +107,7 @@ class GraphRegistry:
                     "type": "adaptive_router",
                     "mapping": {
                         "handoff": "handoff",
+                        "orchestrator_invoke": "orchestrator_invoke",
                         "tool_executor": "tool_executor",
                         "synthesize": "synthesize",
                         "__end__": "__end__"
@@ -118,6 +120,11 @@ class GraphRegistry:
                 },
                 {
                     "source": "handoff",
+                    "type": "fixed",
+                    "target": "agent"
+                },
+                {
+                    "source": "orchestrator_invoke",
                     "type": "fixed",
                     "target": "agent"
                 }
@@ -167,7 +174,7 @@ class GraphRegistry:
         # 节点注册逻辑需映射 type 到实际函数 (此处简化演示，未来可扩展节点插件)
         from app.agents.graph_builder import wrap_telemetry
         from app.agents.nodes import (
-            context_node, agent_node, tool_executor_node, handoff_node, synthesize_node
+            context_node, agent_node, tool_executor_node, handoff_node, orchestrator_invoke_node, synthesize_node
         )
         
         node_factory = {
@@ -175,6 +182,7 @@ class GraphRegistry:
             "agent": agent_node,
             "tool_executor": tool_executor_node,
             "handoff": handoff_node,
+            "orchestrator_invoke": orchestrator_invoke_node,
             "synthesize": synthesize_node
         }
         
@@ -191,7 +199,7 @@ class GraphRegistry:
             workflow.add_edge(edge_def["source"], edge_def["target"])
 
         # 解析 conditional_edges (条件边)
-        from app.agents.graph_builder import adaptive_route, route_after_tools, route_after_handoff
+        from app.agents.graph_builder import adaptive_route, route_after_tools, route_after_handoff, route_after_orchestrator_invoke
         from langgraph.graph import END
 
         for ce_def in topology.get("conditional_edges", []):
@@ -211,6 +219,8 @@ class GraphRegistry:
                     workflow.add_conditional_edges(source, route_after_tools, {target: target})
                 elif source == "handoff":
                     workflow.add_conditional_edges(source, route_after_handoff, {target: target})
+                elif source == "orchestrator_invoke":
+                    workflow.add_conditional_edges(source, route_after_orchestrator_invoke, {target: target})
                 else:
                     # 默认情况支持简单映射
                     workflow.add_conditional_edges(source, lambda x: target, {target: target})

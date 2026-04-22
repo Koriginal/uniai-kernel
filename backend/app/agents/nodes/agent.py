@@ -16,6 +16,7 @@ from app.models.openai import (
 )
 from app.models.provider import ProviderModel
 from app.models.message import ChatMessage
+from app.ontology.registry import ontology_registry
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,16 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     current_agent_id = state["current_agent_id"]
     agent_profile = state["current_agent_profile"]
     current_msg_id = state["current_msg_id"]
+    # 流式 chunk 的 id 必须是字符串；当未创建 assistant 消息时回退到 request_id
+    stream_chunk_id = str(current_msg_id or request_id)
     total_assistant_content = state["total_assistant_content"]
     total_tool_calls_list = list(state["total_tool_calls_list"])
     global_tool_index_offset = state["global_tool_index_offset"]
     wrapping_expert_id = state["wrapping_expert_id"]
     iteration_count = state["iteration_count"] + 1
+    interaction_mode = state.get("interaction_mode", "chat")
+    semantic_frame = state.get("semantic_frame") or {}
+    semantic_slots = state.get("semantic_slots") or {}
 
     runtime_mode = (agent_profile or {}).get("runtime_mode", "root_orchestrator" if current_agent_id == orchestrator_agent_id else "expert")
     is_expert = runtime_mode == "expert"
@@ -105,6 +111,16 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += steward_instr
 
+    if interaction_mode in {"workflow", "builder", "analysis", "delegated_app"}:
+        mode_contract = ontology_registry.build_mode_contract(interaction_mode)
+        mode_instr = (
+            f"\n\n[INTERACTION MODE]: {interaction_mode}\n"
+            f"Semantic frame: {json.dumps(semantic_frame, ensure_ascii=False)}\n"
+            f"Semantic slots: {json.dumps(semantic_slots, ensure_ascii=False)}\n"
+            f"{mode_contract}\n"
+        )
+        current_sys_prompt += mode_instr
+
     directory_catalog = "\n\n".join([part for part in [expert_prompt_catalog, orchestrator_prompt_catalog] if part]).strip()
     full_sys_content = (directory_catalog + "\n\n" + current_sys_prompt).strip()
 
@@ -148,7 +164,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if is_expert and not wrapping_expert_id:
         opening_tag = f"\n<collaboration title='{agent_profile.get('name', 'Expert') if agent_profile else 'Expert'}'>\n"
         chunk_data = ChatCompletionChunk(
-            id=current_msg_id, model=model_name,
+            id=stream_chunk_id, model=model_name,
             choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=opening_tag))]
         ).model_dump_json(exclude_none=True)
         await callback.emit(f"data: {chunk_data}\n\n")
@@ -209,7 +225,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
 
                 # 包装为标准 Chunk 避免 LiteLLM 对象属性赋值报错
                 out_chunk = ChatCompletionChunk(
-                    id=current_msg_id,
+                    id=stream_chunk_id,
                     model=model_name,
                     choices=[ChatCompletionChunkChoice(
                         index=0,
@@ -235,7 +251,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                             if wrapping_expert_id:
                                 closing_tag = "\n</collaboration>\n"
                                 close_chunk = ChatCompletionChunk(
-                                    id=current_msg_id, model=model_name,
+                                    id=stream_chunk_id, model=model_name,
                                     choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=closing_tag))]
                                 ).model_dump_json(exclude_none=True)
                                 await callback.emit(f"data: {close_chunk}\n\n")
@@ -258,7 +274,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                                     lang = echo_states[idx]["language"]
                                     open_fence = f"\n\n```{lang}\n"
                                     fence_chunk = ChatCompletionChunk(
-                                        id=current_msg_id, model=model_name,
+                                        id=stream_chunk_id, model=model_name,
                                         choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=open_fence))]
                                     ).model_dump_json(exclude_none=True)
                                     await callback.emit(f"data: {fence_chunk}\n\n")
@@ -284,7 +300,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                                 new_text = decoded_val[echo_states[idx]["yielded_len"]:]
                                 if new_text:
                                     echo_chunk = ChatCompletionChunk(
-                                        id=current_msg_id, model=model_name,
+                                        id=stream_chunk_id, model=model_name,
                                         choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=new_text))]
                                     ).model_dump_json(exclude_none=True)
                                     await callback.emit(f"data: {echo_chunk}\n\n")
@@ -294,7 +310,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                                 if is_fully_closed and not echo_states[idx]["closed"]:
                                     close_fence = "\n```\n"
                                     fence_chunk = ChatCompletionChunk(
-                                        id=current_msg_id, model=model_name,
+                                        id=stream_chunk_id, model=model_name,
                                         choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=close_fence))]
                                     ).model_dump_json(exclude_none=True)
                                     await callback.emit(f"data: {fence_chunk}\n\n")
@@ -307,7 +323,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                 if is_expert and not wrapping_expert_id:
                     opening_tag = f"\n<collaboration title='{agent_profile.get('name', 'Expert') if agent_profile else 'Expert'}'>\n"
                     tag_chunk = ChatCompletionChunk(
-                        id=current_msg_id, model=model_name,
+                        id=stream_chunk_id, model=model_name,
                         choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=opening_tag))]
                     ).model_dump_json(exclude_none=True)
                     await callback.emit(f"data: {tag_chunk}\n\n")
@@ -317,7 +333,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                 iter_text += c_text
                 total_assistant_content += c_text
                 text_chunk = ChatCompletionChunk(
-                    id=current_msg_id, model=model_name,
+                    id=stream_chunk_id, model=model_name,
                     choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=c_text))]
                 ).model_dump_json(exclude_none=True)
                 await callback.emit(f"data: {text_chunk}\n\n")
@@ -334,7 +350,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     except Exception as e:
         logger.error(f"[AgentNode] LLM call failed: {e}")
         err_chunk = ChatCompletionChunk(
-            id=current_msg_id, model=model_name,
+            id=stream_chunk_id, model=model_name,
             choices=[ChatCompletionChunkChoice(index=0, delta=ChatCompletionChunkDelta(content=f"\n❌ 内核故障: {str(e)}"))]
         ).model_dump_json(exclude_none=True)
         await callback.emit(f"data: {err_chunk}\n\n")

@@ -7,6 +7,7 @@ UniAI Kernel — LangGraph 对话图编译器
 图结构：
     START → context_node → agent_node
                                 ├──[有 tool_calls，含 Handoff] → handoff_node → agent_node
+                                ├──[有 tool_calls，含 Invoke]  → orchestrator_invoke_node → agent_node
                                 ├──[有 tool_calls，无 Handoff] → tool_executor_node → agent_node
                                 ├──[无 tool_calls，是专家]     → synthesize_node → agent_node
                                 └──[无 tool_calls，是主控]     → END
@@ -22,6 +23,7 @@ from app.agents.nodes import (
     agent_node,
     tool_executor_node,
     handoff_node,
+    orchestrator_invoke_node,
     synthesize_node,
 )
 from app.agents.graph_telemetry import telemetry
@@ -52,6 +54,13 @@ def route_after_tools(state: AgentGraphState, config: RunnableConfig) -> str:
 def route_after_handoff(state: AgentGraphState, config: RunnableConfig) -> str:
     """
     专家接手后，始终返回 agent_node 让专家开始思考。
+    """
+    return "agent"
+
+
+def route_after_orchestrator_invoke(state: AgentGraphState, config: RunnableConfig) -> str:
+    """
+    子主控接手后，返回 agent_node 继续执行子应用编排。
     """
     return "agent"
 
@@ -121,6 +130,7 @@ async def build_conversation_graph():
     workflow.add_node("agent", wrap_telemetry(agent_node, "agent"))
     workflow.add_node("tool_executor", wrap_telemetry(tool_executor_node, "tool_executor"))
     workflow.add_node("handoff", wrap_telemetry(handoff_node, "handoff"))
+    workflow.add_node("orchestrator_invoke", wrap_telemetry(orchestrator_invoke_node, "orchestrator_invoke"))
     workflow.add_node("synthesize", wrap_telemetry(synthesize_node, "synthesize"))
 
     # ── 固定边 ──
@@ -133,6 +143,7 @@ async def build_conversation_graph():
         adaptive_route,
         {
             "handoff": "handoff",
+            "orchestrator_invoke": "orchestrator_invoke",
             "tool_executor": "tool_executor",
             "synthesize": "synthesize",
             END: END,
@@ -150,6 +161,12 @@ async def build_conversation_graph():
     workflow.add_conditional_edges(
         "handoff",
         route_after_handoff,
+        {"agent": "agent"}
+    )
+
+    workflow.add_conditional_edges(
+        "orchestrator_invoke",
+        route_after_orchestrator_invoke,
         {"agent": "agent"}
     )
 
