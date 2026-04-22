@@ -877,7 +877,18 @@ const App: React.FC = () => {
         >
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
           <div style={{ padding: siderCollapsed ? '16px 10px 12px' : '16px 16px 12px', borderBottom: '1px solid #f0f0f0' }}>
-            <Title level={5} style={{ margin: 0, color: '#1890ff', fontSize: 16, textAlign: siderCollapsed ? 'center' : 'left' }}>
+            <Title
+              level={5}
+              style={{
+                margin: 0,
+                color: '#1890ff',
+                fontSize: 16,
+                textAlign: siderCollapsed ? 'center' : 'left',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: siderCollapsed ? 'center' : 'flex-start',
+              }}
+            >
               <BrandCatIcon size={20} style={{ marginRight: siderCollapsed ? 0 : 6, verticalAlign: 'text-bottom' }} />
               {!siderCollapsed && 'UniAI Kernel'}
             </Title>

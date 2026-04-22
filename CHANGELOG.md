@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-04-22
+### Added
+- **Multi-Tenancy & Identity Context**:
+    - Mandatory authentication for agent operations via JWT or API Key.
+    - Full identity tracking across the agent graph using a new `identity_context` (Dashboard vs. API).
+    - Session ownership enforcement: users now only access their own data, with RBAC for admins.
+    - Legacy "orphan" session auto-claiming for admin accounts to ensure data continuity.
+- **Observability Dashboard (Audit 2.0)**:
+    - New high-density Audit Dashboard with real-time feedback metrics (LIKE/DISLIKE rates).
+    - System stability monitoring with "Error TOP Nodes" visualization.
+    - Performance insights featuring "Slow Expert TOP" tracking.
+    - Advanced multi-dimensional filtering by Tenant, API Key, Auth Source, and specific Agents.
+- **Tenant Management**: Introduced tenant-level usage breakdown and API Key utilization analytics.
+
+### Improved
+- **Session Persistence**: Refined `ChatSession` metadata to store and propagate authentication sources.
+- **Backend Service Refinement**: Optimized `AuditService` for high-performance data aggregation and filtering.
+
 ## [2.3.0] - 2026-04-22
 ### Added
 - **UI/UX Overhaul**: Reimagined sidebar with collapsible state, improved navigation hierarchy, and new "BrandCat" logo across Login and main Layout.

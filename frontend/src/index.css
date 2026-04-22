@@ -119,20 +119,41 @@ body {
   width: 100% !important;
 }
 
+.uni-sider.ant-layout-sider-collapsed {
+  flex: 0 0 76px !important;
+  max-width: 76px !important;
+  min-width: 76px !important;
+  width: 76px !important;
+}
+
+.uni-sider.ant-layout-sider-collapsed .ant-menu {
+  margin: 0 !important;
+  padding: 0 8px !important;
+}
+
 .uni-sider .ant-menu-inline-collapsed > .ant-menu-item,
 .uni-sider .ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title {
-  margin: 4px 6px !important;
+  margin: 4px 0 !important;
   padding-inline: 0 !important;
   height: 40px !important;
   line-height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   text-align: center !important;
 }
 
+.uni-sider .ant-menu-inline-collapsed > .ant-menu-item .ant-menu-item-icon,
+.uni-sider .ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title .ant-menu-item-icon,
 .uni-sider .ant-menu-inline-collapsed > .ant-menu-item .anticon,
 .uni-sider .ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title .anticon {
   margin: 0 !important;
   font-size: 18px;
-  line-height: 40px;
+  line-height: 1 !important;
+}
+
+.uni-sider .ant-menu-inline-collapsed .ant-menu-title-content {
+  display: none !important;
 }
 
 .ant-card {

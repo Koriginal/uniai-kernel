@@ -61,6 +61,7 @@ class AgentService:
         enable_canvas: bool = True,
         req_id: Optional[str] = None,
         skip_save_user: bool = False,
+        identity_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         驱动对话图执行，将图内部的 SSE 事件流式转发到调用方。
@@ -117,7 +118,10 @@ class AgentService:
 
             # ── 4. 确保会话存在 ──
             if session_id:
-                await self._ensure_session_exists(db, session_id, user_id, active_agent_id=agent_id)
+                await self._ensure_session_exists(
+                    db, session_id, user_id, active_agent_id=agent_id,
+                    identity_context=identity_context
+                )
 
             # ── 5. 构建流式回调桥接器 ──
             callback = StreamCallback()
@@ -226,7 +230,8 @@ class AgentService:
 
     async def _ensure_session_exists(
         self, db: AsyncSession, session_id: str, user_id: str,
-        title: str = "New Chat", active_agent_id: str = None
+        title: str = "New Chat", active_agent_id: str = None,
+        identity_context: Optional[Dict[str, Any]] = None,
     ):
         """确保数据库中存在对应会话记录"""
         if not session_id or not db:
@@ -237,12 +242,29 @@ class AgentService:
         session = result.scalar_one_or_none()
         if not session:
             logger.info(f"[AgentService] Auto-creating missing session: {session_id}")
+            metadata = {
+                "auth_source": (identity_context or {}).get("source", "unknown"),
+                "api_key_id": (identity_context or {}).get("api_key_id"),
+                "api_key_name": (identity_context or {}).get("api_key_name"),
+            }
             session = ChatSession(
                 id=session_id, user_id=user_id,
-                title=title, active_agent_id=active_agent_id
+                title=title, active_agent_id=active_agent_id,
+                extra_metadata=metadata,
             )
             db.add(session)
             await db.commit()
+        else:
+            metadata = dict(session.extra_metadata or {})
+            if identity_context:
+                metadata.setdefault("auth_source", identity_context.get("source", "unknown"))
+                if identity_context.get("api_key_id"):
+                    metadata["api_key_id"] = identity_context.get("api_key_id")
+                    metadata["api_key_name"] = identity_context.get("api_key_name")
+                if metadata != (session.extra_metadata or {}):
+                    session.extra_metadata = metadata
+                    db.add(session)
+                    await db.commit()
         return session
 
     async def chat(
@@ -253,6 +275,7 @@ class AgentService:
         enable_memory: bool = False,
         enable_swarm: bool = True,
         enable_canvas: bool = True,
+        identity_context: Optional[Dict[str, Any]] = None,
     ) -> ChatCompletionResponse:
         """非流式接口：收集所有 SSE chunk 后返回完整响应"""
         full_content = ""
@@ -260,7 +283,8 @@ class AgentService:
         async for chunk in self.chat_stream(
             request=request, user_id=user_id, session_id=session_id,
             enable_memory=enable_memory, enable_swarm=enable_swarm,
-            enable_canvas=enable_canvas, req_id=req_id
+            enable_canvas=enable_canvas, req_id=req_id,
+            identity_context=identity_context,
         ):
             if isinstance(chunk, str) and chunk.startswith("data: "):
                 try:

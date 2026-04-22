@@ -8,6 +8,8 @@ from app.models.agent import AgentProfile
 from app.models.openai import ChatCompletionRequest, ChatCompletionMessage
 from app.services.agent_service import agent_service
 from app.core.plugins import registry
+from app.api import deps
+from app.models.user import User
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uuid
@@ -174,7 +176,8 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
 @router.post("/", response_model=AgentProfileResponse)
 async def create_agent_profile(
     profile: AgentProfileCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """创建新的智能体 Profile"""
     normalized, _ = _normalize_agent_payload(profile)
@@ -190,7 +193,7 @@ async def create_agent_profile(
         handoff_strategy=normalized.get("handoff_strategy", "return"),
         is_public=normalized.get("is_public", False),
         is_active=normalized.get("is_active", True),
-        user_id="local_dev" # 暂时硬编码，后续由鉴权中间件提供
+        user_id=current_user.id
     )
     db.add(new_profile)
     await db.commit()
@@ -374,7 +377,8 @@ async def agent_chat(
     agent_id: str,
     request_data: AgentChatRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """
     智能体业务对话专线：
@@ -384,8 +388,8 @@ async def agent_chat(
     if not profile:
         raise HTTPException(status_code=404, detail="Agent profile not found")
         
-    # 从中中间件提取身份
-    user_id = getattr(request.state, "user_id", "admin")
+    # 使用鉴权用户身份，避免回退到历史默认值导致会话归属错乱
+    user_id = current_user.id
 
     # 模拟构造一个标准 OpenAI 请求体
     openai_request = ChatCompletionRequest(
@@ -408,6 +412,10 @@ async def agent_chat(
                 enable_swarm=request_data.enable_swarm,
                 enable_canvas=request_data.enable_canvas,
                 skip_save_user=request_data.skip_save_user,
+                identity_context={
+                    "source": "dashboard_jwt",
+                    "user_id": current_user.id,
+                },
             ),
             media_type="text/event-stream"
         )
@@ -419,7 +427,11 @@ async def agent_chat(
             session_id=request_data.session_id,
             enable_memory=request_data.enable_memory,
             enable_swarm=request_data.enable_swarm,
-            enable_canvas=request_data.enable_canvas
+            enable_canvas=request_data.enable_canvas,
+            identity_context={
+                "source": "dashboard_jwt",
+                "user_id": current_user.id,
+            },
         )
 
 
@@ -428,14 +440,15 @@ async def test_agent_profile(
     agent_id: str,
     request_data: AgentTestRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """快速试跑指定专家配置，验证当前配置是否可正常响应。"""
     profile = await db.get(AgentProfile, agent_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Agent profile not found")
 
-    user_id = getattr(request.state, "user_id", "admin")
+    user_id = current_user.id
     response = await agent_service.chat(
         request=ChatCompletionRequest(
             model=agent_id,
@@ -448,6 +461,10 @@ async def test_agent_profile(
         enable_memory=request_data.enable_memory,
         enable_swarm=request_data.enable_swarm,
         enable_canvas=request_data.enable_canvas,
+        identity_context={
+            "source": "dashboard_jwt",
+            "user_id": current_user.id,
+        },
     )
     content = response.choices[0].message.content if response.choices else ""
     return {

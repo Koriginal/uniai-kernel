@@ -40,7 +40,8 @@ async def generate_sse_stream(
     req_id: str,
     session_id: str = None,
     user_id: str = None,
-    enable_memory: bool = False
+    enable_memory: bool = False,
+    identity_context: Optional[Dict[str, Any]] = None,
 ):
     """
     Data Plane 流式包装器：完全托管给 AgentService 处理核心逻辑。
@@ -50,7 +51,8 @@ async def generate_sse_stream(
         user_id=user_id,
         session_id=session_id,
         enable_memory=enable_memory,
-        req_id=req_id
+        req_id=req_id,
+        identity_context=identity_context,
     ):
         yield chunk
 
@@ -67,12 +69,14 @@ async def chat_completions(
     req_id = f"chatcmpl-{uuid.uuid4().hex}"
     session_id = http_request.headers.get("X-Session-Id")
     enable_memory = http_request.headers.get("X-Enable-Memory", "false").lower() == "true"
+    identity_context = getattr(http_request.state, "identity_context", None) if http_request else None
     
     if request.stream:
         return StreamingResponse(
             generate_sse_stream(
                 request=request, req_id=req_id, 
-                session_id=session_id, user_id=user_id, enable_memory=enable_memory
+                session_id=session_id, user_id=user_id, enable_memory=enable_memory,
+                identity_context=identity_context,
             ),
             media_type="text/event-stream"
         )
@@ -83,4 +87,6 @@ async def chat_completions(
         user_id=user_id,
         session_id=session_id,
         enable_memory=enable_memory
+        ,
+        identity_context=identity_context,
     )

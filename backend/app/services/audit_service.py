@@ -2,12 +2,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 from app.models.audit import ActionLog
 from datetime import datetime, timedelta
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 class AuditService:
-    async def get_usage_stats(self, db: AsyncSession, days: int = 7) -> Dict[str, Any]:
+    async def get_usage_stats(
+        self,
+        db: AsyncSession,
+        days: int = 7,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """获取过去 N 天的使用统计概览"""
         since = datetime.now() - timedelta(days=days)
+        base_filters = [ActionLog.created_at >= since]
+        if user_id:
+            base_filters.append(ActionLog.user_id == user_id)
         
         # 1. 总体概览
         query = select(
@@ -15,7 +23,7 @@ class AuditService:
             func.sum(ActionLog.total_tokens).label("total_tokens"),
             func.sum(ActionLog.cost).label("total_cost"),
             func.avg(ActionLog.duration_ms).label("avg_latency")
-        ).where(ActionLog.created_at >= since)
+        ).where(*base_filters)
         
         overview = await db.execute(query)
         row = overview.fetchone()
@@ -25,7 +33,7 @@ class AuditService:
             func.date(ActionLog.created_at).label("day"),
             func.count(ActionLog.id).label("calls"),
             func.sum(ActionLog.total_tokens).label("tokens")
-        ).where(ActionLog.created_at >= since).group_by(func.date(ActionLog.created_at)).order_by(func.date(ActionLog.created_at))
+        ).where(*base_filters).group_by(func.date(ActionLog.created_at)).order_by(func.date(ActionLog.created_at))
         
         daily_res = await db.execute(daily_query)
         daily_data = [
@@ -38,7 +46,7 @@ class AuditService:
             ActionLog.agent_id,
             func.count(ActionLog.id).label("calls"),
             func.sum(ActionLog.total_tokens).label("tokens")
-        ).where(ActionLog.created_at >= since).group_by(ActionLog.agent_id)
+        ).where(*base_filters).group_by(ActionLog.agent_id)
         
         agent_res = await db.execute(agent_query)
         agent_data = [
@@ -50,7 +58,7 @@ class AuditService:
         action_query = select(
             ActionLog.action_name,
             func.count(ActionLog.id).label("calls")
-        ).where(ActionLog.created_at >= since).group_by(ActionLog.action_name).order_by(desc("calls")).limit(10)
+        ).where(*base_filters).group_by(ActionLog.action_name).order_by(desc("calls")).limit(10)
         
         action_res = await db.execute(action_query)
         action_data = [

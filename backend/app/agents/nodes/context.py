@@ -72,7 +72,13 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
 
         # 保存用户消息到数据库 & 同步 ID 到前端
         if not c.get("skip_save_user", False):
-            user_msg = ChatMessage(session_id=session_id, role="user", content=current_query)
+            user_msg = ChatMessage(
+                session_id=session_id,
+                role="user",
+                content=current_query,
+                user_id=user_id,
+                agent_id=current_agent_id,
+            )
             db.add(user_msg)
             await db.commit()
             await callback.emit(f"data: {json.dumps({'type': 'metadata', 'user_message_id': user_msg.id})}\n\n")
@@ -80,7 +86,13 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     # 创建初始助手消息气泡
     current_msg_id = None
     if session_id:
-        initial_msg_db = ChatMessage(session_id=session_id, role="assistant", content="", agent_id=current_agent_id)
+        initial_msg_db = ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content="",
+            agent_id=current_agent_id,
+            user_id=user_id,
+        )
         db.add(initial_msg_db)
         await db.commit()
         current_msg_id = initial_msg_db.id
