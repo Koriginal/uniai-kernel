@@ -56,7 +56,8 @@ class Settings(BaseSettings):
     
     # --- 自动初始化配置 (仅用于开发/演示环境快速启动) ---
     DEFAULT_USER_ID: str = "admin"
-    DEFAULT_USER_API_KEY: str = "123456"
+    # 安全默认：不再自动注入固定 Seed Key；如需演示可在 .env 显式设置
+    DEFAULT_USER_API_KEY: Optional[str] = None
     
     # --- LLM 配置 (LiteLLM) ---
     OPENAI_API_KEY: Optional[str] = None

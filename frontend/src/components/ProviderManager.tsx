@@ -735,10 +735,19 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({ modelConfigs, msgApi,
         </div>
       </div>
 
-      <Modal title="接入模型供应商" open={modalVisible} onCancel={() => setModalVisible(false)} onOk={() => form.submit()} width={680} destroyOnClose>
+      <Modal
+        title="接入模型供应商"
+        open={modalVisible}
+        onCancel={() => setModalVisible(false)}
+        onOk={() => form.submit()}
+        okText="确定"
+        cancelText="取消"
+        width={680}
+        destroyOnClose
+      >
         <Space direction="vertical" size={14} style={{ width: '100%' }}>
           <Segmented block value={customMode} onChange={(value) => setCustomMode(value as 'template' | 'custom')} options={[{ label: '从模板接入 (推荐)', value: 'template' }, { label: '自定义接入', value: 'custom' }]} />
-          <Form form={form} layout="vertical" onFinish={handleSubmit}>
+          <Form form={form} layout="vertical" onFinish={handleSubmit} autoComplete="off">
             {customMode === 'template' ? (
               <>
                 <Form.Item name="template_name" label="供应商模板" rules={[{ required: true, message: '请选择模板' }]}>
@@ -754,7 +763,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({ modelConfigs, msgApi,
                   </Select>
                 </Form.Item>
                 <Form.Item name="display_name" label="显示名称（可选）">
-                  <Input placeholder="默认使用模板名" />
+                  <Input placeholder="默认使用模板名" autoComplete="off" />
                 </Form.Item>
                 {selectedTemplate && (
                   <Alert
@@ -776,15 +785,15 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({ modelConfigs, msgApi,
             ) : (
               <>
                 <Form.Item name="display_name" label="供应商名称" rules={[{ required: true, message: '请输入供应商名称' }]}>
-                  <Input placeholder="例如：我的私有网关" />
+                  <Input placeholder="例如：我的私有网关" autoComplete="off" />
                 </Form.Item>
                 <Form.Item name="api_base" label="API Base URL" rules={[{ required: true, message: '请输入 API Base URL' }]}>
-                  <Input placeholder="https://api.example.com/v1" />
+                  <Input placeholder="https://api.example.com/v1" autoComplete="off" />
                 </Form.Item>
               </>
             )}
             <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: '请输入 API Key' }]}>
-              <Input.Password placeholder="将加密存储" />
+              <Input.Password placeholder="将加密存储" autoComplete="new-password" visibilityToggle={false} />
             </Form.Item>
           </Form>
         </Space>
@@ -823,7 +832,15 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({ modelConfigs, msgApi,
           />
         </Space>
 
-        <Modal title="添加模型配置" open={addModelVisible} onCancel={() => setAddModelVisible(false)} onOk={() => modelForm.submit()} destroyOnClose>
+        <Modal
+          title="添加模型配置"
+          open={addModelVisible}
+          onCancel={() => setAddModelVisible(false)}
+          onOk={() => modelForm.submit()}
+          okText="确定"
+          cancelText="取消"
+          destroyOnClose
+        >
           <Form form={modelForm} layout="vertical" onFinish={handleAddModel} initialValues={{ model_type: 'llm', context_length: 4096 }}>
             <Form.Item name="model_name" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}>
               <Input placeholder="例如：gpt-4o / qwen-plus" />

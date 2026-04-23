@@ -80,16 +80,19 @@ async def auto_configure_admin():
             session.add(user)
             await session.commit()
             
-        result = await session.execute(
-            select(UserApiKey)
-            .where(UserApiKey.user_id == user_id)
-            .where(UserApiKey.key == settings.DEFAULT_USER_API_KEY)
-        )
-        if not result.scalar_one_or_none():
-            logger.info(f"[Auto-Config] Creating seed API Key for {user_id}")
-            new_key = UserApiKey(user_id=user_id, key=settings.DEFAULT_USER_API_KEY, name="Seed Key")
-            session.add(new_key)
-            await session.commit()
+        if settings.DEFAULT_USER_API_KEY:
+            result = await session.execute(
+                select(UserApiKey)
+                .where(UserApiKey.user_id == user_id)
+                .where(UserApiKey.key == settings.DEFAULT_USER_API_KEY)
+            )
+            if not result.scalar_one_or_none():
+                logger.info(f"[Auto-Config] Creating seed API Key for {user_id}")
+                new_key = UserApiKey(user_id=user_id, key=settings.DEFAULT_USER_API_KEY, name="Seed Key")
+                session.add(new_key)
+                await session.commit()
+        else:
+            logger.info("[Auto-Config] DEFAULT_USER_API_KEY not set, skip seed API key creation.")
 
         # 1. 检查是否已配置 Provider
         result = await session.execute(
