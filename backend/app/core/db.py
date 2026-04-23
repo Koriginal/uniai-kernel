@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 import logging
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,10 @@ async def get_db():
     async with SessionLocal() as session:
         try:
             yield session
+        except HTTPException:
+            # 认证/鉴权等业务异常不作为数据库错误噪声日志输出
+            await session.rollback()
+            raise
         except Exception as e:
             logger.error(f"[Database] Session error: {e}")
             await session.rollback()

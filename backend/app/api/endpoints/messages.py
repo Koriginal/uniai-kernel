@@ -4,6 +4,8 @@ from sqlalchemy import select, delete, and_
 from app.core.db import get_db
 from app.models.message import ChatMessage
 from app.models.session import ChatSession
+from app.models.user import User
+from app.api import deps
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
@@ -19,7 +21,8 @@ class MessageUpdate(BaseModel):
 async def update_message(
     message_id: str,
     update: MessageUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """
     更新消息内容或反馈。
@@ -27,6 +30,8 @@ async def update_message(
     message = await db.get(ChatMessage, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    if not current_user.is_admin and message.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this message")
     
     if update.content is not None:
         message.content = update.content
@@ -43,7 +48,8 @@ async def update_message(
 async def delete_message(
     message_id: str,
     truncate: bool = False,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """
     删除消息。
@@ -52,6 +58,8 @@ async def delete_message(
     message = await db.get(ChatMessage, message_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
+    if not current_user.is_admin and message.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this message")
     
     session_id = message.session_id
     created_at = message.created_at

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models.openai import EmbeddingRequest, EmbeddingResponse, EmbeddingData, EmbeddingUsage
 from app.services.vector_service import vector_service
+from app.api import deps
 import logging
 
 logger = logging.getLogger(__name__)
@@ -8,13 +9,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/embeddings")
-async def create_embedding(request: EmbeddingRequest):
+async def create_embedding(
+    request: EmbeddingRequest,
+    user_id: str = Depends(deps.get_identity),
+):
     """
     OpenAI 兼容的向量化接口。
     """
     try:
         # 使用内核向量引擎执行嵌入
-        vectors = await vector_service.embed_text(request.input, model=request.model)
+        vectors = await vector_service.embed_text(request.input, model=request.model, user_id=user_id)
         
         # 组装标准响应格式
         data = [

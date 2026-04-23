@@ -23,24 +23,16 @@ class AuthMiddleware:
         path = request.url.path
 
         # 1. 排除路径
-        if path in ["/", "/docs", "/openapi.json", "/redoc"] or path.startswith("/static"):
+        if (
+            path in ["/", "/docs", "/openapi.json", "/redoc"]
+            or path.startswith("/static")
+            or path.startswith("/dashboard")
+        ):
             return await self.app(scope, receive, send)
 
-        # 2. 控制台访问保护
-        if path.startswith("/dashboard"):
-            db_token = request.headers.get("X-Dashboard-Token")
-            from app.core.config import settings
-            if db_token != settings.DASHBOARD_PASSWORD:
-                response = JSONResponse(
-                    status_code=403,
-                    content={"detail": "Dashboard access denied. Invalid token."}
-                )
-                return await response(scope, receive, send)
-            return await self.app(scope, receive, send)
-
-        # 3. 提取 API Key 与 identity 注入
+        # 2. 提取 API Key 与 identity 注入（不再默认注入 admin）
         api_key = request.headers.get("X-API-Key")
-        user_id = "admin"
+        user_id = None
 
         if api_key:
             async with SessionLocal() as db:
@@ -56,6 +48,7 @@ class AuthMiddleware:
         # 将身份注入 scope["state"] 而不是 request.state (ASGI 规范)
         if "state" not in scope:
             scope["state"] = {}
-        scope["state"]["user_id"] = user_id
+        if user_id:
+            scope["state"]["user_id"] = user_id
         
         await self.app(scope, receive, send)

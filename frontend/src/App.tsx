@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Layout, Menu, Typography, Avatar, Space, message, Modal, Tag, Dropdown, Button, Tooltip, Popover, Progress, Statistic, Row, Col, Empty } from 'antd';
 import {
   ThunderboltOutlined, HistoryOutlined, AppstoreOutlined,
@@ -153,17 +153,19 @@ const App: React.FC = () => {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [user, setUser] = useState<any | null>(null);
 
-  // 创建带有超时的 axios 实例，并在请求拦截器中注入 Token
-  const api = axios.create({
-    timeout: 15000,
-  });
-
-  api.interceptors.request.use(config => {
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  });
+  // 创建单例 axios 实例，并在每次请求时读取最新 token（避免首帧 effect 时序导致漏带鉴权头）
+  const api = useMemo(() => {
+    const instance = axios.create({ timeout: 15000 });
+    instance.interceptors.request.use(config => {
+      const latestToken = localStorage.getItem('token');
+      if (latestToken) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${latestToken}`;
+      }
+      return config;
+    });
+    return instance;
+  }, []);
 
   const logout = () => {
     localStorage.removeItem('token');

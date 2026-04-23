@@ -7,6 +7,7 @@
 import re
 import json
 import logging
+from typing import Any
 from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
 from app.core.llm import completion, _clean_messages
@@ -19,6 +20,34 @@ from app.models.message import ChatMessage
 from app.ontology.registry import ontology_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_latest_user_text(messages: list) -> str:
+    for msg in reversed(messages or []):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            return " ".join([p for p in parts if p]).strip()
+    return ""
+
+
+def _is_realtime_query(text: str) -> bool:
+    t = (text or "").lower()
+    if not t:
+        return False
+    keywords = [
+        "今日", "今天", "最新", "当前", "实时", "现在", "刚刚",
+        "价格", "金价", "汇率", "股价", "新闻", "公告", "政策",
+        "today", "latest", "current", "real-time", "realtime", "price", "news",
+    ]
+    return any(k in t for k in keywords)
 
 
 async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
@@ -160,6 +189,20 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         if current_agent_id == orchestrator_agent_id and not any(t.get("function", {}).get("name") == "invoke_orchestrator" for t in openai_tools):
             openai_tools.append(swarm_service.get_orchestrator_tool_definition())
 
+    # 若 web_search 工具可用，注入实时信息检索强约束，避免“只建议用户自己去搜”
+    has_web_search = any(t.get("function", {}).get("name") == "web_search" for t in openai_tools)
+    if has_web_search:
+        realtime_policy = (
+            "\n\n[REALTIME FACT POLICY]:\n"
+            "1. 对于“今日/最新/当前/实时”信息请求（如价格、新闻、汇率、政策更新），必须优先调用 web_search。\n"
+            "2. 禁止仅回复“去某搜索引擎查看”。必须返回检索到的具体结果与来源链接。\n"
+            "3. 当结果不确定时，明确标注时间性与不确定性，并给出可核查链接。"
+        )
+        for m in messages:
+            if m.get("role") == "system" and "[REALTIME FACT POLICY]" not in str(m.get("content", "")):
+                m["content"] = f"{m.get('content', '')}{realtime_policy}"
+                break
+
     # ---- 3. 协作/状态开场 ----
     if is_expert and not wrapping_expert_id:
         opening_tag = f"\n<collaboration title='{agent_profile.get('name', 'Expert') if agent_profile else 'Expert'}'>\n"
@@ -190,11 +233,22 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     total_completion_tokens = 0
 
     try:
+        latest_user_query = _extract_latest_user_text(cleaned_internal)
+        force_web_search = has_web_search and _is_realtime_query(latest_user_query)
+        # 若最近消息已存在 web_search 结果，避免死循环强制
+        has_web_search_result = any(
+            m.get("role") == "tool" and m.get("name") == "web_search"
+            for m in cleaned_internal[-6:]
+        )
+        tool_choice: Any = "auto" if openai_tools else None
+        if force_web_search and not has_web_search_result:
+            tool_choice = {"type": "function", "function": {"name": "web_search"}}
+
         response_stream = await completion(
             model=actual_model,
             messages=cleaned_internal,
             tools=openai_tools if openai_tools else None,
-            tool_choice="auto" if openai_tools else None,
+            tool_choice=tool_choice,
             user_id=c.get("user_id", "admin"),
             stream=True,
             stream_options={"include_usage": True}

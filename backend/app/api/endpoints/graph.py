@@ -14,9 +14,10 @@ from app.core.db import SessionLocal, get_db
 from app.models.graph_version import GraphTopologyVersionModel
 from app.schemas.graph import GraphTopologyVersion, GraphTopologyVersionCreate, GraphTopologyVersionList
 from app.agents.graph_registry import graph_registry
+from app.api import deps
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
 
 
 @router.get("/topology")

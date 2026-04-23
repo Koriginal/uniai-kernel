@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
 from app.core.plugins import registry
+from app.api import deps
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
 
 @router.get("/actions", tags=["Asset Inventory"])
 async def list_registered_actions() -> List[Dict[str, Any]]:

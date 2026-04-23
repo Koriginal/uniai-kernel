@@ -8,8 +8,9 @@ import uuid
 from app.core.db import get_db
 from app.models.graph_template import GraphTemplateModel
 from app.agents.graph_registry import graph_registry
+from app.api import deps
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
 
 # --- Schemas ---
 

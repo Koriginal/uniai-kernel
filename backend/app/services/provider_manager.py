@@ -3,24 +3,43 @@ from sqlalchemy import select
 from app.models.provider import Provider, AIModel
 from app.core.config import settings
 from cryptography.fernet import Fernet
-import json
-import base64
 import os
+import logging
 
-# 如果不存在密钥，则生成一个，或者从 env 中使用
-# 在生产环境中，这应该是一个持久的环境变量
-SECRET_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
-cipher = Fernet(SECRET_KEY.encode())
+logger = logging.getLogger(__name__)
+
 
 class ProviderManager:
-    async def add_provider(self, session: AsyncSession, name: str, type: str, api_base: str, api_key: str, extra_config: dict = {}):
-        encrypted_key = cipher.encrypt(api_key.encode()).decode()
+    def _get_cipher(self) -> Fernet:
+        """
+        动态获取加密器，避免使用进程内随机密钥导致重启后无法解密历史凭证。
+        """
+        secret_key = settings.ENCRYPTION_KEY or os.getenv("ENCRYPTION_KEY")
+        if not secret_key:
+            logger.error("[Security] ENCRYPTION_KEY not set for ProviderManager.")
+            raise ValueError("ENCRYPTION_KEY must be set in .env")
+        try:
+            return Fernet(secret_key.encode())
+        except Exception as e:
+            logger.error(f"[Security] Invalid ENCRYPTION_KEY: {e}")
+            raise ValueError(f"ENCRYPTION_KEY format is invalid: {e}")
+
+    async def add_provider(
+        self,
+        session: AsyncSession,
+        name: str,
+        type: str,
+        api_base: str,
+        api_key: str,
+        extra_config: dict = {},
+    ):
+        encrypted_key = self._get_cipher().encrypt(api_key.encode()).decode()
         provider = Provider(
             provider_name=name,
             provider_type=type,
             api_base=api_base,
             api_key_encrypted=encrypted_key,
-            extra_config=extra_config
+            extra_config=extra_config,
         )
         session.add(provider)
         await session.commit()
@@ -36,14 +55,14 @@ class ProviderManager:
         return result.scalars().all()
 
     def decrypt_key(self, encrypted_key: str) -> str:
-        return cipher.decrypt(encrypted_key.encode()).decode()
+        return self._get_cipher().decrypt(encrypted_key.encode()).decode()
 
     async def add_model(self, session: AsyncSession, name: str, provider_id: int, type: str, context_window: int = 4096):
         model = AIModel(
             model_name=name,
             provider_id=provider_id,
             model_type=type,
-            context_window=context_window
+            context_window=context_window,
         )
         session.add(model)
         await session.commit()
@@ -53,5 +72,6 @@ class ProviderManager:
     async def get_all_models(self, session: AsyncSession):
         result = await session.execute(select(AIModel))
         return result.scalars().all()
+
 
 provider_manager = ProviderManager()

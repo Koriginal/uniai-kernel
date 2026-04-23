@@ -68,7 +68,8 @@ async def get_identity(
     db: AsyncSession = Depends(get_db)
 ) -> str:
     """
-    通用身份识别（混合模式）：优先检查 Authorization Bearer，其次检查 X-API-Key，最后回退。
+    通用身份识别（混合模式）：优先检查 Authorization Bearer，其次检查 X-API-Key。
+    未通过鉴权时默认拒绝；仅在显式开启 ALLOW_ANONYMOUS_ADMIN_FALLBACK 时回退 admin。
     用于 /chat/completions 等双向接口。
     """
     # 默认身份上下文
@@ -87,6 +88,11 @@ async def get_identity(
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id = payload.get("sub")
+            if not user_id:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+            user = await db.get(User, user_id)
+            if not user or not user.is_active:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or inactive user")
             if request is not None:
                 request.state.identity_context = {
                     "source": "dashboard_jwt",
@@ -95,7 +101,7 @@ async def get_identity(
                     "user_id": user_id,
                 }
             return user_id
-        except JWTError:
+        except (JWTError, HTTPException):
             pass # 继续尝试 API Key
 
     # 2. 检查 API Key
@@ -119,12 +125,18 @@ async def get_identity(
                     }
                 return user.id
 
-    # 3. 回退默认 (为了保持现有演示功能不中断)
-    if request is not None:
-        request.state.identity_context = {
-            "source": "fallback",
-            "api_key_id": None,
-            "api_key_name": None,
-            "user_id": "admin",
-        }
-    return "admin"
+    # 3. 可选演示回退
+    if settings.ALLOW_ANONYMOUS_ADMIN_FALLBACK:
+        if request is not None:
+            request.state.identity_context = {
+                "source": "fallback",
+                "api_key_id": None,
+                "api_key_name": None,
+                "user_id": "admin",
+            }
+        return "admin"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required: provide Authorization Bearer token or X-API-Key",
+    )

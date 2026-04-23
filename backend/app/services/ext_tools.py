@@ -3,6 +3,8 @@ import json
 import httpx
 from typing import Dict, Any, Optional
 from app.tools.base import BaseTool
+import os
+import shlex
 
 class ApiTool(BaseTool):
     """通过 HTTP API 调用执行外部工具"""
@@ -94,15 +96,21 @@ class CliTool(BaseTool):
         return self._schema
 
     async def execute(self, **kwargs) -> str:
-        # 将参数通过环境变量或占位符注入脚本
-        env = {**kwargs} # 情况复杂时需要更精细的处理
-        
-        proc = await asyncio.create_subprocess_shell(
-            self.script,
+        # 生产安全基线：禁止 shell 解释器，使用 argv 直接执行，降低命令注入风险。
+        argv = shlex.split(self.script)
+        if not argv:
+            return "CLI Error: empty command"
+
+        env = dict(os.environ)
+        # 仅允许以 UAI_ARG_ 前缀注入参数，避免污染系统关键环境变量
+        env.update({f"UAI_ARG_{k.upper()}": str(v) for k, v in kwargs.items()})
+
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={k: str(v) for k, v in env.items()}
+            env=env
         )
         
         try:

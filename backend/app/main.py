@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-from app.core.config import settings
+from app.core.config import settings, validate_security_baseline
 
 # 抑制 LiteLLM Pydantic 序列化警告
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Pydantic serializer warnings.*")
@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 生产安全基线校验
+    validate_security_baseline()
+
     # -1. 应急：强制清理数据库中可能导致 DDL 锁定的僵尸连接
     from app.core.db_cleanup import cleanup_stale_connections
     await cleanup_stale_connections()
@@ -88,6 +91,11 @@ if settings.BACKEND_CORS_ORIGINS:
 @app.get("/", include_in_schema=False)
 async def root():
     return {"message": "UniAI Kernel is running."}
+
+
+@app.get("/healthz", tags=["System"])
+async def healthz():
+    return {"status": "ok"}
 
 from app.api.router import api_router
 from app.core.middleware import AuthMiddleware

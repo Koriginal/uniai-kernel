@@ -11,14 +11,14 @@ client = TestClient(app)
 def test_root():
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"message": "Universal Agent Framework is running."}
+    assert response.json() == {"message": "UniAI Kernel is running."}
     print("Root endpoint test passed.")
 
 def test_health():
-    # We didn't explicitly create a /health endpoint but /docs should be up
-    response = client.get("/docs")
+    response = client.get("/healthz")
     assert response.status_code == 200
-    print("Docs endpoint test passed.")
+    assert response.json() == {"status": "ok"}
+    print("Health endpoint test passed.")
 
 if __name__ == "__main__":
     try:

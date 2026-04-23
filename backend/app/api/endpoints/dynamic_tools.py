@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from datetime import datetime
 import re
 from app.services.ext_tools import ApiTool, McpTool, CliTool, McpSseTool
+from app.core.config import settings
+from app.api import deps
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
 
 VALID_TOOL_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{1,63}$")
 VALID_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -174,6 +176,11 @@ def _normalize_dynamic_tool_payload(data: DynamicToolCreate | DynamicToolValidat
             warnings.append("MCP stdio 模式依赖内核运行环境能直接启动对应命令。")
 
     elif tool_type == "cli":
+        if not settings.ENABLE_DYNAMIC_CLI_TOOLS:
+            raise HTTPException(
+                status_code=400,
+                detail="Dynamic CLI tools are disabled by policy. Set ENABLE_DYNAMIC_CLI_TOOLS=true to enable explicitly.",
+            )
         script = str(config.get("script", "")).strip()
         if not script:
             raise HTTPException(status_code=400, detail="CLI 工具必须提供脚本内容")

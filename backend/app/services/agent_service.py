@@ -180,8 +180,6 @@ class AgentService:
                     template_id = request.graph_template_id or "standard"
                     graph = await graph_registry.get_compiled_graph(template_id)
                     await graph.ainvoke(initial_state, graph_config)
-                    # ── 图执行成功结束后，在关闭前发送 DONE 标记 ──
-                    await callback.emit("data: [DONE]\n\n")
                     logger.info(f"[AgentService] Graph execution finished for session {session_id}")
                 except Exception as e:
                     logger.error(f"[AgentService] Graph execution failed: {e}")
@@ -211,7 +209,7 @@ class AgentService:
                     except asyncio.CancelledError:
                         pass
 
-            # ── 10. 最终收尾事件 (仅发送 final_chunk，DONE 已由 _run_graph 发送) ──
+            # ── 10. 最终收尾事件 ──
             final_chunk = ChatCompletionChunk(
                 id=req_id, model=request.model,
                 choices=[ChatCompletionChunkChoice(

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.1] - 2026-04-23
+### Added
+- **Infrastructure Stability**: Added `/healthz` endpoint for liveness probes and automated security baseline validation on system startup.
+- **Security Hardening**: Removed default "admin" fallback in middleware; identities are now strictly derived from validated JWT or API Keys.
+
+### Fixed
+- **Service Alignment**: Standardized `user_id` propagation across all modules including `vector_service`, `embeddings`, and `memories` to prevent data leakage in multi-tenant environments.
+- **Dependency Wiring**: Fixed missing authentication dependencies in `llm.py`, `providers.py`, and `dynamic_tools.py`.
+- **Environment Config**: Updated `.env.example` with critical production security parameters.
+
 ## [2.4.0] - 2026-04-22
 ### Added
 - **Multi-Tenancy & Identity Context**:

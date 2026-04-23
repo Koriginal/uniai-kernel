@@ -18,7 +18,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
 
 # --- Schemas ---
 

@@ -3,7 +3,7 @@
 
 开发框架预留的用户认证接口，方便后续集成任何用户体系。
 """
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, status
 from typing import Optional
 
 async def get_current_user_id(
@@ -12,9 +12,9 @@ async def get_current_user_id(
     """
     获取当前用户 ID（框架接口，可自定义实现）。
     
-    默认实现：
+    默认实现（安全版）：
     - 如果请求头包含 X-User-Id，使用该值
-    - 否则使用 admin（单用户模式）
+    - 否则返回 401，禁止隐式回退 admin
     
     ### 自定义认证示例
     
@@ -45,8 +45,13 @@ async def get_current_user_id(
         ...
     ```
     """
-    return x_user_id or "admin"
+    if x_user_id:
+        return x_user_id
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="X-User-Id is required for this legacy auth dependency.",
+    )
 
 
-# 全局用户 ID（用于非 API 调用场景）
-GLOBAL_USER_ID = "admin"
+# 全局用户 ID（用于非 API 调用场景；显式标记为无默认值）
+GLOBAL_USER_ID = None

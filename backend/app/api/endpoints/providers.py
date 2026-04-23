@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.core.db import get_db
-from app.core.auth import get_current_user_id
+from app.api import deps
 from app.services.user_provider_manager import user_provider_manager
 from app.models.provider import ProviderTemplate, UserProvider, ProviderModel, UserModelConfig
 from app.core.llm import completion
@@ -63,7 +63,10 @@ async def _get_owned_provider(db: AsyncSession, user_id: str, provider_id: int) 
 # ============================================================================
 
 @router.get("/templates", summary="查看供应商模板")
-async def list_provider_templates(db: AsyncSession = Depends(get_db)):
+async def list_provider_templates(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(deps.get_identity),
+):
     """获取所有可用的供应商模板（含模型列表和上下文长度）。"""
     result = await db.execute(
         select(ProviderTemplate).where(ProviderTemplate.is_active == True)
@@ -91,7 +94,7 @@ async def list_provider_templates(db: AsyncSession = Depends(get_db)):
 @router.post("/my/providers", summary="接入供应商")
 async def create_my_provider(
     provider: UserProviderCreate,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -168,7 +171,7 @@ async def create_my_provider(
 
 @router.get("/my/providers", summary="我的供应商列表")
 async def list_my_providers(
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """查看我配置的所有供应商（含模型列表）"""
@@ -209,7 +212,7 @@ async def list_my_providers(
 @router.delete("/my/providers/{provider_id}", summary="删除供应商")
 async def delete_my_provider(
     provider_id: int,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """删除用户的供应商配置（级联删除其下所有模型）"""
@@ -222,7 +225,7 @@ async def delete_my_provider(
 @router.post("/my/providers/{provider_id}/sync", summary="同步/更新模型列表")
 async def sync_my_provider(
     provider_id: int,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -285,7 +288,7 @@ async def sync_my_provider(
 async def add_model(
     provider_id: int,
     model: ModelCreate,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """在供应商下添加一个模型配置"""
@@ -316,7 +319,7 @@ async def add_model(
 @router.get("/my/providers/{provider_id}/models", summary="列出模型")
 async def list_models(
     provider_id: int,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """列出供应商下的所有模型"""
@@ -339,7 +342,7 @@ async def list_models(
 async def delete_model(
     provider_id: int,
     model_id: int,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     """删除供应商下的某个模型"""
@@ -362,7 +365,7 @@ async def delete_model(
 @router.put("/my/default-models", summary="设置默认模型")
 async def set_default_model(
     config: DefaultModelSet,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     if config.model_type not in ALLOWED_DEFAULT_MODEL_TYPES:
@@ -380,7 +383,7 @@ async def set_default_model(
 
 @router.get("/my/default-models", summary="查看默认模型")
 async def get_my_default_models(
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
@@ -396,7 +399,7 @@ async def get_my_default_models(
 @router.get("/my/providers/{provider_id}/health", summary="检查供应商连通性")
 async def check_provider_health(
     provider_id: int,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(deps.get_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """
