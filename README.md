@@ -2,23 +2,29 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Stop building toy Agent frameworks.** 
-UniAI Kernel is an **Enterprise-grade Multi-tenant Agentic OS Kernel** built with LangGraph & FastAPI. It brings production-ready features that competitors charge for directly to open source. 
+**Stop building toy Agent frameworks.**
+UniAI Kernel is a **production-grade, multi-tenant Agentic OS Kernel** built on LangGraph & FastAPI. It ships enterprise features — approval workflows, semantic ontology governance, org-level tenancy, and real-time observability — that competitors lock behind paywalls. Fully open-source under Apache 2.0.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Native-orange.svg)](https://langchain-ai.github.io/langgraph/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## 🚀 What is UniAI Kernel?
+---
 
-Unlike simple wrappers, UniAI provides a **graph-native execution environment** leveraging LangGraph, enabling complex multi-agent collaboration with enterprise-level security and observability.
+## 🚀 Why UniAI Kernel?
 
-### 🌟 Key Pillars:
-*   **Graph-Native Orchestration**: Build non-linear, stateful agent workflows with visual topology snapshots and rollbacks.
-*   **Sub-App Delegation & Ontology Governance**: Advanced Orchestrator-to-Orchestrator task delegation based on strict semantic ontology policies (Staging/GA approval workflows natively supported).
-*   **Production-Ready Observability**: Built-in audit dashboard with deep insights into token costs, feedback quality (Like/Dislike), and system stability.
-*   **Sovereign Multi-tenancy**: Native support for Organization-level tenancy, independent API keys, user-level memory isolation, and tenant-based analytics.
-*   **Plug-and-Play Extensibility**: Seamlessly integrate any tool or LLM provider with a unified microkernel architecture.
+Most open-source Agent frameworks give you a chat wrapper. UniAI Kernel gives you an **operating system kernel** for AI agents — with the governance, security, and observability that production workloads demand.
+
+| Capability | Toy Frameworks | UniAI Kernel |
+|:---|:---:|:---:|
+| Multi-agent orchestration | ⚠️ Basic | ✅ Graph-native StateGraph |
+| Visual topology editing | ❌ | ✅ Drag-and-drop with snapshots & rollback |
+| Approval workflows (Staging → GA) | ❌ | ✅ Built-in governance gates |
+| Semantic ontology engine | ❌ | ✅ Schema / Mapping / Rules lifecycle |
+| Organization-level multi-tenancy | ❌ | ✅ Org + User isolation |
+| Production audit dashboard | ❌ | ✅ Token costs, feedback, stability metrics |
+| Runs without a database | ❌ | ✅ Graceful microkernel degradation |
 
 ---
 
@@ -26,57 +32,83 @@ Unlike simple wrappers, UniAI provides a **graph-native execution environment** 
 
 ```mermaid
 graph TD
-    User((User/Client)) --> Gateway[API Gateway / Auth]
-    Gateway --> Orchestrator[Orchestrator Agent]
-    Orchestrator --> Graph[LangGraph Orchestration Engine]
-    
-    subgraph "Execution Flow (StateGraph)"
+    User((User / Client)) --> Gateway[API Gateway & JWT / API Key Auth]
+    Gateway --> DataPlane["/v1 OpenAI-Compatible Gateway"]
+    Gateway --> MgmtPlane["/api/v1 Management Plane"]
+
+    DataPlane --> Orchestrator[Orchestrator Agent]
+    Orchestrator --> Graph[LangGraph Execution Engine]
+
+    subgraph "StateGraph Execution Flow"
         Context[Context Builder] --> Agent[LLM Decision Node]
-        Agent -- Needs Tool --> Tools[Tool Executor]
-        Agent -- Needs Expert --> Handoff[Expert Handoff]
-        Agent -- Expert Done --> Synthesize[Final Synthesis]
+        Agent -- Tool Call --> Tools[Tool Executor]
+        Agent -- Handoff --> Handoff[Expert Delegation]
+        Agent -- Invoke --> SubApp[Sub-App Orchestrator]
+        Agent -- Synthesize --> Synthesize[Final Synthesis]
         Tools --> Agent
         Handoff --> Agent
+        SubApp --> Agent
         Synthesize --> Agent
-        Agent -- Success --> END((END))
+        Agent -- Done --> END((END))
     end
-    
+
     Tools --> Canvas[Artifact Canvas]
-    Tools --> DB[(PgVector/Memory)]
-    
-    Graph -.-> Audit[Audit & Observability]
-    Audit --> Monitor[Usage Stats / Cost Tracking]
+    Tools --> Memory[(PgVector Memory)]
+    Tools --> OntologyRT[Ontology Runtime]
+
+    MgmtPlane --> Ontology[Ontology Engine]
+    MgmtPlane --> Audit[Audit & Observability]
+    MgmtPlane --> Providers[Provider Manager]
+
+    Ontology --> ApprovalGate{Approval Gate}
+    ApprovalGate --> Release[Staging / GA Release]
 ```
 
 ---
 
 ## ✨ Core Features
 
-### 🔌 Multi-tenant Model Management
-- **7 Built-in Providers**: DeepSeek, Groq, Zhipu AI, Qwen, OpenAI, Anthropic, Google Gemini
-- **User-level Isolation**: Independent API Keys and configurations for each user
-- **Quick Environment Setup**: One-click start using `.env`
-- **🚀 Graceful Microkernel Architecture**: Completely decoupled core. Starts up perfectly without a database as a pure proxy. All heavy dependencies are loaded on demand.
-- **🔌 Pluggable Tool/Plugin Registry**: Seamlessly binds any OpenAI-compatible tool via `PluginRegistry`. Ships natively with `WebSearchTool` and `MemorySearchTool`.
-- **🧠 Advanced Agent Governance**: Full control over Agent roles (`Orchestrator`/`Expert`), dynamic routing keywords, and handoff strategy configuration.
-- **🗺️ Visual Topology Editor**: Introducing **AgentTopologyEditor** for designing, snapshotting, and rolling back LangGraph execution flows directly from the UI.
-- **🛡️ Production Stability**: Integrated concurrent initialization locks, DDL timeout protection, and graceful database degradation for high-availability deployments.
-- **⚡ Smart Expert Ranking**: Collaborative directories are automatically ranked based on agent success rates and latency, optimizing orchestrator decisions.
-- **🔌 Dynamic Tool Validation Bus**: V2 plugin registry supports hot-loading of API/MCP/CLI tools with a built-in "Execution Test" suite for real-time connectivity verification.
-- **📈 Comprehensive Governance Console**: Centralized management for Agent performance (Scorecards), tool registries, and high-fidelity audit trails.
-- **💾 Industrial Persistence**: Leverages **PostgreSQL Checkpointer** for state recovery and continuous execution.
-- **💾 PgVector Memory Sandboxing**: Long-term preferences extraction and short-term conversation summaries natively isolated for each user.
+### 🧠 Graph-Native Agent Orchestration
+- **LangGraph StateGraph Engine**: Non-linear, stateful multi-agent workflows with conditional branching, expert handoffs, and sub-app delegation.
+- **Visual Topology Editor**: Drag-and-drop graph designer with Undo/Redo, Dagre auto-layout, node alignment tools, and version snapshots with instant rollback.
+- **Swarm Intelligence**: Dynamic multi-agent collaboration — orchestrators delegate to experts, experts invoke sub-orchestrators, all coordinated via semantic routing keywords.
+- **Smart Expert Ranking**: Agents are automatically scored on success rate, latency, and quality. Orchestrators prioritize top-performing experts.
 
-### 🚀 Developer Friendly
-- **Clear APIs**: RESTful design, complete Swagger documentation
-- **Type Safety**: Pydantic data validation
-- **Streaming Responses**: SSE real-time chat
-- **User Authentication Interface**: Pre-reserved clear integration points
+### 📐 Enterprise Ontology Engine
+- **Schema / Mapping / Rules**: Define entity types, field mappings, and business rules as versionable packages within isolated **Ontology Spaces**.
+- **Strict Release Lifecycle**: `Draft → Review → Staging → GA → Deprecated` — each stage optionally gated by human approval workflows.
+- **Safe Rollbacks**: Instantly revert to any previous package version with full audit trail.
+- **Runtime Evaluation**: Execute mappings and evaluate rules against live data directly from the API or the **Ontology Workbench** UI.
+- **Explainability**: Every decision is traceable — use `explain` to replay the reasoning chain for any `decision_id`.
 
-### 🎨 Modern Frontend
-- **React + Vite**: High-performance SPA architecture
-- **Responsive Design**: Mobile-friendly chat interface
-- **Real-time Interaction**: Seamless integration with backend SSE streams
+### 🏢 Sovereign Multi-Tenancy
+- **Organization-Level Tenancy**: Teams and departments operate in isolated scopes. Members are managed with role-based access (owner, member, admin).
+- **User-Level Isolation**: Each user has independent API keys, model configurations, memory sandboxes, and session ownership.
+- **Identity Context Tracking**: Every request carries a full identity context (`dashboard_jwt` / `api_key` / `fallback`), persisted into session metadata for end-to-end traceability.
+- **Session Ownership Enforcement**: Users only access their own sessions. Admins can view all. Legacy orphan sessions are auto-claimed on upgrade.
+
+### 📊 Production-Grade Observability
+- **High-Density Audit Dashboard**: Real-time metrics for token costs, feedback quality (Like/Dislike ratios), error distribution, and agent performance rankings.
+- **Multi-Dimensional Filtering**: Slice audit data by tenant, API key, auth source, orchestrator, or specific agent.
+- **Node-Level Execution Tracing**: Real-time SSE event streaming for every graph node transition (start/end/error).
+- **Agent Scorecards**: Click any agent avatar to see a rich performance dashboard — success rate, avg latency, quality score, and tool proficiency.
+
+### 🔌 Plug-and-Play Extensibility
+- **7 Built-in LLM Providers**: OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Zhipu AI, Qwen — all via LiteLLM's unified interface (100+ models).
+- **Dynamic Tool Registry V2**: Hot-load API, MCP, and CLI tools at runtime. Built-in connectivity test suite validates tools before they go live.
+- **Native Tools**: `WebSearchTool` (Tavily/Serper with page fetch), `MemorySearchTool` (PgVector RAG), `OntologyTools` (runtime mapping & evaluation), `ArtifactCanvas` (real-time code/markdown rendering).
+- **Wildcard Tool Binding**: Configure agents with `*` to auto-inherit all registered tools.
+
+### 🔐 Security & Auth
+- **JWT + API Key Dual Auth**: Dashboard users authenticate via JWT; external integrations use scoped API keys with usage tracking.
+- **Security Baseline Validation**: On startup, the kernel validates critical security parameters and rejects unsafe configurations.
+- **AES-GCM Credential Encryption**: All model API keys are encrypted at rest using Fernet.
+- **Feature Flags**: `ENABLE_ONTOLOGY_ENGINE`, `ENABLE_ORG_TENANCY`, `ENABLE_DYNAMIC_CLI_TOOLS` — strict modular control over capabilities.
+
+### 🏗️ Microkernel Architecture
+- **Zero-DB Startup**: The kernel boots as a pure LLM proxy without any database. PostgreSQL, Redis, Memory, and Ontology features activate on demand.
+- **Industrial Persistence**: PostgreSQL Checkpointer for cross-session state recovery. PgVector for memory sandboxing.
+- **Concurrent Safety**: Built-in init locks, DDL timeout protection, and stale connection cleanup for high-availability deployments.
 
 ---
 
@@ -84,23 +116,23 @@ graph TD
 
 ```text
 uniai-kernel/
-├── backend/                # Backend Core
-│   ├── app/                # FastAPI Application
-│   │   ├── api/            # Endpoints
-│   │   ├── core/           # Logic, Config, Auth
-│   │   ├── models/         # SQLAlchemy Models
-│   │   ├── services/       # Business Logic
-│   │   └── tools/          # Pluggable Tools
-│   ├── alembic/            # Database Migrations
-│   ├── scripts/            # Utility Scripts
-│   ├── tests/              # Test Suite
-│   └── .env                # Backend Configuration
-├── frontend/               # Modern Frontend (Vite + React)
-│   ├── src/                # SPA Source Code
-│   └── Dockerfile          # Frontend Build Definition
-├── run_backend.py          # Root-level Backend Launcher
-├── docker-compose.yml      # Fullstack Orchestration
-└── .env.example            # Environment Template
+├── backend/                    # FastAPI Backend
+│   ├── app/
+│   │   ├── api/endpoints/      # 18 REST endpoints
+│   │   ├── agents/             # LangGraph nodes & adaptive router
+│   │   ├── ontology/           # Ontology Engine (schema, rules, governance)
+│   │   ├── services/           # Business logic layer
+│   │   ├── tools/              # Native & dynamic tools
+│   │   ├── models/             # SQLAlchemy ORM models
+│   │   └── core/               # Config, auth, middleware, DB
+│   ├── alembic/                # 20+ database migrations
+│   ├── scripts/                # Utility & E2E verification scripts
+│   └── tests/                  # Test suite (security, ontology, memory)
+├── frontend/                   # React + Vite + Ant Design SPA
+│   └── src/components/         # 15 feature components
+├── docs/                       # Runbooks & operational guides
+├── docker-compose.yml          # Full-stack container orchestration
+└── docker-compose.local.yml    # Lightweight local dev infra
 ```
 
 ---
@@ -112,7 +144,7 @@ uniai-kernel/
 ```bash
 # Using uv (Recommended)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
+cd backend && uv sync
 
 # Or using pip
 pip install -r requirements.txt
@@ -120,443 +152,205 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment
 
-Edit the `.env` file:
+```bash
+cp backend/.env.example backend/.env
+```
+
+Edit `backend/.env`:
 
 ```env
-# Database
-POSTGRES_PASSWORD=your_database_password
-ENCRYPTION_KEY=your_encryption_key
+# Database (PostgreSQL + pgvector)
+POSTGRES_PASSWORD=your_secure_password
+ENCRYPTION_KEY=replace-with-fernet-key  # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-# Model Configuration (Select a free provider)
+# Security
+SECRET_KEY=change-this-jwt-secret
+
+# Default LLM (pick any free provider to start)
 DEFAULT_LLM_PROVIDER=Qwen
 DEFAULT_LLM_MODEL=qwen-flash
-DEFAULT_LLM_API_KEY=sk-xxx  # Obtain from dashscope.aliyuncs.com
+DEFAULT_LLM_API_KEY=sk-xxx  # Get from dashscope.aliyuncs.com
+
+# Enterprise Features (optional)
+ENABLE_ONTOLOGY_ENGINE=True
+ENABLE_ORG_TENANCY=False
 ```
 
-### 3. Start Service
+### 3. Start Services
 
 ```bash
-# Start Backend Service (Root Level)
-python3 run_backend.py
+# Option A: Docker (Recommended for full stack)
+docker-compose up -d
 
-# Or start via VS Code Debugger (Recommended) using the "🚀 运行 UniAI Kernel" launch config.
-
-# Start Frontend Development (Optional)
-cd frontend
-npm install && npm run dev
+# Option B: Local development
+docker-compose -f docker-compose.local.yml up -d  # Start Postgres + Redis
+cd backend && uv run uvicorn app.main:app --reload  # Start API
+cd frontend && npm install && npm run dev            # Start UI
 ```
 
-Visit `http://localhost:5173` to explore the modern UI or `http://localhost:8000/docs` to view the interactive API documentation ✨
+### 4. Access
 
-### 4. Enterprise-grade Observability
-Access the monitoring endpoints to track performance:
-- **Usage Stats**: `GET /api/v1/audit/stats?days=7`
-- **Full Trace Logs**: `GET /api/v1/audit/actions`
-- **Cost Analysis**: Included in every audit log entry.
-
+| Service | URL | Description |
+|:--------|:----|:------------|
+| **Dashboard** | http://localhost:5173 | Modern management UI |
+| **API Docs** | http://localhost:8000/docs | Interactive Swagger documentation |
+| **Health Check** | http://localhost:8000/healthz | Liveness probe endpoint |
 
 ---
 
 ## 🐳 Docker Deployment
 
-### Development Environment (Local)
+### Container Reference
 
-```bash
-# Only start infrastructure
-docker-compose up -d postgres redis
-
-# Run API locally (Recommended, supports hot reload)
-uv run uvicorn app.main:app --reload
-```
-
-### Production Environment (Full Deployment)
-
-```bash
-# One-click start all services
-docker-compose up -d
-
-# Check service status
-docker-compose ps
-
-# View logs
-docker-compose logs -f uai-api
-```
+| Service | Container | Port |
+|:--------|:----------|:-----|
+| Backend API | `uniai-backend` | 8000 |
+| PostgreSQL + pgvector | `uniai-pg` | 5432 |
+| Redis | `uniai-redis` | 6379 |
+| Frontend SPA | `uniai-frontend` | 5173 |
 
 ### Common Commands
 
 ```bash
-# Start/Stop
-docker-compose start
-docker-compose stop
-
-# Restart service
-docker-compose restart uai-api
-
-# Enter container
-docker exec -it uai-pg psql -U root -d agent_db
-docker exec -it uai-redis redis-cli
-
-# View logs
-docker logs -f uai-api      # API logs
-docker logs -f uai-pg        # Database logs
-
-# Clean up
-docker-compose down          # Stop and remove containers
-docker-compose down -v       # Remove associated volumes
-```
-
-### Container Names
-
-| Service | Container Name | Port |
-|------|--------|------|
-| API | `uai-api` | 8000 |
-| PostgreSQL | `uai-pg` | 5432 |
-| Redis | `uai-redis` | 6379 |
-
----
-
-## 💻 Developer Guide
-
-### Invoking Models in Code
-
-#### 1. LLM Chat
-
-```python
-from app.core.llm import completion
-
-# Basic Call (Automatically uses user's default model)
-response = await completion(
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant"},
-        {"role": "user", "content": "Hello"}
-    ],
-    user_id="user_001"
-)
-
-# Specify Model (Still uses the user's API Key)
-response = await completion(
-    messages=[...],
-    model="gpt-4",
-    user_id="user_001"
-)
-
-# Streaming Response
-async for chunk in await completion(
-    messages=[...],
-    user_id="user_001",
-    stream=True
-):
-    print(chunk.choices[0].delta.content)
-```
-
-#### 2. Embedding Vectors
-
-```python
-from app.core.llm import embedding
-
-# Single Text
-result = await embedding(
-    input="Hello World",
-    user_id="user_001"
-)
-vector = result['data'][0]['embedding']
-
-# Batch Text
-result = await embedding(
-    input=["Text 1", "Text 2", "Text 3"],
-    user_id="user_001"
-)
-```
-
-#### 3. Memory Retrieval
-
-```python
-from app.services.memory_service import memory_service
-from app.core.db import get_db
-
-async with get_db() as session:
-    # Search for related memories
-    memories = await memory_service.search_memories(
-        user_id="user_001",
-        query="User's profession",
-        top_k=5
-    )
-    
-    # Add memory
-    await memory_service.add_memory(
-        session,
-        user_id="user_001",
-        content="User is a Python developer",
-        category="professional_background"
-    )
-```
-
-#### 4. Context Management
-
-```python
-from app.services.context_service import context_service
-
-# Build complete context (Memory + Session Summary + History)
-messages = await context_service.build_context_messages(
-    session_id="session_001",
-    user_id="user_001",
-    current_query="What's the weather like today?",
-    db_session=session,
-    enable_memory=True,
-    enable_session_summary=True
-)
+docker-compose up -d              # Start all services
+docker-compose ps                 # Check status
+docker-compose logs -f uniai-backend  # Stream API logs
+docker-compose down -v            # Stop and clean up volumes
 ```
 
 ---
 
-## 🔧 Managing Providers
+## 📚 API Reference
 
-### List Available Providers
+UniAI Kernel exposes three API planes:
 
-```bash
-curl http://localhost:8000/api/v1/providers/templates
-```
+### Data Plane — OpenAI-Compatible Gateway
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/v1/chat/completions` | POST | Standard chat completions (streaming SSE) |
+| `/v1/embeddings` | POST | Vector embeddings generation |
 
-**Example Response**:
-```json
-[
-  {
-    "name": "Qwen",
-    "provider_type": "openai",
-    "is_free": true,
-    "supported_models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-flash"]
-  }
-]
-```
+### Management Plane — Kernel Administration
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/api/v1/agents/` | CRUD | Agent profile management |
+| `/api/v1/agents/{id}/chat` | POST | Agent-specific conversation |
+| `/api/v1/providers/` | CRUD | LLM provider configuration |
+| `/api/v1/chat-sessions/` | CRUD | Session lifecycle management |
+| `/api/v1/memories/` | CRUD | Memory & RAG operations |
+| `/api/v1/audit/dashboard` | GET | Comprehensive audit metrics |
+| `/api/v1/user/api-keys/` | CRUD | API key management |
+| `/api/v1/dynamic-tools/` | CRUD | Runtime tool registration |
+| `/api/v1/graph/` | CRUD | Graph topology management |
+| `/api/v1/orchestration/` | GET | Orchestration snapshots |
 
-### Configure User Providers
+### Ontology Plane — Governance Engine
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/api/v1/ontology/spaces` | POST | Create ontology workspace |
+| `/api/v1/ontology/schema` | POST | Upsert schema package |
+| `/api/v1/ontology/mapping` | POST | Upsert mapping package |
+| `/api/v1/ontology/rules` | POST | Upsert rule package |
+| `/api/v1/ontology/governance/release` | POST | Release package to target stage |
+| `/api/v1/ontology/governance/rollback` | POST | Rollback to previous version |
+| `/api/v1/ontology/governance/approvals/submit` | POST | Submit approval request |
+| `/api/v1/ontology/governance/approvals/review` | POST | Approve or reject |
 
-```bash
-# Method 1: Using API
-curl -X POST http://localhost:8000/api/v1/providers/my/providers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "template_name": "OpenAI",
-    "api_key": "sk-proj-xxx",
-    "custom_config": {}
-  }'
-
-# Method 2: Using Environment Variables (Recommended)
-# Edit .env
-DEFAULT_LLM_PROVIDER=OpenAI
-DEFAULT_LLM_MODEL=gpt-4
-DEFAULT_LLM_API_KEY=sk-proj-xxx
-```
-
-### Set Default Model
-
-```bash
-curl -X PUT http://localhost:8000/api/v1/providers/my/default-models \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model_type": "llm",
-    "model_name": "gpt-4-turbo",
-    "provider_id": 1
-  }'
-```
-
----
-
-## 🧠 Intelligent Dialogue Example
-
-### Create Session
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat-sessions/ \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Technical Consultation", "user_id": "user_001"}'
-```
-
-### Start Dialogue
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "a1b2c3",
-    "user_id": "user_001",
-    "message": "I am a Python developer, recommend a learning path",
-    "enable_memory": true,
-    "enable_session_context": true
-  }'
-```
-
-**Streaming Response** (SSE Format):
-```text
-data: {"type": "status", "content": "Retrieving memories..."}
-data: {"type": "thought", "content": "Loaded user preferences and history"}
-data: {"type": "status", "content": "Generating response..."}
-data: {"type": "token", "content": "As"}
-data: {"type": "token", "content": "a"}
-data: {"type": "token", "content": "Python"}
-data: {"type": "token", "content": "developer..."}
-data: [DONE]
-```
-
----
-
-## 🔐 User Authentication Integration
-
-The framework reserves a clear interface for user authentication, located at `app/core/auth.py`.
-
-### Default Implementation (Single User Mode)
-
-```python
-async def get_current_user_id(
-    x_user_id: Optional[str] = Header(None)
-) -> str:
-    return x_user_id or "default_user"
-```
-
-### Integrate JWT
-
-```python
-from fastapi.security import HTTPBearer
-from jose import jwt
-
-security = HTTPBearer()
-
-async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str:
-    token = credentials.credentials
-    payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-    return payload["user_id"]
-```
-
-### Usage in API
-
-```python
-from app.core.auth import get_current_user_id
-
-@router.post("/chat")
-async def chat(
-    request: ChatRequest,
-    user_id: str = Depends(get_current_user_id),  # Automatically injected
-    db: AsyncSession = Depends(get_db)
-):
-    # user_id is automatically obtained from the auth system
-    ...
-```
-
----
-
-## 📦 Extend Providers
-
-### Add New Template
-
-Edit `app/config/provider_templates.py`:
-
-```python
-PROVIDER_TEMPLATES.append({
-    "name": "Mistral",
-    "provider_type": "mistral",
-    "api_base": "https://api.mistral.ai/v1",
-    "is_free": False,
-    "requires_api_key": True,
-    "supported_models": ["mistral-large", "mistral-medium"],
-    "description": "Mistral AI Models",
-    "config_schema": {
-        "api_key": {"required": True, "description": "Mistral API Key"}
-    }
-})
-```
-
-Then run the initialization script:
-```bash
-uv run python scripts/init_providers.py
-```
-
----
-
-## 🛠️ Utility Scripts
-
-```bash
-# Check database status
-uv run python scripts/check_db.py
-
-# Reset user config (Troubleshooting)
-uv run python scripts/reset_user.py
-
-# Test chat and memory features
-uv run python tests/test_chat_memory.py
-```
+Full interactive documentation at `http://localhost:8000/docs`
 
 ---
 
 ## 📊 Tech Stack
 
-| Component | Technology | Description |
-|------|------|------|
-| Web Framework | FastAPI | High-performance async framework |
-| LLM Integration | LiteLLM | Unified interface for 100+ models |
-| Database | PostgreSQL + pgvector | Vector storage |
-| ORM | SQLAlchemy 2.0 | Async database operations |
-| Migrations | Alembic | Database version management |
-| Orchestration | LangGraph | State machine workflows |
-| Package Manager | uv | Extremely fast python package installer |
+| Layer | Technology | Purpose |
+|:------|:-----------|:--------|
+| Web Framework | FastAPI | High-performance async API server |
+| Agent Orchestration | LangGraph | Graph-native state machine workflows |
+| LLM Gateway | LiteLLM | Unified interface for 100+ models |
+| Database | PostgreSQL + pgvector | Relational storage + vector search |
+| ORM | SQLAlchemy 2.0 (async) | Type-safe database operations |
+| Migrations | Alembic | Versioned schema management |
+| Cache | Redis | Session caching and rate limiting |
+| Frontend | React + Vite + Ant Design | Modern SPA with real-time streaming |
+| Auth | JWT + API Key (python-jose) | Dual authentication system |
+| Encryption | Fernet (AES-GCM) | Credential encryption at rest |
+| Package Manager | uv | Lightning-fast Python dependency management |
 
 ---
 
-## 🌟 Supported Providers
+## 🌟 Supported LLM Providers
 
-### Free Models
+### Free Tier
 
-| Provider | Model | Website |
-|--------|------|----------|
-| **DeepSeek** | deepseek-chat | [platform.deepseek.com](https://platform.deepseek.com) |
-| **Groq** | llama-3.1-70b | [console.groq.com](https://console.groq.com) |
+| Provider | Models | Get API Key |
+|:---------|:-------|:------------|
+| **DeepSeek** | deepseek-chat, deepseek-coder | [platform.deepseek.com](https://platform.deepseek.com) |
+| **Groq** | llama-3.1-70b, mixtral-8x7b | [console.groq.com](https://console.groq.com) |
 | **Zhipu AI** | glm-4-flash | [open.bigmodel.cn](https://open.bigmodel.cn) |
-| **Qwen** | qwen-flash | [dashscope.aliyuncs.com](https://dashscope.aliyuncs.com) |
+| **Qwen** | qwen-flash, qwen-turbo, qwen-plus | [dashscope.aliyuncs.com](https://dashscope.aliyuncs.com) |
 
-### Paid Models
+### Paid Tier
 
-| Provider | Model | Website |
-|--------|------|----------|
-| **OpenAI** | gpt-4-turbo | [platform.openai.com](https://platform.openai.com) |
-| **Anthropic** | claude-3 | [console.anthropic.com](https://console.anthropic.com) |
-| **Google** | gemini-pro | [ai.google.dev](https://ai.google.dev) |
+| Provider | Models | Get API Key |
+|:---------|:-------|:------------|
+| **OpenAI** | gpt-4-turbo, gpt-4o | [platform.openai.com](https://platform.openai.com) |
+| **Anthropic** | claude-3, claude-3.5 | [console.anthropic.com](https://console.anthropic.com) |
+| **Google** | gemini-pro, gemini-1.5 | [ai.google.dev](https://ai.google.dev) |
 
 ---
 
-## 📚 API Endpoints
+## 🛠️ Development
 
-Full documentation: `http://localhost:8000/docs`
+### Run Tests
 
-| Endpoint | Method | Description |
-|------|------|------|
-| `/api/v1/chat` | POST | Intelligent Chat (SSE Streaming) |
-| `/api/v1/chat-sessions/` | POST | Create Session |
-| `/api/v1/memories/search` | GET | Search Memories |
-| `/api/v1/providers/templates` | GET | List Provider Templates |
-| `/api/v1/providers/my/providers` | POST | Configure My Provider |
-| `/api/v1/providers/my/default-models` | PUT | Set Default Model |
-| `/api/v1/users/init` | POST | Initialize New User |
+```bash
+cd backend
+
+# Security & authorization tests
+uv run pytest tests/test_security_authz.py -v
+
+# Ontology governance tests
+uv run pytest tests/test_ontology_governance.py -v
+
+# End-to-end ontology verification (requires running DB)
+uv run python scripts/verify_ontology_e2e.py
+```
+
+### Database Migrations
+
+```bash
+cd backend
+
+# Check current migration head
+uv run alembic heads
+
+# Apply all migrations
+uv run alembic upgrade head
+
+# Create a new migration
+uv run alembic revision --autogenerate -m "description"
+```
 
 ---
 
 ## 🔒 Production Deployment
 
-### Security Recommendations
+### Security Checklist
 
-1. **Encryption Key**: Use a strong random `ENCRYPTION_KEY`
+1. **Generate strong secrets**:
    ```bash
+   # Fernet encryption key
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   # JWT secret
+   python -c "import secrets; print(secrets.token_urlsafe(64))"
    ```
+2. Set `ENFORCE_PRODUCTION_SECURITY=True` and `ALLOW_ANONYMOUS_ADMIN_FALLBACK=False`
+3. Use HTTPS with a reverse proxy (Nginx/Caddy)
+4. Restrict database access to internal networks only
 
-2. **Database Password**: Use a complex password and restrict access
-3. **User Authentication**: Integrate JWT or OAuth2
-4. **HTTPS**: Absolute requirement for production environments
+### Performance
 
-### Performance Optimization
-
-```python
-# Using Gunicorn + Uvicorn Workers
+```bash
 gunicorn app.main:app \
   --workers 4 \
   --worker-class uvicorn.workers.UvicornWorker \
@@ -567,12 +361,12 @@ gunicorn app.main:app \
 
 ## 🤝 Contributing
 
-PRs and Issues are welcome!
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting PRs.
 
 ## 📄 License
 
-Apache License 2.0
+[Apache License 2.0](LICENSE) — Use it freely, even commercially.
 
 ---
 
-**Happy Coding! 🚀**
+**Built with obsession by [Koriginal](https://github.com/Koriginal). If this project saves you time, consider giving it a ⭐.**

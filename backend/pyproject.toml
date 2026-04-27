@@ -1,7 +1,7 @@
 [project]
 name = "uniai-kernel"
-version = "1.0.0"
-description = "UniAI Kernel - 智能体开发基座，基于 FastAPI、LangGraph 和 LiteLLM"
+version = "2.5.0"
+description = "Production-grade Multi-tenant Agentic OS Kernel with Graph-native Orchestration, Ontology Governance, and Enterprise Observability"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi",

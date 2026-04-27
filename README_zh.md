@@ -2,23 +2,29 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**别再用玩具级别的 Agent 框架了。** 
-UniAI Kernel 是一个基于 LangGraph 和 FastAPI 构建的**企业级多租户 Agent 操作系统内核**。它将竞品收费的生产级特性（如审批流、组织级多租户、预发布回滚）直接带入开源世界。
+**别再用玩具级别的 Agent 框架了。**
+UniAI Kernel 是一个基于 LangGraph 和 FastAPI 构建的**生产级多租户 Agent 操作系统内核**。它将竞品锁在付费墙后的企业级特性——审批工作流、语义本体治理、组织级多租户和实时可观测性——完全开源，采用 Apache 2.0 协议。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-图原生-orange.svg)](https://langchain-ai.github.io/langgraph/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## 🚀 什么是 UniAI Kernel？
+---
 
-与简单的 API 包装器不同，UniAI 依托 LangGraph 提供了一个**图原生 (Graph-native) 的执行环境**，不仅能实现复杂的多智能体协作，更具备企业级的安全隔离与可观测性。
+## 🚀 为什么选择 UniAI Kernel？
 
-### 🌟 核心支柱：
-*   **图原生编排 (Graph-Native Orchestration)**：构建非线性的状态机 Agent 工作流，支持可视化的拓扑快照保存与无损回滚。
-*   **子应用委托与本体治理 (Ontology Governance)**：基于严格语义策略的主控-主控（Orchestrator-to-Orchestrator）任务委托，原生支持 Staging/GA 发版审批流。
-*   **生产级可观测性 (Production-Ready Observability)**：内置高密度审计看板，深度洞察 Token 成本、用户反馈质量 (Like/Dislike) 以及系统稳定性。
-*   **主权多租户 (Sovereign Multi-tenancy)**：原生支持**组织级 (Organization-level) 租户模型**、独立 API Key 绑定、用户级记忆沙箱隔离及租户视角的统计报表。
-*   **即插即用扩展总线 (Plug-and-Play Extensibility)**：通过统一的微内核架构，无缝热拔插任何第三方工具或 LLM 供应商。
+绝大多数开源 Agent 框架只是给你一个聊天包装器。UniAI Kernel 给你的是 AI 智能体的**操作系统内核**——具备生产负载所需的治理能力、安全隔离和深度可观测性。
+
+| 能力维度 | 玩具级框架 | UniAI Kernel |
+|:---|:---:|:---:|
+| 多智能体编排 | ⚠️ 基础链式 | ✅ 图原生 StateGraph |
+| 可视化拓扑编辑 | ❌ | ✅ 拖拽式设计，快照与回滚 |
+| 审批工作流 (Staging → GA) | ❌ | ✅ 内置治理审批门 |
+| 语义本体引擎 | ❌ | ✅ Schema / Mapping / Rules 全生命周期 |
+| 组织级多租户 | ❌ | ✅ 组织 + 用户双层隔离 |
+| 生产级审计看板 | ❌ | ✅ Token 成本、反馈质量、稳定性指标 |
+| 无数据库启动 | ❌ | ✅ 微内核优雅降级 |
 
 ---
 
@@ -26,83 +32,107 @@ UniAI Kernel 是一个基于 LangGraph 和 FastAPI 构建的**企业级多租户
 
 ```mermaid
 graph TD
-    User((用户/客户端)) --> Gateway[API 网关 / 鉴权]
-    Gateway --> Orchestrator[主控智能体]
-    Orchestrator --> Graph[LangGraph 编排引擎]
-    
-    subgraph "执行图 (StateGraph)"
+    User((用户 / 客户端)) --> Gateway[API 网关 & JWT / API Key 鉴权]
+    Gateway --> DataPlane["/v1 OpenAI 兼容网关"]
+    Gateway --> MgmtPlane["/api/v1 管理控制面"]
+
+    DataPlane --> Orchestrator[主控智能体]
+    Orchestrator --> Graph[LangGraph 执行引擎]
+
+    subgraph "StateGraph 执行图"
         Context[上下文构建] --> Agent[LLM 决策节点]
-        Agent -- 需工具 --> Tools[工具执行器]
-        Agent -- 需专家 --> Handoff[专家接力]
-        Agent -- 专家收尾 --> Synthesize[主控汇总]
+        Agent -- 工具调用 --> Tools[工具执行器]
+        Agent -- 专家接力 --> Handoff[Expert Handoff]
+        Agent -- 子应用委托 --> SubApp[子主控调度]
+        Agent -- 汇总输出 --> Synthesize[主控汇总]
         Tools --> Agent
         Handoff --> Agent
+        SubApp --> Agent
         Synthesize --> Agent
         Agent -- 完成 --> END((结束))
     end
-    
+
     Tools --> Canvas[Artifact 看板]
-    Tools --> DB[(PgVector/记忆库)]
-    
-    Graph -.-> Audit[审计与可观测性]
-    Audit --> Monitor[使用统计 / 成本追踪]
+    Tools --> Memory[(PgVector 记忆库)]
+    Tools --> OntologyRT[本体运行时]
+
+    MgmtPlane --> Ontology[本体引擎]
+    MgmtPlane --> Audit[审计与可观测性]
+    MgmtPlane --> Providers[供应商管理]
+
+    Ontology --> ApprovalGate{审批门}
+    ApprovalGate --> Release[预发布 / 正式发布]
 ```
 
 ---
 
 ## ✨ 核心特性
 
-### 🧠 高级专家治理与动态编排
-- **角色化治理**：支持 `主控 (Orchestrator)` 与 `执行专家 (Expert)` 角色区分，内置动态路由关键词匹配与 Handoff 接力策略配置。
-- **智能专家排名 (Dynamic Ranking)**：协作名录基于专家效能评分自动排序，优先向主控推荐高成功率、低延迟的精品专家，打造优胜劣汰的协作生态。
-- **可视化拓扑编辑器**：集成 **AgentTopologyEditor**，支持对 `StateGraph` 执行流进行可视化编辑、版本快照保存及无损回滚。
-- **高并发稳定性保障**：内核内置并发初始化锁与 DDL 超时保护，并支持在数据库不可用时自动降级至默认图，确保极端环境下的系统可用性。
+### 🧠 图原生智能体编排
+- **LangGraph StateGraph 引擎**：非线性、有状态的多智能体工作流，支持条件分支、专家接力和子应用委托。
+- **可视化拓扑编辑器**：拖拽式图形设计器，内置撤销/重做、Dagre 自动布局、节点对齐工具和版本快照，支持一键回滚。
+- **Swarm 群体智能**：动态多智能体协作——主控委托执行专家，专家可调用子主控，全程通过语义路由关键词协调。
+- **智能专家排名**：基于成功率、延迟和质量自动评分，主控优先调度表现最优的专家。
 
-### 🎨 插件总线与数字化治理
-- **动态工具 V2 (Dynamic Tools)**：支持 API/MCP/CLI 插件的热装载，并新增**实时连通性测试**总线，确保工具上线即通过可用性验证。
-- **专家效能评分卡 (Scorecard)**：点击头像查看数字化 KPI。集成实时审计接口，展示成功率热图、平均耗时趋势及模型质量评分。
-- **生产级审计仪表盘**：全天候记录 Agent 思考轨迹、Token 成本、异常分布，支持 QPS 与响应延迟的动态统计。
+### 📐 企业级本体引擎 (Ontology Engine)
+- **Schema / Mapping / Rules**：在隔离的**本体空间 (Ontology Space)** 中定义实体类型、字段映射和业务规则，所有包均支持版本化管理。
+- **严格发布生命周期**：`草稿 → 审核 → 预发布 → 正式发布 → 废弃`——每个阶段可选地由人工审批工作流把关。
+- **安全回滚**：即时回退到任意历史版本，完整审计轨迹全程跟踪。
+- **运行时执行**：通过 API 或**本体工作台 (Ontology Workbench)** UI 直接对实时数据执行映射和规则评估。
+- **可解释性**：每个决策都可追溯——使用 `explain` 接口回放任意 `decision_id` 的完整推理链。
 
-### 📊 生产级可观测性 (Observability)
-- **执行轨迹追踪**：详细记录每一次节点跳转、工具调用及任务嵌套的完整生命周期。
-- **成本与用量监控**：实时计算 Token 消耗并根据模型单价预估单次请求成本 (USD)。
-- **分析仪表盘**：内置 API 支持 QPS、响应耗时、成功率等维度的统计分析。
+### 🏢 主权级多租户
+- **组织级租户模型 (Org Tenancy)**：团队和部门在隔离的作用域内运行，支持基于角色的成员管理（所有者、成员、管理员）。
+- **用户级隔离**：每个用户拥有独立的 API Key、模型配置、记忆沙箱和会话所有权。
+- **身份上下文追踪**：每个请求携带完整的身份上下文（`dashboard_jwt` / `api_key` / `fallback`），持久化到会话元数据中，实现端到端可追溯。
+- **会话所有权强制**：用户只能访问自己的会话。管理员可查看全部。升级时自动认领历史孤儿会话。
 
-### 🔑 多租户模型网关
-- **企业级安全**：所有模型凭证均通过 AES-GCM 高强度加密存储。
-- **动态分发**：基于 LiteLLM 轻松接入 100+ 全球主流模型（OpenAI, Anthropic, DeepSeek, 智谱等）。
-- **极简微内核**：支持无数据库纯代理模式秒级启动，重型依赖按需挂载。
+### 📊 生产级可观测性
+- **高密度审计看板**：实时展示 Token 成本、反馈质量（Like/Dislike 比率）、异常分布和专家效能排名。
+- **多维度过滤**：按租户、API Key、鉴权来源、主控或特定专家切片分析审计数据。
+- **节点级执行追踪**：实时 SSE 事件流，跟踪每一次图节点跳转（开始/结束/异常）。
+- **专家效能评分卡**：点击任何专家头像，查看详细的性能仪表盘——成功率、平均延迟、质量评分和工具专长。
 
-### 🔌 扩展与存储
-- **原生 Tool/Plugin 扩展总线**：通过 `PluginRegistry` 无缝装载任何兼容 OpenAI Tool Calling 的函数，内置了基于网络搜索的 `WebSearchTool` 与基于私有库的 `MemorySearchTool`。
-- **💾 PgVector 底层 RAG 与记忆隔离**：使用 PostgreSQL 原生的向量计算功能，为不同租户安全存放短期会话摘要和长期提炼偏好。
-- **类型安全**：Pydantic 数据验证
-- **流式响应**：SSE 实时对话
-- **用户认证接口**：预留清晰的集成点
+### 🔌 即插即用扩展总线
+- **7 大内置 LLM 供应商**：OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, 智谱 AI, 通义千问——全部通过 LiteLLM 统一接口接入（100+ 模型）。
+- **动态工具注册 V2**：运行时热装载 API/MCP/CLI 工具，内置连通性测试套件，确保工具上线前通过可用性验证。
+- **原生工具集**：`WebSearchTool`（Tavily/Serper 含页面抓取）、`MemorySearchTool`（PgVector RAG 检索）、`OntologyTools`（运行时映射与规则评估）、`ArtifactCanvas`（实时代码/Markdown 看板）。
+- **通配符工具绑定**：使用 `*` 配置专家，自动继承所有已注册工具。
+
+### 🔐 安全与鉴权
+- **JWT + API Key 双重鉴权**：控制台用户通过 JWT 登录；外部集成使用带用量追踪的 API Key。
+- **安全基线校验**：启动时自动检查关键安全参数，拒绝不安全的配置。
+- **AES-GCM 凭证加密**：所有模型 API Key 使用 Fernet 加密存储。
+- **特性开关 (Feature Flags)**：`ENABLE_ONTOLOGY_ENGINE`、`ENABLE_ORG_TENANCY`、`ENABLE_DYNAMIC_CLI_TOOLS`——严格的模块化能力控制。
+
+### 🏗️ 微内核架构
+- **零数据库启动**：内核可以在没有任何数据库的情况下作为纯 LLM 代理启动。PostgreSQL、Redis、记忆和本体功能按需激活。
+- **工业级持久化**：PostgreSQL Checkpointer 实现跨会话状态恢复。PgVector 实现记忆沙箱隔离。
+- **高并发安全**：内置初始化锁、DDL 超时保护和僵尸连接清理，保障高可用部署。
 
 ---
 
 ## 📂 项目结构
 
-```
+```text
 uniai-kernel/
-├── backend/                # 后端核心
-│   ├── app/                # FastAPI 应用
-│   │   ├── api/            # 接口定义
-│   │   ├── core/           # 核心逻辑
-│   │   ├── models/         # 数据库模型
-│   │   ├── services/       # 业务逻辑
-│   │   └── tools/          # 插件工具
-│   ├── alembic/            # 数据库迁移
-│   ├── scripts/            # 工具脚本
-│   ├── tests/              # 测试套件
-│   └── .env                # 后端私有配置
-├── frontend/               # 现代化前端 (Vite + React)
-│   ├── src/                # SPA 源码
-│   └── Dockerfile          # 前端镜像定义
-├── run_backend.py          # 根目录后端启动器
-├── docker-compose.yml      # 全栈容器编排
-└── .env.example            # 环境变量模板
+├── backend/                    # FastAPI 后端
+│   ├── app/
+│   │   ├── api/endpoints/      # 18 个 REST 端点
+│   │   ├── agents/             # LangGraph 节点与自适应路由
+│   │   ├── ontology/           # 本体引擎（Schema、Rules、治理）
+│   │   ├── services/           # 业务逻辑层
+│   │   ├── tools/              # 原生工具与动态工具
+│   │   ├── models/             # SQLAlchemy ORM 模型
+│   │   └── core/               # 配置、鉴权、中间件、数据库
+│   ├── alembic/                # 20+ 数据库迁移脚本
+│   ├── scripts/                # 工具脚本与 E2E 验证
+│   └── tests/                  # 测试套件（安全、本体、记忆）
+├── frontend/                   # React + Vite + Ant Design SPA
+│   └── src/components/         # 15 个功能组件
+├── docs/                       # 运维手册与操作指南
+├── docker-compose.yml          # 全栈容器编排
+└── docker-compose.local.yml    # 轻量级本地开发基础设施
 ```
 
 ---
@@ -114,7 +144,7 @@ uniai-kernel/
 ```bash
 # 使用 uv（推荐）
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
+cd backend && uv sync
 
 # 或使用 pip
 pip install -r requirements.txt
@@ -122,442 +152,205 @@ pip install -r requirements.txt
 
 ### 2. 配置环境
 
-编辑 `.env` 文件：
+```bash
+cp backend/.env.example backend/.env
+```
+
+编辑 `backend/.env`：
 
 ```env
-# 数据库
-POSTGRES_PASSWORD=your_database_password
-ENCRYPTION_KEY=your_encryption_key
+# 数据库 (PostgreSQL + pgvector)
+POSTGRES_PASSWORD=your_secure_password
+ENCRYPTION_KEY=replace-with-fernet-key  # 生成：python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-# 模型配置（选择一个免费供应商）
-DEFAULT_LLM_PROVIDER=通义千问
+# 安全配置
+SECRET_KEY=change-this-jwt-secret
+
+# 默认 LLM（选择任意免费供应商即可启动）
+DEFAULT_LLM_PROVIDER=Qwen
 DEFAULT_LLM_MODEL=qwen-flash
 DEFAULT_LLM_API_KEY=sk-xxx  # 从 dashscope.aliyuncs.com 获取
+
+# 企业特性（可选）
+ENABLE_ONTOLOGY_ENGINE=True
+ENABLE_ORG_TENANCY=False
 ```
 
 ### 3. 启动服务
 
 ```bash
-# 启动后端服务 (推荐：在项目根目录运行)
-python3 run_backend.py
+# 方式 A：Docker 全栈（推荐）
+docker-compose up -d
 
-# 或者通过 VS Code 的 "🚀 运行 UniAI Kernel" 调试项启动。
-
-# 启动前端开发环境 (可选)
-cd frontend
-npm install && npm run dev
+# 方式 B：本地开发模式
+docker-compose -f docker-compose.local.yml up -d  # 启动 Postgres + Redis
+cd backend && uv run uvicorn app.main:app --reload  # 启动 API
+cd frontend && npm install && npm run dev            # 启动 UI
 ```
 
-访问 `http://localhost:5173` 体验现代化图形界面，或访问 `http://localhost:8000/docs` 查看交互式 API 文档 ✨
+### 4. 访问
 
-### 4. 生产级可观测性监控
-通过内置接口实时追踪系统运行状态：
-- **使用统计分析**：`GET /api/v1/audit/stats?days=7`
-- **全链路行动日志**：`GET /api/v1/audit/actions`
-- **成本详情**：每条审计日志均包含详细的 Token 消耗及美元成本预估。
-
+| 服务 | 地址 | 说明 |
+|:-----|:-----|:-----|
+| **管理控制台** | http://localhost:5173 | 现代化管理界面 |
+| **API 文档** | http://localhost:8000/docs | 交互式 Swagger 文档 |
+| **健康检查** | http://localhost:8000/healthz | 存活探测端点 |
 
 ---
 
 ## 🐳 Docker 部署
 
-### 开发环境（本地）
+### 容器参考
 
-```bash
-# 仅启动基础设施
-docker-compose up -d postgres redis
-
-# 本地运行 API（推荐，支持热重载）
-uv run uvicorn app.main:app --reload
-```
-
-### 生产环境（完整部署）
-
-```bash
-# 一键启动所有服务
-docker-compose up -d
-
-# 查看服务状态
-docker-compose ps
-
-# 查看日志
-docker-compose logs -f uai-api
-```
+| 服务 | 容器名 | 端口 |
+|:-----|:-------|:-----|
+| 后端 API | `uniai-backend` | 8000 |
+| PostgreSQL + pgvector | `uniai-pg` | 5432 |
+| Redis | `uniai-redis` | 6379 |
+| 前端 SPA | `uniai-frontend` | 5173 |
 
 ### 常用命令
 
 ```bash
-# 启动/停止
-docker-compose start
-docker-compose stop
-
-# 重启服务
-docker-compose restart uai-api
-
-# 进入容器
-docker exec -it uai-pg psql -U root -d agent_db
-docker exec -it uai-redis redis-cli
-
-# 查看日志
-docker logs -f uai-api      # API 日志
-docker logs -f uai-pg        # 数据库日志
-
-# 清理
-docker-compose down          # 停止并删除容器
-docker-compose down -v       # 同时删除数据卷
-```
-
-### 容器名称
-
-| 服务 | 容器名 | 端口 |
-|------|--------|------|
-| API | `uai-api` | 8000 |
-| PostgreSQL | `uai-pg` | 5432 |
-| Redis | `uai-redis` | 6379 |
-
----
-
-## 💻 开发者指南
-
-### 在代码中调用模型
-
-#### 1. LLM 对话
-
-```python
-from app.core.llm import completion
-
-# 基础调用（自动使用用户默认模型）
-response = await completion(
-    messages=[
-        {"role": "system", "content": "你是一个助手"},
-        {"role": "user", "content": "你好"}
-    ],
-    user_id="user_001"
-)
-
-# 指定模型（仍使用用户的 API Key）
-response = await completion(
-    messages=[...],
-    model="gpt-4",
-    user_id="user_001"
-)
-
-# 流式响应
-async for chunk in await completion(
-    messages=[...],
-    user_id="user_001",
-    stream=True
-):
-    print(chunk.choices[0].delta.content)
-```
-
-#### 2. Embedding 向量
-
-```python
-from app.core.llm import embedding
-
-# 单个文本
-result = await embedding(
-    input="你好世界",
-    user_id="user_001"
-)
-vector = result['data'][0]['embedding']
-
-# 批量文本
-result = await embedding(
-    input=["文本1", "文本2", "文本3"],
-    user_id="user_001"
-)
-```
-
-#### 3. 记忆检索
-
-```python
-from app.services.memory_service import memory_service
-from app.core.db import get_db
-
-async with get_db() as session:
-    # 搜索相关记忆
-    memories = await memory_service.search_memories(
-        user_id="user_001",
-        query="用户的职业",
-        top_k=5
-    )
-    
-    # 添加记忆
-    await memory_service.add_memory(
-        session,
-        user_id="user_001",
-        content="用户是Python开发者",
-        category="professional_background"
-    )
-```
-
-#### 4. 上下文管理
-
-```python
-from app.services.context_service import context_service
-
-# 构建完整上下文（记忆 + 会话摘要 + 历史）
-messages = await context_service.build_context_messages(
-    session_id="session_001",
-    user_id="user_001",
-    current_query="今天天气怎么样",
-    db_session=session,
-    enable_memory=True,
-    enable_session_summary=True
-)
+docker-compose up -d                  # 启动所有服务
+docker-compose ps                     # 查看状态
+docker-compose logs -f uniai-backend  # 实时查看 API 日志
+docker-compose down -v                # 停止并清理数据卷
 ```
 
 ---
 
-## 🔧 管理供应商
+## 📚 API 参考
 
-### 查看可用供应商
+UniAI Kernel 暴露三个 API 平面：
 
-```bash
-curl http://localhost:8000/api/v1/providers/templates
-```
+### 数据面 — OpenAI 兼容网关
+| 端点 | 方法 | 说明 |
+|:-----|:-----|:-----|
+| `/v1/chat/completions` | POST | 标准对话补全（SSE 流式） |
+| `/v1/embeddings` | POST | 向量嵌入生成 |
 
-**返回示例**：
-```json
-[
-  {
-    "name": "通义千问",
-    "provider_type": "openai",
-    "is_free": true,
-    "supported_models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-flash"]
-  }
-]
-```
+### 管理面 — 内核管理
+| 端点 | 方法 | 说明 |
+|:-----|:-----|:-----|
+| `/api/v1/agents/` | CRUD | 专家配置管理 |
+| `/api/v1/agents/{id}/chat` | POST | 专家专属对话 |
+| `/api/v1/providers/` | CRUD | LLM 供应商配置 |
+| `/api/v1/chat-sessions/` | CRUD | 会话生命周期管理 |
+| `/api/v1/memories/` | CRUD | 记忆与 RAG 操作 |
+| `/api/v1/audit/dashboard` | GET | 综合审计指标 |
+| `/api/v1/user/api-keys/` | CRUD | API Key 管理 |
+| `/api/v1/dynamic-tools/` | CRUD | 运行时工具注册 |
+| `/api/v1/graph/` | CRUD | 图拓扑管理 |
+| `/api/v1/orchestration/` | GET | 编排快照 |
 
-### 配置用户供应商
+### 治理面 — 本体引擎
+| 端点 | 方法 | 说明 |
+|:-----|:-----|:-----|
+| `/api/v1/ontology/spaces` | POST | 创建本体空间 |
+| `/api/v1/ontology/schema` | POST | 上载 Schema 包 |
+| `/api/v1/ontology/mapping` | POST | 上载 Mapping 包 |
+| `/api/v1/ontology/rules` | POST | 上载 Rules 包 |
+| `/api/v1/ontology/governance/release` | POST | 发布至目标阶段 |
+| `/api/v1/ontology/governance/rollback` | POST | 回滚到历史版本 |
+| `/api/v1/ontology/governance/approvals/submit` | POST | 提交审批请求 |
+| `/api/v1/ontology/governance/approvals/review` | POST | 审批通过或驳回 |
 
-```bash
-# 方式1：通过 API
-curl -X POST http://localhost:8000/api/v1/providers/my/providers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "template_name": "OpenAI",
-    "api_key": "sk-proj-xxx",
-    "custom_config": {}
-  }'
-
-# 方式2：通过环境变量（推荐）
-# 编辑 .env
-DEFAULT_LLM_PROVIDER=OpenAI
-DEFAULT_LLM_MODEL=gpt-4
-DEFAULT_LLM_API_KEY=sk-proj-xxx
-```
-
-### 设置默认模型
-
-```bash
-curl -X PUT http://localhost:8000/api/v1/providers/my/default-models \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model_type": "llm",
-    "model_name": "gpt-4-turbo",
-    "provider_id": 1
-  }'
-```
-
----
-
-## 🧠 智能对话示例
-
-### 创建会话
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat-sessions/ \
-  -H "Content-Type: application/json" \
-  -d '{"title": "技术咨询", "user_id": "user_001"}'
-```
-
-### 开始对话
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "a1b2c3",
-    "user_id": "user_001",
-    "message": "我是Python开发者，推荐学习路径",
-    "enable_memory": true,
-    "enable_session_context": true
-  }'
-```
-
-**流式响应**（SSE 格式）：
-```
-data: {"type": "status", "content": "正在检索记忆..."}
-data: {"type": "thought", "content": "已加载用户偏好和历史记忆"}
-data: {"type": "status", "content": "正在生成回答..."}
-data: {"type": "token", "content": "作为"}
-data: {"type": "token", "content": "Python"}
-data: {"type": "token", "content": "开发者..."}
-data: [DONE]
-```
-
----
-
-## 🔐 用户认证集成
-
-框架预留了清晰的用户认证接口，位于 `app/core/auth.py`。
-
-### 默认实现（单用户模式）
-
-```python
-async def get_current_user_id(
-    x_user_id: Optional[str] = Header(None)
-) -> str:
-    return x_user_id or "default_user"
-```
-
-### 集成 JWT
-
-```python
-from fastapi.security import HTTPBearer
-from jose import jwt
-
-security = HTTPBearer()
-
-async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str:
-    token = credentials.credentials
-    payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-    return payload["user_id"]
-```
-
-### 在 API 中使用
-
-```python
-from app.core.auth import get_current_user_id
-
-@router.post("/chat")
-async def chat(
-    request: ChatRequest,
-    user_id: str = Depends(get_current_user_id),  # 自动注入
-    db: AsyncSession = Depends(get_db)
-):
-    # user_id 已自动从认证系统获取
-    ...
-```
-
----
-
-## 📦 扩展供应商
-
-### 添加新模板
-
-编辑 `app/config/provider_templates.py`：
-
-```python
-PROVIDER_TEMPLATES.append({
-    "name": "Mistral",
-    "provider_type": "mistral",
-    "api_base": "https://api.mistral.ai/v1",
-    "is_free": False,
-    "requires_api_key": True,
-    "supported_models": ["mistral-large", "mistral-medium"],
-    "description": "Mistral AI 模型",
-    "config_schema": {
-        "api_key": {"required": True, "description": "Mistral API Key"}
-    }
-})
-```
-
-然后运行初始化脚本：
-```bash
-uv run python scripts/init_providers.py
-```
-
----
-
-## 🛠️ 工具脚本
-
-```bash
-# 检查数据库状态
-uv run python scripts/check_db.py
-
-# 重置用户配置（故障排查）
-uv run python scripts/reset_user.py
-
-# 测试聊天和记忆功能
-uv run python tests/test_chat_memory.py
-```
+完整交互式文档：`http://localhost:8000/docs`
 
 ---
 
 ## 📊 技术栈
 
-| 组件 | 技术 | 说明 |
-|------|------|------|
-| Web 框架 | FastAPI | 高性能异步框架 |
-| LLM 集成 | LiteLLM | 统一100+模型接口 |
-| 数据库 | PostgreSQL + pgvector | 向量存储 |
-| ORM | SQLAlchemy 2.0 | 异步数据库操作 |
-| 迁移 | Alembic | 数据库版本管理 |
-| 编排 | LangGraph | 状态机工作流 |
-| 依赖管理 | uv | 极速包管理器 |
+| 层级 | 技术 | 用途 |
+|:-----|:-----|:-----|
+| Web 框架 | FastAPI | 高性能异步 API 服务 |
+| 智能体编排 | LangGraph | 图原生状态机工作流 |
+| LLM 网关 | LiteLLM | 100+ 模型统一接口 |
+| 数据库 | PostgreSQL + pgvector | 关系存储 + 向量检索 |
+| ORM | SQLAlchemy 2.0 (async) | 类型安全的异步数据库操作 |
+| 迁移 | Alembic | 版本化的数据库 Schema 管理 |
+| 缓存 | Redis | 会话缓存与速率限制 |
+| 前端 | React + Vite + Ant Design | 现代化 SPA + 实时流式交互 |
+| 鉴权 | JWT + API Key (python-jose) | 双重认证体系 |
+| 加密 | Fernet (AES-GCM) | 凭证静态加密 |
+| 包管理 | uv | 极速 Python 依赖管理 |
 
 ---
 
-## 🌟 支持的供应商
+## 🌟 支持的 LLM 供应商
 
 ### 免费模型
 
-| 供应商 | 模型 | 获取地址 |
-|--------|------|----------|
-| **DeepSeek** | deepseek-chat | [platform.deepseek.com](https://platform.deepseek.com) |
-| **Groq** | llama-3.1-70b | [console.groq.com](https://console.groq.com) |
-| **智谱AI** | glm-4-flash | [open.bigmodel.cn](https://open.bigmodel.cn) |
-| **通义千问** | qwen-flash | [dashscope.aliyuncs.com](https://dashscope.aliyuncs.com) |
+| 供应商 | 模型 | 获取 API Key |
+|:-------|:-----|:-------------|
+| **DeepSeek** | deepseek-chat, deepseek-coder | [platform.deepseek.com](https://platform.deepseek.com) |
+| **Groq** | llama-3.1-70b, mixtral-8x7b | [console.groq.com](https://console.groq.com) |
+| **智谱 AI** | glm-4-flash | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| **通义千问** | qwen-flash, qwen-turbo, qwen-plus | [dashscope.aliyuncs.com](https://dashscope.aliyuncs.com) |
 
 ### 付费模型
 
-| 供应商 | 模型 | 获取地址 |
-|--------|------|----------|
-| **OpenAI** | gpt-4-turbo | [platform.openai.com](https://platform.openai.com) |
-| **Anthropic** | claude-3 | [console.anthropic.com](https://console.anthropic.com) |
-| **Google** | gemini-pro | [ai.google.dev](https://ai.google.dev) |
+| 供应商 | 模型 | 获取 API Key |
+|:-------|:-----|:-------------|
+| **OpenAI** | gpt-4-turbo, gpt-4o | [platform.openai.com](https://platform.openai.com) |
+| **Anthropic** | claude-3, claude-3.5 | [console.anthropic.com](https://console.anthropic.com) |
+| **Google** | gemini-pro, gemini-1.5 | [ai.google.dev](https://ai.google.dev) |
 
 ---
 
-## 📚 API 端点
+## 🛠️ 开发指南
 
-完整文档：`http://localhost:8000/docs`
+### 运行测试
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/v1/chat` | POST | 智能对话（SSE 流式） |
-| `/api/v1/chat-sessions/` | POST | 创建会话 |
-| `/api/v1/memories/search` | GET | 搜索记忆 |
-| `/api/v1/providers/templates` | GET | 查看供应商模板 |
-| `/api/v1/providers/my/providers` | POST | 配置我的供应商 |
-| `/api/v1/providers/my/default-models` | PUT | 设置默认模型 |
-| `/api/v1/users/init` | POST | 初始化新用户 |
+```bash
+cd backend
+
+# 安全与授权测试
+uv run pytest tests/test_security_authz.py -v
+
+# 本体治理测试
+uv run pytest tests/test_ontology_governance.py -v
+
+# 端到端本体验收（需要运行中的数据库）
+uv run python scripts/verify_ontology_e2e.py
+```
+
+### 数据库迁移
+
+```bash
+cd backend
+
+# 查看当前迁移头
+uv run alembic heads
+
+# 应用所有迁移
+uv run alembic upgrade head
+
+# 创建新迁移
+uv run alembic revision --autogenerate -m "描述"
+```
 
 ---
 
 ## 🔒 生产部署
 
-### 安全建议
+### 安全清单
 
-1. **加密密钥**：使用强随机的 `ENCRYPTION_KEY`
+1. **生成强密钥**：
    ```bash
+   # Fernet 加密密钥
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   # JWT 密钥
+   python -c "import secrets; print(secrets.token_urlsafe(64))"
    ```
-
-2. **数据库密码**：使用复杂密码并限制访问
-3. **用户认证**：集成 JWT 或 OAuth2
-4. **HTTPS**：生产环境必须使用 HTTPS
+2. 设置 `ENFORCE_PRODUCTION_SECURITY=True` 和 `ALLOW_ANONYMOUS_ADMIN_FALLBACK=False`
+3. 使用 HTTPS 反向代理（Nginx / Caddy）
+4. 数据库访问限制在内网
 
 ### 性能优化
 
-```python
-# 使用 Gunicorn + Uvicorn Workers
+```bash
 gunicorn app.main:app \
   --workers 4 \
   --worker-class uvicorn.workers.UvicornWorker \
@@ -568,12 +361,12 @@ gunicorn app.main:app \
 
 ## 🤝 贡献
 
-欢迎 PR 和 Issue！
+欢迎贡献！请在提交 PR 前阅读 [贡献指南](CONTRIBUTING.md) 和 [行为准则](CODE_OF_CONDUCT.md)。
 
-## 📄 License
+## 📄 开源协议
 
-Apache License 2.0
+[Apache License 2.0](LICENSE) — 自由使用，包括商业用途。
 
 ---
 
-**Happy Coding! 🚀**
+**由 [Koriginal](https://github.com/Koriginal) 倾力打造。如果这个项目对你有帮助，请给一颗 ⭐ 吧。**
