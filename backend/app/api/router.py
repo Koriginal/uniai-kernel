@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.core.config import settings
 from app.api.endpoints import (
     agents, 
     providers, 
@@ -15,7 +16,7 @@ from app.api.endpoints import (
     auth,
     users,
     messages as messages_ep,
-    orchestration as orch_ep
+    orchestration as orch_ep,
 )
 
 api_router = APIRouter()
@@ -42,6 +43,11 @@ mgmt_router.include_router(user_init.router, prefix="/user-init", tags=["User Li
 mgmt_router.include_router(llm.router, prefix="/llm", tags=["LLM Raw Access"])
 mgmt_router.include_router(api_keys.router, prefix="/user/api-keys", tags=["API Keys"])
 mgmt_router.include_router(dynamic_tools.router, prefix="/dynamic-tools", tags=["Dynamic Tools"])
+
+# Ontology routes stay registered even when the capability is disabled, so clients
+# receive a clear 503 from the endpoint guard instead of an ambiguous 404.
+from app.api.endpoints import ontology as ontology_ep
+mgmt_router.include_router(ontology_ep.router, prefix="/ontology", tags=["Ontology Engine"])
 
 # --- 3. [图引擎面] LangGraph 图拓扑与调试 ---
 from app.api.endpoints import graph as graph_ep

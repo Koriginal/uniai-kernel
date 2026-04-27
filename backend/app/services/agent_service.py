@@ -101,6 +101,7 @@ class AgentService:
                     "description": agent_profile.description,
                     "system_prompt": agent_profile.system_prompt,
                     "tools": agent_profile.tools or [],
+                    "ontology_config": agent_profile.ontology_config or {},
                     "model_config_id": agent_profile.model_config_id,
                     "is_public": agent_profile.is_public,
                     "role": agent_profile.role,

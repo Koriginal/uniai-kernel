@@ -139,12 +139,20 @@ console.log(resp.choices[0].message.content);`,
   );
 
   const fetchKeys = async () => {
+    if (!user?.id) {
+      setKeys([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const res = await api.get('/api/v1/user/api-keys/');
       setKeys(res.data || []);
-    } catch {
-      message.error('加载 API 秘钥失败');
+    } catch (err: any) {
+      // 切页或登录态切换期间的 401 不需要向用户报错轰炸
+      if (err?.response?.status !== 401) {
+        message.error('加载 API 秘钥失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -152,7 +160,7 @@ console.log(resp.choices[0].message.content);`,
 
   useEffect(() => {
     fetchKeys();
-  }, []);
+  }, [user?.id]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);

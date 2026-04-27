@@ -28,6 +28,9 @@ class AgentProfile(Base):
     # 授权使用的工具列表 (存储 PluginRegistry 中的工具名称，如 ["web_search", "memory_search"])
     # 如果为 None 或空列表，则不开启任何工具。如果包含 "*" 则开启全部（不推荐）。
     tools = Column(JSON, default=[])
+
+    # 本体运行时配置：默认关闭，开启后由 Agent Runtime 注入本体工具与运行契约。
+    ontology_config = Column(JSON, default={})
     
     # [NEW] 角色定义：'orchestrator' (主控) 或 'expert' (专家)
     role = Column(String, default="expert", nullable=False)

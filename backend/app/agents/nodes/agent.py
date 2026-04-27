@@ -7,6 +7,7 @@
 import re
 import json
 import logging
+import uuid
 from typing import Any
 from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
@@ -18,6 +19,7 @@ from app.models.openai import (
 from app.models.provider import ProviderModel
 from app.models.message import ChatMessage
 from app.ontology.registry import ontology_registry
+from app.ontology.runtime import ONTOLOGY_AGENT_TOOL_NAMES, ontology_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,22 @@ def _is_realtime_query(text: str) -> bool:
     return any(k in t for k in keywords)
 
 
+def _has_tool_result_after_latest_user(messages: list, tool_name: str) -> bool:
+    if not messages:
+        return False
+    last_user_index = -1
+    for idx in range(len(messages) - 1, -1, -1):
+        if messages[idx].get("role") == "user":
+            last_user_index = idx
+            break
+    if last_user_index < 0:
+        return False
+    for msg in messages[last_user_index + 1:]:
+        if msg.get("role") == "tool" and msg.get("name") == tool_name:
+            return True
+    return False
+
+
 async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     """
     核心推理节点：调用 LLM，流式输出 token，解析 tool_calls。
@@ -72,6 +90,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     orchestrator_agent_id = c["orchestrator_agent_id"]
     expert_prompt_catalog = c.get("expert_prompt_catalog", "")
     orchestrator_prompt_catalog = c.get("orchestrator_prompt_catalog", "")
+    user_id = c.get("user_id", "")
 
     messages = list(state["messages"])
     current_agent_id = state["current_agent_id"]
@@ -150,6 +169,17 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += mode_instr
 
+    ontology_config = (agent_profile or {}).get("ontology_config") or {}
+    ontology_instr = await ontology_runtime.build_agent_prompt(
+        db,
+        raw_config=ontology_config,
+        user_id=user_id,
+        query=_extract_latest_user_text(messages),
+        is_admin=False,
+    )
+    if ontology_instr:
+        current_sys_prompt += ontology_instr
+
     directory_catalog = "\n\n".join([part for part in [expert_prompt_catalog, orchestrator_prompt_catalog] if part]).strip()
     full_sys_content = (directory_catalog + "\n\n" + current_sys_prompt).strip()
 
@@ -174,6 +204,14 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if agent_profile and agent_profile.get("tools"):
         if "*" not in agent_profile["tools"]:
             tools_list = [t for t in tools_list if t.metadata.name in agent_profile["tools"]]
+
+    if ontology_runtime.is_enabled((agent_profile or {}).get("ontology_config") or {}):
+        existing_tool_names = {tool.metadata.name for tool in tools_list}
+        for tool_name in ONTOLOGY_AGENT_TOOL_NAMES:
+            action = registry.get_action(tool_name)
+            if action and tool_name not in existing_tool_names:
+                tools_list.append(action)
+                existing_tool_names.add(tool_name)
 
     openai_tools = [t.to_openai_format() for t in tools_list] if tools_list else []
 
@@ -235,11 +273,43 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     try:
         latest_user_query = _extract_latest_user_text(cleaned_internal)
         force_web_search = has_web_search and _is_realtime_query(latest_user_query)
-        # 若最近消息已存在 web_search 结果，避免死循环强制
-        has_web_search_result = any(
-            m.get("role") == "tool" and m.get("name") == "web_search"
-            for m in cleaned_internal[-6:]
-        )
+        # 仅当“当前用户问题之后”已有 web_search 结果时才取消强制，避免复用旧问题检索结果
+        has_web_search_result = _has_tool_result_after_latest_user(cleaned_internal, "web_search")
+        if force_web_search and not has_web_search_result and latest_user_query:
+            # 兜底预取：避免模型未发起工具调用时出现“沿用上一轮检索结果”的错答
+            try:
+                await callback.emit(
+                    f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': agent_name, 'content': '正在联网检索最新信息...'}, ensure_ascii=False)}\n\n"
+                )
+                prefetch_args = {"query": latest_user_query, "top_k": 5}
+                prefetch_call_id = f"prefetch-web-search-{uuid.uuid4().hex[:8]}"
+                prefetch_result = await registry.execute_action("web_search", **prefetch_args)
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": prefetch_call_id,
+                                "type": "function",
+                                "function": {"name": "web_search", "arguments": json.dumps(prefetch_args, ensure_ascii=False)},
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "name": "web_search",
+                        "content": str(prefetch_result),
+                        "tool_call_id": prefetch_call_id,
+                    }
+                )
+                cleaned_internal = _clean_messages(messages)
+                has_web_search_result = True
+            except Exception as prefetch_error:
+                logger.warning(f"[AgentNode] prefetch web_search failed: {prefetch_error}")
+
         tool_choice: Any = "auto" if openai_tools else None
         if force_web_search and not has_web_search_result:
             tool_choice = {"type": "function", "function": {"name": "web_search"}}

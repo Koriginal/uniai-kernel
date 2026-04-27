@@ -28,6 +28,7 @@ class AgentProfileCreate(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str] = []
+    ontology_config: Dict[str, Any] = {}
     role: str = "expert"  # 'orchestrator' or 'expert'
     routing_keywords: List[str] = []
     handoff_strategy: str = "return" # 'return' or 'end'
@@ -40,6 +41,7 @@ class AgentProfileUpdate(BaseModel):
     model_config_id: Optional[int] = None
     system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None
+    ontology_config: Optional[Dict[str, Any]] = None
     role: Optional[str] = None
     routing_keywords: Optional[List[str]] = None
     handoff_strategy: Optional[str] = None
@@ -53,6 +55,7 @@ class AgentProfileResponse(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str]
+    ontology_config: Dict[str, Any] = {}
     role: str
     routing_keywords: List[str]
     handoff_strategy: str
@@ -79,6 +82,7 @@ class AgentProfileValidationRequest(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str] = []
+    ontology_config: Dict[str, Any] = {}
     role: str = "expert"
     routing_keywords: List[str] = []
     handoff_strategy: str = "return"
@@ -157,6 +161,36 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
         if data.get("role") == "orchestrator" and keywords:
             warnings.append("主控不会出现在专家协作目录中，这些路由关键词不会被其他主控用于专家移交。")
 
+    if "ontology_config" in data:
+        raw_config = data.get("ontology_config") or {}
+        if not isinstance(raw_config, dict):
+            raise HTTPException(status_code=400, detail="ontology_config 必须是对象")
+        mode = str(raw_config.get("mode") or ("auto" if raw_config.get("enabled") else "off")).lower()
+        if mode not in {"off", "auto", "required"}:
+            raise HTTPException(status_code=400, detail="ontology_config.mode 仅支持 off、auto、required")
+        normalized_config = {
+            "enabled": mode != "off",
+            "mode": mode,
+            "space_id": (raw_config.get("space_id") or "").strip() or None,
+            "strict_rules": bool(raw_config.get("strict_rules", False)),
+            "explain_required": bool(raw_config.get("explain_required", True)),
+            "fallback_when_unavailable": raw_config.get("fallback_when_unavailable") or "continue_without_ontology",
+        }
+        if normalized_config["enabled"]:
+            ontology_tools = {
+                "ontology_list_spaces",
+                "ontology_get_runtime_contract",
+                "ontology_map_input",
+                "ontology_evaluate_rules",
+                "ontology_explain_decision",
+            }
+            configured_tools = set(data.get("tools") or [])
+            if "*" not in configured_tools:
+                data["tools"] = sorted(configured_tools | ontology_tools)
+            if not normalized_config["space_id"] and normalized_config["mode"] == "required":
+                warnings.append("本体 required 模式未指定 space_id，运行时会要求用户先配置本体空间。")
+        data["ontology_config"] = normalized_config
+
     if "system_prompt" in data and data.get("system_prompt"):
         prompt = data["system_prompt"].strip()
         data["system_prompt"] = prompt
@@ -188,6 +222,7 @@ async def create_agent_profile(
         model_config_id=normalized["model_config_id"],
         system_prompt=normalized.get("system_prompt"),
         tools=normalized.get("tools", []),
+        ontology_config=normalized.get("ontology_config", {}),
         role=normalized.get("role", "expert"),
         routing_keywords=normalized.get("routing_keywords", []),
         handoff_strategy=normalized.get("handoff_strategy", "return"),

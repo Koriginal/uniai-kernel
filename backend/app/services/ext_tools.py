@@ -5,6 +5,9 @@ from typing import Dict, Any, Optional
 from app.tools.base import BaseTool
 import os
 import shlex
+from pathlib import Path
+
+from app.core.config import settings
 
 class ApiTool(BaseTool):
     """通过 HTTP API 调用执行外部工具"""
@@ -96,21 +99,41 @@ class CliTool(BaseTool):
         return self._schema
 
     async def execute(self, **kwargs) -> str:
+        if not settings.ENABLE_DYNAMIC_CLI_TOOLS:
+            return "CLI Error: dynamic CLI tools are disabled by server policy"
+
         # 生产安全基线：禁止 shell 解释器，使用 argv 直接执行，降低命令注入风险。
         argv = shlex.split(self.script)
         if not argv:
             return "CLI Error: empty command"
+        command = Path(argv[0]).name
 
-        env = dict(os.environ)
-        # 仅允许以 UAI_ARG_ 前缀注入参数，避免污染系统关键环境变量
-        env.update({f"UAI_ARG_{k.upper()}": str(v) for k, v in kwargs.items()})
+        allowed = {
+            item.strip()
+            for item in (settings.DYNAMIC_CLI_ALLOWED_COMMANDS or "").split(",")
+            if item.strip()
+        }
+        if not allowed:
+            return "CLI Error: command allowlist is empty (set DYNAMIC_CLI_ALLOWED_COMMANDS)"
+        if command not in allowed:
+            return f"CLI Error: command '{command}' is not in allowlist"
+
+        # 最小环境变量注入：仅保留基础运行变量 + 工具参数
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
+        }
+        env.update({f"UAI_ARG_{k.upper()}": str(v) for k, v in kwargs.items() if k})
 
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env
+            env=env,
+            cwd=(settings.DYNAMIC_CLI_WORKDIR or None),
+            start_new_session=True,
         )
         
         try:

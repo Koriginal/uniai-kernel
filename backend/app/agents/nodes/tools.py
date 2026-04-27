@@ -9,8 +9,23 @@ import logging
 from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
 from app.core.plugins import registry
+from app.ontology.runtime import ONTOLOGY_AGENT_TOOL_NAMES, ontology_runtime
 
 logger = logging.getLogger(__name__)
+
+
+def inject_runtime_tool_args(func_name: str, args: dict, config_data: dict, agent_profile: dict | None) -> dict:
+    """Inject trusted runtime context into tools that should not rely on LLM-supplied identity."""
+    if func_name not in ONTOLOGY_AGENT_TOOL_NAMES:
+        return args
+
+    patched = dict(args or {})
+    ontology_config = ontology_runtime.normalize_config((agent_profile or {}).get("ontology_config") or {})
+    if config_data.get("user_id"):
+        patched["user_id"] = config_data["user_id"]
+    if ontology_config.get("space_id") and not patched.get("space_id"):
+        patched["space_id"] = ontology_config["space_id"]
+    return patched
 
 
 async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> dict:
@@ -51,6 +66,7 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
             if not isinstance(args, dict):
                 raise ValueError("Tool arguments must be a JSON object")
+            args = inject_runtime_tool_args(func_name, args, c, agent_profile)
             res = await registry.execute_action(func_name, **args)
             messages.append({
                 "role": "tool",

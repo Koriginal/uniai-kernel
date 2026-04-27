@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List, Dict, Any
 import logging
 
@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # --- 环境设置 ---
     ENVIRONMENT: str = "development"
     DOMAIN: str = "localhost"
@@ -60,6 +66,10 @@ class Settings(BaseSettings):
     ENFORCE_PRODUCTION_SECURITY: bool = True
     # 动态 CLI 工具默认关闭（需显式开启）
     ENABLE_DYNAMIC_CLI_TOOLS: bool = False
+    # 动态 CLI 允许执行的命令白名单（逗号分隔，如: python,node,jq）
+    DYNAMIC_CLI_ALLOWED_COMMANDS: str = ""
+    # 动态 CLI 执行工作目录（留空表示使用后端进程工作目录）
+    DYNAMIC_CLI_WORKDIR: Optional[str] = None
     
     # --- 自动初始化配置 (仅用于开发/演示环境快速启动) ---
     DEFAULT_USER_ID: str = "admin"
@@ -96,6 +106,16 @@ class Settings(BaseSettings):
     WEB_SEARCH_CACHE_TTL_SECONDS: int = 300
     WEB_SEARCH_BLOCKED_DOMAINS: str = "localhost,127.0.0.1,0.0.0.0"
 
+    # --- 本体引擎配置 ---
+    ENABLE_ONTOLOGY_ENGINE: bool = True
+    # 映射/校验 trace 的最大条目数，防止异常输入导致过大响应
+    ONTOLOGY_MAX_TRACE_ITEMS: int = 500
+    # 治理审批策略
+    ONTOLOGY_REQUIRE_APPROVAL_FOR_STAGING: bool = True
+    ONTOLOGY_REQUIRE_APPROVAL_FOR_GA: bool = True
+    # 组织级本体隔离开关（默认关闭，兼容现有用户级隔离）
+    ENABLE_ORG_TENANCY: bool = False
+
     # --- Agent 配置 ---
     # agent 循环的最大迭代次数
     MAX_AGENT_ITERATIONS: int = 25
@@ -129,11 +149,6 @@ class Settings(BaseSettings):
     DEFAULT_STT_PROVIDER: Optional[str] = None
     DEFAULT_STT_MODEL: Optional[str] = None
     DEFAULT_STT_API_KEY: Optional[str] = None
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = 'utf-8'
-        extra = "ignore" # 允许 .env 中的额外字段
 
 settings = Settings()
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { Suspense, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Layout, Menu, Typography, Avatar, Space, message, Modal, Tag, Dropdown, Button, Tooltip, Popover, Progress, Statistic, Row, Col, Empty } from 'antd';
 import {
   ThunderboltOutlined, HistoryOutlined, AppstoreOutlined,
@@ -27,7 +27,9 @@ import type { Message, Agent } from './components/ChatView';
 const { Header, Content, Sider } = Layout;
 const { Text, Title } = Typography;
 
-type ViewType = 'chat' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings';
+const OntologyWorkbench = React.lazy(() => import('./components/OntologyWorkbench'));
+
+type ViewType = 'chat' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
 
 interface Session {
   id: string;
@@ -990,6 +992,9 @@ const App: React.FC = () => {
             <Menu.Item key="tools" icon={<ToolOutlined />} onClick={() => setActiveView('tools')}>
               工具注册表
             </Menu.Item>
+            <Menu.Item key="ontology" icon={<NodeIndexOutlined />} onClick={() => setActiveView('ontology')}>
+              本体治理台
+            </Menu.Item>
             <Menu.Item key="audit" icon={<BarChartOutlined />} onClick={() => setActiveView('audit')}>
               使用审计
             </Menu.Item>
@@ -1049,6 +1054,7 @@ const App: React.FC = () => {
                   {activeView === 'agents' ? '专家集群管理'
                     : activeView === 'providers' ? '模型供应商'
                       : activeView === 'tools' ? '工具注册表'
+                        : activeView === 'ontology' ? '本体治理台'
                         : activeView === 'users' ? '系统用户管理'
                           : 'UniAI Kernel'}
                 </Text>
@@ -1196,6 +1202,12 @@ const App: React.FC = () => {
 
           {activeView === 'tools' && (
             <ToolRegistry msgApi={message} />
+          )}
+
+          {activeView === 'ontology' && (
+            <Suspense fallback={<div style={{ padding: 24 }}><Text type="secondary">正在加载本体控制台...</Text></div>}>
+              <OntologyWorkbench api={api} />
+            </Suspense>
           )}
 
           {activeView === 'audit' && (

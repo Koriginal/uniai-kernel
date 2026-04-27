@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.db import Base
@@ -27,6 +27,7 @@ class User(Base):
     
     # 一个用户可以有多个 API 秘钥
     api_keys = relationship("UserApiKey", back_populates="user", cascade="all, delete-orphan")
+    organization_memberships = relationship("UserOrganizationMembership", back_populates="user", cascade="all, delete-orphan")
 
 class UserApiKey(Base):
     """
@@ -46,3 +47,41 @@ class UserApiKey(Base):
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="api_keys")
+
+
+class Organization(Base):
+    """
+    组织模型（组织级租户隔离基础设施）
+    """
+    __tablename__ = "organizations"
+
+    id = Column(String, primary_key=True, default=lambda: f"org-{uuid.uuid4().hex[:8]}")
+    code = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    memberships = relationship("UserOrganizationMembership", back_populates="organization", cascade="all, delete-orphan")
+
+
+class UserOrganizationMembership(Base):
+    """
+    用户-组织成员关系
+    """
+    __tablename__ = "user_organization_memberships"
+
+    id = Column(String, primary_key=True, default=lambda: f"orgm-{uuid.uuid4().hex[:8]}")
+    org_id = Column(String, ForeignKey("organizations.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    role = Column(String, nullable=False, default="member")  # owner/admin/member/viewer
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    organization = relationship("Organization", back_populates="memberships")
+    user = relationship("User", back_populates="organization_memberships")
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "user_id", name="uix_org_user_membership"),
+    )

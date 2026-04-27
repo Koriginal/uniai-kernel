@@ -2,11 +2,23 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**企业级 Agentic OS 内核** - 基于 FastAPI 和 LangGraph 构建的高性能多租户 AI 编排引擎。内置先进的 Swarm 智能协作体系、实时 Artifacts 交互看板、图原生执行引擎以及生产级可观测性监控。
+**别再用玩具级别的 Agent 框架了。** 
+UniAI Kernel 是一个基于 LangGraph 和 FastAPI 构建的**企业级多租户 Agent 操作系统内核**。它将竞品收费的生产级特性（如审批流、组织级多租户、预发布回滚）直接带入开源世界。
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+## 🚀 什么是 UniAI Kernel？
+
+与简单的 API 包装器不同，UniAI 依托 LangGraph 提供了一个**图原生 (Graph-native) 的执行环境**，不仅能实现复杂的多智能体协作，更具备企业级的安全隔离与可观测性。
+
+### 🌟 核心支柱：
+*   **图原生编排 (Graph-Native Orchestration)**：构建非线性的状态机 Agent 工作流，支持可视化的拓扑快照保存与无损回滚。
+*   **子应用委托与本体治理 (Ontology Governance)**：基于严格语义策略的主控-主控（Orchestrator-to-Orchestrator）任务委托，原生支持 Staging/GA 发版审批流。
+*   **生产级可观测性 (Production-Ready Observability)**：内置高密度审计看板，深度洞察 Token 成本、用户反馈质量 (Like/Dislike) 以及系统稳定性。
+*   **主权多租户 (Sovereign Multi-tenancy)**：原生支持**组织级 (Organization-level) 租户模型**、独立 API Key 绑定、用户级记忆沙箱隔离及租户视角的统计报表。
+*   **即插即用扩展总线 (Plug-and-Play Extensibility)**：通过统一的微内核架构，无缝热拔插任何第三方工具或 LLM 供应商。
 
 ---
 

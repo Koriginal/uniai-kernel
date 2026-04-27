@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List, Dict, Any, Optional
@@ -21,6 +22,108 @@ class MemoryService:
     """
 
     # --- 核心检索接口 ---
+
+    async def _create_new_memory(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        content: str,
+        category: str = "general",
+        importance: int = 1,
+        source_session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> UserMemory:
+        """
+        向下兼容：在给定会话中创建记忆对象并持久化（不额外开启新会话）。
+        """
+        item = UserMemory(
+            user_id=user_id,
+            content=content,
+            category=category,
+            importance=importance,
+            source_session_id=source_session_id,
+            metadata_extra=metadata or {},
+        )
+        db.add(item)
+        await db.flush()
+        return item
+
+    async def get_memories_by_category(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        category: Optional[str] = None,
+    ) -> List[UserMemory]:
+        """
+        向下兼容：按用户/分类读取记忆。
+        """
+        stmt = select(UserMemory).where(UserMemory.user_id == user_id)
+        if category:
+            stmt = stmt.where(UserMemory.category == category)
+        stmt = stmt.order_by(UserMemory.created_at.desc()).limit(200)
+        result = await db.execute(stmt)
+        return result.scalars().all()
+
+    async def extract_memories(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        query: str,
+        answer: str,
+    ) -> List[UserMemory]:
+        """
+        向下兼容：从单轮问答提取记忆。
+        说明：测试/接口稳定性优先，采用规则提取并去重；不依赖外部 LLM 网络可用性。
+        """
+        if not settings.MEMORY_EXTRACTION_ENABLED:
+            return []
+
+        extracted: List[UserMemory] = []
+        text = (query or "").strip()
+        if not text:
+            return []
+
+        lowered = text.lower()
+        category = "general"
+        if any(k in text for k in ["喜欢", "偏好", "习惯"]) or any(k in lowered for k in ["prefer", "like"]):
+            category = "preference"
+        elif any(k in text for k in ["开发", "工程师", "职业", "工作"]) or any(k in lowered for k in ["developer", "engineer", "work"]):
+            category = "work"
+        elif any(k in text for k in ["正在", "计划", "目标"]) or any(k in lowered for k in ["plan", "goal"]):
+            category = "history"
+
+        # 简单原子化：移除多余空白，截断长度，避免脏数据
+        candidate = re.sub(r"\s+", " ", text).strip()[:300]
+        if not candidate:
+            return []
+
+        existed = await db.execute(
+            select(UserMemory).where(
+                UserMemory.user_id == user_id,
+                UserMemory.content == candidate,
+            )
+        )
+        if existed.scalar_one_or_none():
+            return []
+
+        item = await self._create_new_memory(
+            db,
+            user_id=user_id,
+            content=candidate,
+            category=category,
+            importance=2,
+            metadata={"source": "compat_extract", "answer_preview": (answer or "")[:120]},
+        )
+        await db.commit()
+        await db.refresh(item)
+        extracted.append(item)
+
+        # 非阻塞向量写入（若向量模型未配置，会在下游自动降级）
+        try:
+            asyncio.create_task(vector_service.upsert_memory_vector(item.id, item.content, user_id))
+        except Exception:
+            pass
+        return extracted
     
     async def search_memories(
         self, 
@@ -113,18 +216,31 @@ class MemoryService:
             asyncio.create_task(vector_service.upsert_memory_vector(new_memory.id, content, user_id))
             return new_memory
 
-    async def delete_memory(self, memory_id: UUID) -> bool:
+    async def delete_memory(self, *args) -> bool:
         """
         删除记忆及其向量。
+        向下兼容两种调用:
+        - delete_memory(memory_id)
+        - delete_memory(db, memory_id)
         """
-        async with SessionLocal() as db:
+        if len(args) == 1:
+            memory_id = args[0]
+            async with SessionLocal() as db:
+                stmt = delete(UserMemory).where(UserMemory.id == memory_id)
+                result = await db.execute(stmt)
+                await db.commit()
+            asyncio.create_task(vector_service.delete_memory_vector(memory_id))
+            return result.rowcount > 0
+
+        if len(args) == 2:
+            db, memory_id = args
             stmt = delete(UserMemory).where(UserMemory.id == memory_id)
             result = await db.execute(stmt)
             await db.commit()
-            
-            # 清理向量
             asyncio.create_task(vector_service.delete_memory_vector(memory_id))
             return result.rowcount > 0
+
+        raise TypeError("delete_memory expects (memory_id) or (db, memory_id)")
 
     # --- [Phase 20] 自动提取与提纯 (优化版提示词) ---
 

@@ -5,8 +5,18 @@ from app.models.message import ChatMessage
 from app.models.memory import UserMemory
 from app.models.agent import AgentProfile
 from app.models.audit import ActionLog
-from app.models.user import User, UserApiKey
+from app.models.user import User, UserApiKey, Organization, UserOrganizationMembership
 from app.models.dynamic_tool import DynamicTool
 from app.models.graph_execution import GraphExecution
 from app.models.agent_score import AgentScoreHistory
 from app.models.graph_template import GraphTemplateModel
+from app.models.ontology import (
+    OntologySpaceModel,
+    OntologyPackageModel,
+    OntologyReleaseEventModel,
+    OntologyApprovalModel,
+    OntologyDecisionModel,
+    OntologyExplanationModel,
+    OntologyDataSourceModel,
+    OntologySecretModel,
+)

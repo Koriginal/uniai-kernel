@@ -43,11 +43,16 @@ class ContextService:
         max_tokens: int = 4096,  # 默认模型上下文限制
         enable_memory: bool = True,
         enable_session_summary: bool = True,
-        enable_history: bool = True
+        enable_history: bool = True,
+        enable_session_context: Optional[bool] = None,
     ) -> List[Dict[str, str]]:
         """
         根据 Token 预算，动态构建 LLM 消息列表（最大化历史填充）。
         """
+        # 向后兼容：旧参数 enable_session_context 等价于 enable_history
+        if enable_session_context is not None:
+            enable_history = bool(enable_session_context)
+
         # 0. 计算预算分配
         # 预留 20% 给系统 Prompt 和记忆，20% 给模型输出，剩余 60% 给历史加载
         history_budget = int(max_tokens * 0.6)

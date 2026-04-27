@@ -36,6 +36,14 @@ export interface Agent {
   role: 'orchestrator' | 'expert';
   routing_keywords?: string[];
   handoff_strategy?: 'return' | 'end';
+  ontology_config?: {
+    enabled?: boolean;
+    mode?: 'off' | 'auto' | 'required';
+    space_id?: string | null;
+    strict_rules?: boolean;
+    explain_required?: boolean;
+    fallback_when_unavailable?: string;
+  };
   model_config_id: number;
   system_prompt?: string;
 }

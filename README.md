@@ -2,11 +2,23 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Enterprise-level Agentic OS Kernel** - A high-performance multi-tenant AI orchestration engine built with FastAPI and LangGraph. Features advanced Swarm collaboration, real-time Artifacts canvas, graph-native execution, and production-grade observability.
+**Stop building toy Agent frameworks.** 
+UniAI Kernel is an **Enterprise-grade Multi-tenant Agentic OS Kernel** built with LangGraph & FastAPI. It brings production-ready features that competitors charge for directly to open source. 
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+## 🚀 What is UniAI Kernel?
+
+Unlike simple wrappers, UniAI provides a **graph-native execution environment** leveraging LangGraph, enabling complex multi-agent collaboration with enterprise-level security and observability.
+
+### 🌟 Key Pillars:
+*   **Graph-Native Orchestration**: Build non-linear, stateful agent workflows with visual topology snapshots and rollbacks.
+*   **Sub-App Delegation & Ontology Governance**: Advanced Orchestrator-to-Orchestrator task delegation based on strict semantic ontology policies (Staging/GA approval workflows natively supported).
+*   **Production-Ready Observability**: Built-in audit dashboard with deep insights into token costs, feedback quality (Like/Dislike), and system stability.
+*   **Sovereign Multi-tenancy**: Native support for Organization-level tenancy, independent API keys, user-level memory isolation, and tenant-based analytics.
+*   **Plug-and-Play Extensibility**: Seamlessly integrate any tool or LLM provider with a unified microkernel architecture.
 
 ---
 

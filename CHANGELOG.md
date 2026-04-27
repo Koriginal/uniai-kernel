@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0] - Epic Release - 2026-04-27
+
+### 🚀 Epic Feature: Enterprise Ontology Engine & Governance
+- **Ontology Space (Workspace)**: Introduced independent persistence layers for semantic schema, mapping rules, and orchestration policies.
+- **Strict Release Lifecycle**: Added native support for Draft -> Review -> Staging -> GA -> Deprecated lifecycle.
+- **Approval Workflows**: Built-in approval gates for Staging and GA releases, ensuring human-in-the-loop governance for critical rule changes.
+- **Safe Rollbacks**: Real-time snapshotting and immediate rollback capabilities for breaking semantic changes.
+- **Ontology Workbench**: New frontend UI component (`OntologyWorkbench.tsx`) for visual management of rules and release history.
+
+### 🏢 Epic Feature: Organization-level Tenancy Foundation
+- **Org Tenancy Schema**: Rolled out the database schema (`d8f1c4e2ab77`) to support Organization and Member relationships, paving the way for B2B team collaboration beyond individual user accounts.
+- **Feature Flagging**: Exposed `ENABLE_ONTOLOGY_ENGINE` and `ENABLE_ORG_TENANCY` in `.env` for strict modular control between Community and Enterprise scenarios.
+
+### Verified
+- **E2E Automation**: `verify_ontology_e2e.py` passed with full rule evaluation, release event tracing, and rollback verifications.
+
 ## [2.4.1] - 2026-04-23
 ### Added
 - **Infrastructure Stability**: Added `/healthz` endpoint for liveness probes and automated security baseline validation on system startup.

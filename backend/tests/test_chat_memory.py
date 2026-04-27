@@ -10,6 +10,7 @@
 """
 import asyncio
 import uuid
+import pytest
 from app.core.db import Base, engine, SessionLocal
 from app.models.session import ChatSession
 from app.models.message import ChatMessage
@@ -17,6 +18,7 @@ from app.services.memory_service import memory_service
 from app.services.context_service import context_service
 from sqlalchemy import select
 
+@pytest.mark.asyncio
 async def test_end_to_end():
     print("=" * 60)
     print("端到端测试：智能对话与记忆管理")
@@ -24,8 +26,11 @@ async def test_end_to_end():
     
     # 1. 初始化数据库
     print("\n[1/6] 初始化数据库...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as exc:
+        pytest.skip(f"Integration DB is not available for test_chat_memory: {exc}")
     
     session_id = str(uuid.uuid4())
     user_id = "test_user_001"

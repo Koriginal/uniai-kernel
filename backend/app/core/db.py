@@ -3,6 +3,7 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 import logging
 from fastapi import HTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ async def get_db():
     async with SessionLocal() as session:
         try:
             yield session
-        except HTTPException:
+        except (HTTPException, StarletteHTTPException):
             # 认证/鉴权等业务异常不作为数据库错误噪声日志输出
             await session.rollback()
             raise

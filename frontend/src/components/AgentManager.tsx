@@ -102,6 +102,12 @@ interface RouteInsight {
   failureMessage?: string;
 }
 
+interface OntologySpaceOption {
+  id: string;
+  name: string;
+  code: string;
+}
+
 interface ValidationResult {
   ok: boolean;
   normalized_payload: Record<string, any>;
@@ -160,6 +166,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
   const [testInteractionMode, setTestInteractionMode] = useState<'chat' | 'workflow' | 'builder' | 'analysis'>('chat');
   const [testResult, setTestResult] = useState<string>('');
   const [routeInsight, setRouteInsight] = useState<RouteInsight | null>(null);
+  const [ontologySpaces, setOntologySpaces] = useState<OntologySpaceOption[]>([]);
 
   const notify = {
     success: (content: string) => (msgApi?.success ? msgApi.success(content) : message.success(content)),
@@ -192,6 +199,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     fetchTools();
     fetchDashboard();
     fetchRouteInsight();
+    fetchOntologySpaces();
   }, []);
 
   useEffect(() => {
@@ -255,6 +263,15 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     }
   };
 
+  const fetchOntologySpaces = async () => {
+    try {
+      const res = await axios.get('/api/v1/ontology/spaces');
+      setOntologySpaces(res.data || []);
+    } catch {
+      setOntologySpaces([]);
+    }
+  };
+
   const mergedAgents = useMemo(() => {
     const metricsMap = new Map((dashboard?.agents || []).map((item) => [item.id, item]));
     return agents.map((agent) => ({
@@ -297,6 +314,14 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
         model_config_id: agent.model_config_id ? Number(agent.model_config_id) : undefined,
         system_prompt: agent.system_prompt,
         tools: sanitizeTools(agent.tools || []),
+        ontology_config: {
+          enabled: !!agent.ontology_config?.enabled,
+          mode: agent.ontology_config?.mode || (agent.ontology_config?.enabled ? 'auto' : 'off'),
+          space_id: agent.ontology_config?.space_id || undefined,
+          strict_rules: !!agent.ontology_config?.strict_rules,
+          explain_required: agent.ontology_config?.explain_required !== false,
+          fallback_when_unavailable: agent.ontology_config?.fallback_when_unavailable || 'continue_without_ontology',
+        },
         role: agent.role || 'expert',
         routing_keywords: agent.routing_keywords || [],
         handoff_strategy: agent.handoff_strategy || 'return',
@@ -309,6 +334,13 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
         role: 'expert',
         handoff_strategy: 'return',
         tools: [],
+        ontology_config: {
+          enabled: false,
+          mode: 'off',
+          strict_rules: false,
+          explain_required: true,
+          fallback_when_unavailable: 'continue_without_ontology',
+        },
         routing_keywords: [],
         is_public: false,
         is_active: true,
@@ -1201,6 +1233,84 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                           )
                         }
                       </Form.Item>
+                    </Space>
+                  ),
+                },
+                {
+                  key: 'ontology',
+                  label: '本体能力',
+                  children: (
+                    <Space direction="vertical" size={14} style={{ width: '100%' }}>
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="让智能体在业务判断时调用本体"
+                        description="开启后，智能体会获得本体运行契约和 ontology_* 工具，可执行映射、规则判断和解释查询。默认关闭，不影响普通聊天智能体。"
+                      />
+                      <Alert
+                        type="success"
+                        showIcon
+                        message="身份与默认空间由系统注入"
+                        description="智能体调用本体工具时不需要填写用户 ID；启用默认本体空间后，也不需要每次传 space_id。这样可以避免模型伪造身份或误选空间。"
+                      />
+                      <Row gutter={14}>
+                        <Col span={8}>
+                          <Form.Item name={['ontology_config', 'enabled']} label="启用本体" valuePropName="checked">
+                            <Switch
+                              checkedChildren="启用"
+                              unCheckedChildren="关闭"
+                              onChange={(checked) => {
+                                form.setFieldValue(['ontology_config', 'mode'], checked ? 'auto' : 'off');
+                              }}
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col span={8}>
+                          <Form.Item name={['ontology_config', 'mode']} label="使用模式">
+                            <Select
+                              onChange={(mode) => {
+                                form.setFieldValue(['ontology_config', 'enabled'], mode !== 'off');
+                              }}
+                            >
+                              <Select.Option value="off">关闭</Select.Option>
+                              <Select.Option value="auto">自动判断</Select.Option>
+                              <Select.Option value="required">强制使用</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={8}>
+                          <Form.Item name={['ontology_config', 'explain_required']} label="要求解释" valuePropName="checked">
+                            <Switch checkedChildren="需要" unCheckedChildren="可选" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item name={['ontology_config', 'space_id']} label="默认本体空间" extra="不选择时，auto 模式会尝试从当前用户可访问空间中自动选择。">
+                        <Select
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder="选择一个本体空间"
+                          options={ontologySpaces.map((space) => ({
+                            value: space.id,
+                            label: `${space.name} (${space.code})`,
+                          }))}
+                        />
+                      </Form.Item>
+                      <Row gutter={14}>
+                        <Col span={12}>
+                          <Form.Item name={['ontology_config', 'strict_rules']} label="严格规则模式" valuePropName="checked">
+                            <Switch checkedChildren="严格" unCheckedChildren="宽松" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item name={['ontology_config', 'fallback_when_unavailable']} label="不可用时策略">
+                            <Select>
+                              <Select.Option value="continue_without_ontology">继续，但说明未使用本体</Select.Option>
+                              <Select.Option value="stop_and_ask">停止并要求配置本体</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
                     </Space>
                   ),
                 },
