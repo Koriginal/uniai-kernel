@@ -1,0 +1,222 @@
+# Agent Runtime 机制设计
+
+本文档记录 UniAI Kernel 从“提示词驱动的 Agent”升级到“运行时驱动的 Agent”的落地方案。
+
+当前主链路已经有 LangGraph、动态工具、本体运行时、专家 handoff、审计和 SSE 事件。问题不在于缺少提示词，而在于任务理解、拆解、执行和验收还没有独立状态。LLM 每轮根据 system prompt 自己决定是否调用工具、是否找专家、是否结束，路由器只在 tool_calls 出来之后做分流。
+
+新的方向是：先把任务转成结构化状态，再让 LLM、工具执行器、专家路由、审计和前端都读取同一份状态。
+
+## 当前边界
+
+现有标准图：
+
+```text
+context -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize
+```
+
+已经具备的能力：
+
+- `context_node`：加载会话历史、长期记忆、语义解析、本体运行时预执行结果。
+- `agent_node`：拼接 system prompt，暴露工具，流式调用模型，解析 tool_calls。
+- `adaptive_router`：根据 pending tool_calls 决定进入工具、专家、子主控或结束。
+- `tool_executor_node`：执行工具，写入 runtime_events 和审计。
+- `synthesize_node`：专家结果归还主控。
+
+主要缺口：
+
+- 没有独立的任务框架，用户目标、约束、风险、验收条件都散在 prompt 和启发式判断里。
+- 没有独立的执行计划，工具调用和专家派发依赖模型即时生成。
+- 工具执行器无法知道当前任务步骤，只能执行 pending tool_calls。
+- 前端和审计只能看到节点事件、工具事件，看不到“为什么这么执行”。
+
+## 已落地改动
+
+标准图新增 `task_planner` 节点：
+
+```text
+context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize
+```
+
+新增模块：
+
+- `backend/app/agents/task_runtime.py`
+- `backend/app/agents/nodes/task_planner.py`
+
+新增状态字段：
+
+- `task_frame`
+- `execution_plan`
+- `execution_artifacts`
+
+`task_planner_node` 的职责：
+
+1. 读取当前用户请求、`semantic_frame`、`semantic_slots`、Agent Profile、可用工具目录。
+2. 生成 `task_frame`，记录任务类型、用户目标、约束、风险和验收条件。
+3. 生成 `execution_plan`，记录步骤、责任方、工具候选和完成标准。
+4. 通过 SSE 发出 `task_runtime` 事件。
+5. 写入当前 assistant message 的 `runtime_events.task_runtime`，方便历史回放和审计。
+
+`agent_node` 现在会把结构化计划转成 `[TASK RUNTIME CONTRACT]` 注入本轮模型上下文。这里不是把所有机制继续塞进提示词，而是让 prompt 成为运行时状态的一种投影。后续路由器、工具执行器和前端可以直接读 `state["execution_plan"]`。
+
+## task_frame 字段
+
+当前字段：
+
+```json
+{
+  "task_id": "task_xxx",
+  "kind": "general | realtime_research | business_review | engineering | workflow | builder | analysis",
+  "user_goal": "...",
+  "semantic_frame": {},
+  "semantic_slots": {},
+  "constraints": {
+    "allow_tools": true,
+    "allow_web_search": true,
+    "requires_external_facts": false,
+    "requires_code_workspace": false,
+    "requires_governance": false
+  },
+  "acceptance": [],
+  "risk_flags": []
+}
+```
+
+当前分类是规则优先：
+
+- `realtime_research`：今日、最新、当前、实时、价格、新闻、汇率等请求。
+- `business_review`：合同、协议、风控、合规、审查、责任上限等业务审核请求。
+- `engineering`：代码、修复、测试、接口、重构、仓库等工程请求。
+- `general`：默认问答或轻量任务。
+
+后续可以把 `classify_task` 换成模型或小模型分类，但输出结构不要变。
+
+## execution_plan 字段
+
+当前字段：
+
+```json
+{
+  "plan_id": "plan_xxx",
+  "task_id": "task_xxx",
+  "status": "planned",
+  "steps": [
+    {
+      "id": "understand",
+      "title": "确认用户要查的对象、时间范围和口径",
+      "owner": "orchestrator | expert | tool",
+      "status": "pending",
+      "tool_candidates": [],
+      "depends_on": []
+    }
+  ],
+  "current_step": "understand",
+  "done_criteria": []
+}
+```
+
+不同任务类型的默认计划：
+
+- `realtime_research`：understand -> retrieve -> synthesize。
+- `business_review`：extract -> evaluate -> explain。
+- `engineering`：inspect -> delegate 可选 -> change -> verify。
+- `general`：understand -> solve -> respond。
+
+## 后续要接的机制
+
+### 1. 计划执行状态推进
+
+当前 `execution_plan.steps[].status` 只生成，不更新。下一步应该在节点结束时推进状态：
+
+- `agent_node` 结束：更新当前 orchestrator 步骤为 `completed` 或 `needs_tool`。
+- `tool_executor_node` 结束：把命中的 tool step 标记为 `completed`，把结果引用写入 `execution_artifacts`。
+- `handoff_node` / `synthesize_node`：记录专家输入、输出和归还状态。
+
+建议新增函数：
+
+```python
+advance_execution_plan(state, event_type, payload) -> dict
+```
+
+不要把状态推进写散在每个节点里。
+
+### 2. 工具执行按计划约束
+
+工具执行器目前只看 `pending_tool_calls` 和 Agent runtime policy。下一步要增加 plan policy：
+
+- 如果当前 step 没有工具需求，默认拒绝高风险工具。
+- 如果 step 的 `tool_candidates` 不为空，优先允许候选工具。
+- 对 `requires_external_facts=true` 且 `web_search` 可用的任务，必须先有 retrieve 结果再回答。
+- 对 `requires_governance=true` 的任务，优先读本体运行时结果，不让模型绕过规则直接给结论。
+
+### 3. 工具结果外置
+
+当前 `tool_executor_node` 仍把 `str(res)` 放进 tool message。后续应新增 `tool_artifacts` 表：
+
+- `id`
+- `session_id`
+- `request_id`
+- `tool_call_id`
+- `tool_name`
+- `content_type`
+- `preview`
+- `content`
+- `metadata`
+- `created_at`
+
+工具消息里只回填 `preview`、`artifact_id` 和必要摘要。这样长搜索结果、大 JSON、代码片段不会撑爆上下文。
+
+### 4. Tool policy 表
+
+建议新增 `tool_policy_rules`：
+
+- `id`
+- `org_id`
+- `user_id`
+- `agent_id`
+- `tool_name`
+- `effect`: `allow | deny | approval_required`
+- `resource_pattern`
+- `operation`
+- `priority`
+- `is_active`
+- `created_at`
+
+执行顺序：
+
+1. Agent Profile 的 `runtime_policy`。
+2. 组织/用户/Agent 的 `tool_policy_rules`。
+3. 工具自己的 `validateInput`。
+4. 动态工具类型策略，例如 CLI allowlist、MCP server allowlist、HTTP host allowlist。
+
+### 5. Skill 层
+
+动态工具解决“能执行什么”，Skill 解决“某类任务怎么做”。建议新增 `agent_skills`：
+
+- `name`
+- `description`
+- `when_to_use`
+- `prompt`
+- `allowed_task_kinds`
+- `allowed_agent_types`
+- `org_id`
+- `version`
+- `is_active`
+
+`task_planner_node` 根据 `task_frame.kind` 和 `semantic_slots` 选择 Skill，把 Skill 作为 `task_frame.skills` 注入，而不是把所有技能都塞给模型。
+
+## 验收口径
+
+这一轮改动的验收不是“模型回答更聪明”，而是运行时出现了可观测的结构：
+
+- SSE 中能看到 `task_runtime` 事件。
+- `ChatMessage.runtime_events.task_runtime` 能回放任务框架和计划。
+- `agent_node` 的 prompt 中有来自状态的 `[TASK RUNTIME CONTRACT]`。
+- 单元测试覆盖任务分类、计划生成和 prompt 投影。
+
+后续每加一类任务，不应该先改 system prompt，而应该先补：
+
+1. `classify_task`
+2. `build_task_frame`
+3. `build_execution_plan`
+4. 计划状态推进
+5. 工具/专家/验收策略

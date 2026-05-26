@@ -5,7 +5,7 @@ UniAI Kernel — LangGraph 对话图编译器
 这是系统的核心调度引擎，替代原 agent_service.py 中的 while 循环。
 
 图结构：
-    START → context_node → agent_node
+    START → context_node → task_planner_node → agent_node
                                 ├──[有 tool_calls，含 Handoff] → handoff_node → agent_node
                                 ├──[有 tool_calls，含 Invoke]  → orchestrator_invoke_node → agent_node
                                 ├──[有 tool_calls，无 Handoff] → tool_executor_node → agent_node
@@ -20,6 +20,7 @@ from app.core.graph_state import AgentGraphState
 
 from app.agents.nodes import (
     context_node,
+    task_planner_node,
     agent_node,
     tool_executor_node,
     handoff_node,
@@ -127,6 +128,7 @@ async def build_conversation_graph():
 
     # ── 注册节点 (带遥测包裹) ──
     workflow.add_node("context", wrap_telemetry(context_node, "context"))
+    workflow.add_node("task_planner", wrap_telemetry(task_planner_node, "task_planner"))
     workflow.add_node("agent", wrap_telemetry(agent_node, "agent"))
     workflow.add_node("tool_executor", wrap_telemetry(tool_executor_node, "tool_executor"))
     workflow.add_node("handoff", wrap_telemetry(handoff_node, "handoff"))
@@ -135,7 +137,8 @@ async def build_conversation_graph():
 
     # ── 固定边 ──
     workflow.set_entry_point("context")
-    workflow.add_edge("context", "agent")
+    workflow.add_edge("context", "task_planner")
+    workflow.add_edge("task_planner", "agent")
 
     # ── 条件边：agent 出口 (自适应路由) ──
     workflow.add_conditional_edges(

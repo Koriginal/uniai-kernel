@@ -31,6 +31,10 @@ class AgentGraphState(TypedDict):
     - interaction_mode: 当前交互形态（chat/workflow/delegated_app 等）
     - semantic_frame: 当前任务的语义框架摘要，供未来本体驱动调度使用
     - semantic_slots: 当前任务的结构化语义槽位
+    - task_frame: 任务理解节点输出的任务框架，描述目标、约束、风险和验收条件
+    - execution_plan: 任务拆解节点输出的执行计划，描述步骤、责任方和工具候选
+    - execution_artifacts: 当前请求周期中产生的结构化中间产物引用
+    - ontology_pipeline: 当前回合的本体运行时预执行结果
     - pending_delegate_type: 最近一次待处理移交类型（expert/orchestrator）
     """
     messages: list
@@ -50,6 +54,10 @@ class AgentGraphState(TypedDict):
     interaction_mode: str
     semantic_frame: Optional[dict]
     semantic_slots: dict
+    task_frame: Optional[dict]
+    execution_plan: Optional[dict]
+    execution_artifacts: list
+    ontology_pipeline: Optional[dict]
     pending_delegate_type: Optional[str]
     # --- [New: Phase 2] 自维护字段 ---
     recovery_count: int           # 本会话累计恢复次数

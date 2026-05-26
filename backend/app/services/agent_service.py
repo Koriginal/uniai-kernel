@@ -55,6 +55,7 @@ class AgentService:
         self,
         request: ChatCompletionRequest,
         user_id: str,
+        is_admin: bool = False,
         session_id: Optional[str] = None,
         enable_memory: bool = False,
         enable_swarm: bool = True,
@@ -95,13 +96,21 @@ class AgentService:
 
             agent_profile_dict = None
             if agent_profile:
+                runtime_policy = agent_profile.runtime_policy or {}
+                profile_ontology_config = agent_profile.ontology_config or {}
+                if runtime_policy and runtime_policy.get("allow_ontology") is False:
+                    profile_ontology_config = {"enabled": False, "mode": "off"}
+                effective_enable_swarm = enable_swarm and bool(runtime_policy.get("allow_swarm", enable_swarm))
+                effective_enable_canvas = enable_canvas and bool(runtime_policy.get("allow_canvas", enable_canvas))
                 agent_profile_dict = {
                     "id": agent_profile.id,
                     "name": agent_profile.name,
                     "description": agent_profile.description,
                     "system_prompt": agent_profile.system_prompt,
                     "tools": agent_profile.tools or [],
-                    "ontology_config": agent_profile.ontology_config or {},
+                    "agent_type": getattr(agent_profile, "agent_type", "general") or "general",
+                    "runtime_policy": runtime_policy,
+                    "ontology_config": profile_ontology_config,
                     "model_config_id": agent_profile.model_config_id,
                     "is_public": agent_profile.is_public,
                     "role": agent_profile.role,
@@ -109,11 +118,14 @@ class AgentService:
                     "handoff_strategy": agent_profile.handoff_strategy,
                     "runtime_mode": "root_orchestrator" if agent_profile.role == "orchestrator" else "expert",
                 }
+            else:
+                effective_enable_swarm = enable_swarm
+                effective_enable_canvas = enable_canvas
 
             # ── 3. 加载专家目录（用于 System Prompt 注入） ──
             expert_prompt_catalog = ""
             orchestrator_prompt_catalog = ""
-            if enable_swarm:
+            if effective_enable_swarm:
                 expert_prompt_catalog = await swarm_service.get_expert_directory(db, user_id, agent_id)
                 orchestrator_prompt_catalog = await swarm_service.get_orchestrator_directory(db, user_id, agent_id)
 
@@ -146,6 +158,10 @@ class AgentService:
                 "interaction_mode": request.interaction_mode or "chat",
                 "semantic_frame": None,
                 "semantic_slots": {},
+                "task_frame": None,
+                "execution_plan": None,
+                "execution_artifacts": [],
+                "ontology_pipeline": None,
                 "pending_delegate_type": None,
                 "recovery_count": 0,
                 "last_healthy_node": None,
@@ -158,12 +174,13 @@ class AgentService:
                     "thread_id": session_id or req_id,
                     "session_id": session_id,
                     "user_id": user_id,
+                    "is_admin": is_admin,
                     "request_id": req_id,
                     "model_name": request.model,
                     "orchestrator_agent_id": agent_id,
                     "orchestrator_agent_profile": agent_profile_dict,
-                    "enable_canvas": enable_canvas,
-                    "enable_swarm": enable_swarm,
+                    "enable_canvas": effective_enable_canvas,
+                    "enable_swarm": effective_enable_swarm,
                     "enable_memory": enable_memory,
                     "max_iterations": settings.MAX_AGENT_ITERATIONS,
                     "expert_prompt_catalog": expert_prompt_catalog,
@@ -270,6 +287,7 @@ class AgentService:
         self,
         request: ChatCompletionRequest,
         user_id: str,
+        is_admin: bool = False,
         session_id: Optional[str] = None,
         enable_memory: bool = False,
         enable_swarm: bool = True,
@@ -283,6 +301,7 @@ class AgentService:
             request=request, user_id=user_id, session_id=session_id,
             enable_memory=enable_memory, enable_swarm=enable_swarm,
             enable_canvas=enable_canvas, req_id=req_id,
+            is_admin=is_admin,
             identity_context=identity_context,
         ):
             if isinstance(chunk, str) and chunk.startswith("data: "):

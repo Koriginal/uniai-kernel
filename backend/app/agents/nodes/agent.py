@@ -13,6 +13,7 @@ from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
 from app.core.llm import completion, _clean_messages
 from app.core.plugins import registry
+from app.agents.task_runtime import build_runtime_prompt_block
 from app.models.openai import (
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionChunkDelta
 )
@@ -40,6 +41,42 @@ def _extract_latest_user_text(messages: list) -> str:
     return ""
 
 
+def _normalize_tool_arguments(raw: Any) -> str:
+    """Provider messages require function.arguments to be a JSON object string."""
+    if raw is None or raw == "":
+        return "{}"
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False)
+    if not isinstance(raw, str):
+        return json.dumps({"input": raw}, ensure_ascii=False)
+
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return json.dumps(parsed, ensure_ascii=False)
+        return json.dumps({"input": parsed}, ensure_ascii=False)
+    except Exception:
+        return json.dumps({"input": raw}, ensure_ascii=False)
+
+
+def _sanitize_tool_calls(tool_calls: list[dict]) -> list[dict]:
+    sanitized = []
+    for item in tool_calls or []:
+        call = dict(item)
+        fn = dict(call.get("function") or {})
+        fn["arguments"] = _normalize_tool_arguments(fn.get("arguments"))
+        call["function"] = fn
+        sanitized.append(call)
+    return sanitized
+
+
+def _sanitize_message_tool_calls(messages: list[dict]) -> list[dict]:
+    for msg in messages or []:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            msg["tool_calls"] = _sanitize_tool_calls(msg.get("tool_calls") or [])
+    return messages
+
+
 def _is_realtime_query(text: str) -> bool:
     t = (text or "").lower()
     if not t:
@@ -50,6 +87,55 @@ def _is_realtime_query(text: str) -> bool:
         "today", "latest", "current", "real-time", "realtime", "price", "news",
     ]
     return any(k in t for k in keywords)
+
+
+def _looks_like_ontology_runtime_task(text: str) -> bool:
+    t = (text or "").lower()
+    if not t:
+        return False
+    ontology_keywords = [
+        "本体", "映射", "规则", "解释", "审核", "审查", "风控", "风险", "合规", "结构化", "抽取",
+        "ontology", "mapping", "schema", "rule", "risk", "compliance", "review", "extract",
+    ]
+    if any(item in t for item in ontology_keywords):
+        return True
+    contract_keywords = [
+        "合同", "协议", "甲方", "乙方", "付款", "违约", "责任上限", "自动续约",
+        "contract", "agreement", "party a", "party b", "payment terms", "liability", "governing law",
+    ]
+    hit_count = sum(1 for item in contract_keywords if item in t)
+    return hit_count >= 2 or ("contract" in t and len(t) > 120)
+
+
+def _looks_like_business_review_task(text: str) -> bool:
+    """Detect pasted business documents that should not fan out to generic tools."""
+    t = (text or "").lower()
+    if not t:
+        return False
+    if _is_realtime_query(t):
+        return False
+
+    review_terms = [
+        "审核", "审查", "风控", "风险", "合规", "校验", "评估", "识别风险",
+        "review", "risk", "compliance", "validate", "assess",
+    ]
+    document_terms = [
+        "合同", "协议", "甲方", "乙方", "付款", "违约", "责任上限", "自动续约",
+        "contract", "agreement", "party a", "party b", "payment terms",
+        "liability", "termination", "governing law",
+    ]
+    review_hits = sum(1 for item in review_terms if item in t)
+    doc_hits = sum(1 for item in document_terms if item in t)
+    has_long_document = len(t) >= 800 and doc_hits >= 2
+    return has_long_document or (review_hits >= 1 and doc_hits >= 1)
+
+
+def _is_active_ontology_pipeline(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    event = value.get("event") if isinstance(value.get("event"), dict) else {}
+    status = value.get("status") or event.get("status")
+    return bool(status and status not in {"idle", "disabled"})
 
 
 def _has_tool_result_after_latest_user(messages: list, tool_name: str) -> bool:
@@ -93,6 +179,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     user_id = c.get("user_id", "")
 
     messages = list(state["messages"])
+    latest_user_query = _extract_latest_user_text(messages)
     current_agent_id = state["current_agent_id"]
     agent_profile = state["current_agent_profile"]
     current_msg_id = state["current_msg_id"]
@@ -106,6 +193,20 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     interaction_mode = state.get("interaction_mode", "chat")
     semantic_frame = state.get("semantic_frame") or {}
     semantic_slots = state.get("semantic_slots") or {}
+    task_frame = state.get("task_frame") or {}
+    execution_plan = state.get("execution_plan") or {}
+    ontology_pipeline = state.get("ontology_pipeline")
+    ontology_config = (agent_profile or {}).get("ontology_config") or {}
+    runtime_policy = (agent_profile or {}).get("runtime_policy") or {}
+    allow_tools = bool(runtime_policy.get("allow_tools", True))
+    allow_web_search = bool(runtime_policy.get("allow_web_search", True))
+    ontology_enabled = ontology_runtime.is_enabled(ontology_config)
+    ontology_task_active = ontology_enabled and (
+        _is_active_ontology_pipeline(ontology_pipeline)
+        or _looks_like_ontology_runtime_task(latest_user_query)
+    )
+    business_review_task_active = _looks_like_business_review_task(latest_user_query)
+    runtime_task_lock_active = ontology_task_active or business_review_task_active
 
     runtime_mode = (agent_profile or {}).get("runtime_mode", "root_orchestrator" if current_agent_id == orchestrator_agent_id else "expert")
     is_expert = runtime_mode == "expert"
@@ -114,7 +215,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     # ---- 1. 构建本轮 System Prompt ----
     current_sys_prompt = (agent_profile.get("system_prompt") if agent_profile else None) or "你是一个有用的 AI 助手。"
 
-    if enable_canvas:
+    if enable_canvas and not runtime_task_lock_active:
         canvas_instr = (
             "\n\n[SIDEBAR CANVAS: ENABLED]: \n"
             "1. PURE SOURCE: In 'upsert_canvas' content field, provide RAW code ONLY. NO markdown fences (```). \n"
@@ -131,7 +232,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += fallback_instr
 
-    if enable_swarm and is_expert:
+    if enable_swarm and is_expert and not runtime_task_lock_active:
         protocol_instr = (
             f"\n\n[COLLABORATION PROTOCOL]: \n"
             f"1. MANDATORY: Output your logic/reasoning first. \n"
@@ -140,7 +241,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += protocol_instr
 
-    if enable_swarm and is_delegate_orchestrator:
+    if enable_swarm and is_delegate_orchestrator and not runtime_task_lock_active:
         delegate_instr = (
             "\n\n[SUB-ORCHESTRATOR PROTOCOL]: \n"
             "1. You are acting as a delegated application, not the root orchestrator. \n"
@@ -150,7 +251,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += delegate_instr
 
-    if current_agent_id == orchestrator_agent_id:
+    if current_agent_id == orchestrator_agent_id and not runtime_task_lock_active:
         steward_instr = (
             "\n\n[ORCHESTRATOR DUTY]: \n"
             "1. NO REPETITION: Do NOT repeat code blocks from experts. \n"
@@ -169,18 +270,35 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         )
         current_sys_prompt += mode_instr
 
-    ontology_config = (agent_profile or {}).get("ontology_config") or {}
+    runtime_contract = build_runtime_prompt_block(task_frame, execution_plan)
+    if runtime_contract:
+        current_sys_prompt += runtime_contract
+
     ontology_instr = await ontology_runtime.build_agent_prompt(
         db,
         raw_config=ontology_config,
         user_id=user_id,
-        query=_extract_latest_user_text(messages),
-        is_admin=False,
+        query=latest_user_query,
+        is_admin=bool(c.get("is_admin", False)),
     )
     if ontology_instr:
         current_sys_prompt += ontology_instr
+    if isinstance(ontology_pipeline, dict) and ontology_pipeline.get("prompt_block"):
+        current_sys_prompt += str(ontology_pipeline["prompt_block"])
 
-    directory_catalog = "\n\n".join([part for part in [expert_prompt_catalog, orchestrator_prompt_catalog] if part]).strip()
+    if runtime_task_lock_active:
+        ontology_lock_instr = (
+            "\n\n[BUSINESS REVIEW TASK LOCK]:\n"
+            "本轮已经识别为业务审核任务（例如合同审核、风控审查、结构化映射或规则解释）。\n"
+            "1. 禁止调用 web_search、transfer_to_agent、invoke_orchestrator、代码专家、翻译专家或其他专家协作，除非用户明确要求。\n"
+            "2. 禁止调用任何 function/tool；本轮应直接给出业务审核结果，不要把合同改写成代码，也不要翻译全文。\n"
+            "3. 如果本体运行时快照存在，应基于其中的 mapping、decision、explanation 回答；如果没有快照，则基于用户提供的文本做人工审阅式分析，并提示可绑定本体空间获得结构化规则结论。\n"
+            "4. 输出应聚焦：识别到的实体/字段、命中的风险、缺失信息、解释证据、下一步建议。\n"
+            "5. 若快照显示 waiting_for_input，要求用户补充合同文本或 JSON；若已有 success/mapped_only，直接给审核结论。"
+        )
+        current_sys_prompt += ontology_lock_instr
+
+    directory_catalog = "" if runtime_task_lock_active else "\n\n".join([part for part in [expert_prompt_catalog, orchestrator_prompt_catalog] if part]).strip()
     full_sys_content = (directory_catalog + "\n\n" + current_sys_prompt).strip()
 
     # 确保 system 消息处于首位且更新
@@ -204,8 +322,12 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if agent_profile and agent_profile.get("tools"):
         if "*" not in agent_profile["tools"]:
             tools_list = [t for t in tools_list if t.metadata.name in agent_profile["tools"]]
+    if not allow_tools:
+        tools_list = []
+    elif not allow_web_search:
+        tools_list = [t for t in tools_list if t.metadata.name != "web_search"]
 
-    if ontology_runtime.is_enabled((agent_profile or {}).get("ontology_config") or {}):
+    if ontology_enabled and allow_tools:
         existing_tool_names = {tool.metadata.name for tool in tools_list}
         for tool_name in ONTOLOGY_AGENT_TOOL_NAMES:
             action = registry.get_action(tool_name)
@@ -213,14 +335,19 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                 tools_list.append(action)
                 existing_tool_names.add(tool_name)
 
+    if runtime_task_lock_active:
+        # 本体流水线已在 context_node 预执行。这里不再向模型暴露 function tools，
+        # 避免代码模型生成非 JSON 的 function.arguments 触发 provider 400。
+        tools_list = []
+
     openai_tools = [t.to_openai_format() for t in tools_list] if tools_list else []
 
-    if enable_canvas:
+    if enable_canvas and not runtime_task_lock_active:
         canvas_tool = registry.get_action("upsert_canvas")
         if canvas_tool and not any(t.get("function", {}).get("name") == "upsert_canvas" for t in openai_tools):
             openai_tools.append(canvas_tool.to_openai_format())
 
-    if enable_swarm:
+    if enable_swarm and not runtime_task_lock_active:
         from app.services.swarm_service import swarm_service
         if not any(t.get("function", {}).get("name") == "transfer_to_agent" for t in openai_tools):
             openai_tools.append(swarm_service.get_handoff_tool_definition())
@@ -229,7 +356,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
 
     # 若 web_search 工具可用，注入实时信息检索强约束，避免“只建议用户自己去搜”
     has_web_search = any(t.get("function", {}).get("name") == "web_search" for t in openai_tools)
-    if has_web_search:
+    if has_web_search and not runtime_task_lock_active:
         realtime_policy = (
             "\n\n[REALTIME FACT POLICY]:\n"
             "1. 对于“今日/最新/当前/实时”信息请求（如价格、新闻、汇率、政策更新），必须优先调用 web_search。\n"
@@ -258,7 +385,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     await callback.emit(f"data: {json.dumps({'type': 'status', 'state': 'active', 'agentName': agent_name, 'content': state_msg}, ensure_ascii=False)}\n\n")
 
     # ---- 4. 流式调用 LLM ----
-    cleaned_internal = _clean_messages(messages)
+    cleaned_internal = _sanitize_message_tool_calls(_clean_messages(messages))
     for m in cleaned_internal:
         if m.get("role") == "assistant" and isinstance(m.get("content"), str):
             m["content"] = re.sub(r"<\/?collaboration[^>]*>", "", m["content"]).strip()
@@ -272,7 +399,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
 
     try:
         latest_user_query = _extract_latest_user_text(cleaned_internal)
-        force_web_search = has_web_search and _is_realtime_query(latest_user_query)
+        force_web_search = has_web_search and not runtime_task_lock_active and _is_realtime_query(latest_user_query)
         # 仅当“当前用户问题之后”已有 web_search 结果时才取消强制，避免复用旧问题检索结果
         has_web_search_result = _has_tool_result_after_latest_user(cleaned_internal, "web_search")
         if force_web_search and not has_web_search_result and latest_user_query:
@@ -305,7 +432,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                         "tool_call_id": prefetch_call_id,
                     }
                 )
-                cleaned_internal = _clean_messages(messages)
+                cleaned_internal = _sanitize_message_tool_calls(_clean_messages(messages))
                 has_web_search_result = True
             except Exception as prefetch_error:
                 logger.warning(f"[AgentNode] prefetch web_search failed: {prefetch_error}")
@@ -485,7 +612,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     # ---- 6. 累计 tool_calls ----
     pending_tool_calls = []
     if tool_calls_buffer:
-        pending_tool_calls = list(tool_calls_buffer.values())
+        pending_tool_calls = _sanitize_tool_calls(list(tool_calls_buffer.values()))
         total_tool_calls_list.extend(pending_tool_calls)
 
     # ---- 7. 持久化当前消息 ----

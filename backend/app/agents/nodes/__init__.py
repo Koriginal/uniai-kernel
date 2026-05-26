@@ -1,5 +1,6 @@
 """图节点包"""
 from app.agents.nodes.context import context_node
+from app.agents.nodes.task_planner import task_planner_node
 from app.agents.nodes.agent import agent_node
 from app.agents.nodes.tools import tool_executor_node
 from app.agents.nodes.handoff import handoff_node
@@ -8,6 +9,7 @@ from app.agents.nodes.synthesize import synthesize_node
 
 __all__ = [
     "context_node",
+    "task_planner_node",
     "agent_node",
     "tool_executor_node",
     "handoff_node",
