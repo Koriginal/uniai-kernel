@@ -10,17 +10,8 @@ import {
 import axios from 'axios';
 
 import ChatView from './components/ChatView';
-import ArtifactCanvas from './components/ArtifactCanvas';
-import AgentManager from './components/AgentManager';
-import ProviderManager from './components/ProviderManager';
-import ToolRegistry from './components/ToolRegistry';
-import AuditLogView from './components/AuditLogView';
-import ApiKeyManager from './components/ApiKeyManager';
-import UserManager from './components/UserManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import SettingsCenter from './components/SettingsView';
 import Login from './components/Login';
-import GraphTracePanel from './components/GraphTracePanel';
 import BrandCatIcon from './components/BrandCatIcon';
 import type { Message, Agent } from './components/ChatView';
 
@@ -28,6 +19,24 @@ const { Header, Content, Sider } = Layout;
 const { Text, Title } = Typography;
 
 const OntologyWorkbench = React.lazy(() => import('./components/OntologyWorkbench'));
+const AgentManager = React.lazy(() => import('./components/AgentManager'));
+const ProviderManager = React.lazy(() => import('./components/ProviderManager'));
+const ToolRegistry = React.lazy(() => import('./components/ToolRegistry'));
+const AuditLogView = React.lazy(() => import('./components/AuditLogView'));
+const ApiKeyManager = React.lazy(() => import('./components/ApiKeyManager'));
+const UserManager = React.lazy(() => import('./components/UserManager'));
+const SettingsCenter = React.lazy(() => import('./components/SettingsView'));
+const ArtifactCanvas = React.lazy(() => import('./components/ArtifactCanvas'));
+const GraphTracePanel = React.lazy(() => import('./components/GraphTracePanel'));
+
+const ViewLoading: React.FC<{ label?: string }> = ({ label = '正在加载页面...' }) => (
+  <div style={{ flex: 1, minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Space>
+      <SyncOutlined spin style={{ color: '#1677ff' }} />
+      <Text type="secondary">{label}</Text>
+    </Space>
+  </div>
+);
 
 type ViewType = 'chat' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
 
@@ -400,7 +409,9 @@ const App: React.FC = () => {
         content: m.content,
         timestamp: m.timestamp,
         agentName: agents.find(a => a.id === m.agent_id)?.name,
-        tool_calls: m.tool_calls // 恢复工具调用持久化状态
+        tool_calls: m.tool_calls, // 恢复工具调用持久化状态
+        ontology_runtime: m.ontology_runtime || m.runtime_events?.ontology_runtime,
+        tool_runtime_events: m.tool_runtime_events || m.runtime_events?.tool_runtime_events || [],
       }));
       setMessages(history);
 
@@ -707,6 +718,66 @@ const App: React.FC = () => {
                 continue;
               }
 
+              if (data.type === 'ontology_runtime') {
+                const plan = data.action_plan || {};
+                const decision = data.decision || {};
+                const execution = data.action_execution || {};
+                setMessages(prev => {
+                  const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
+                  if (targetIndex === -1) return prev;
+                  const newMsgs = [...prev];
+                  newMsgs[targetIndex] = {
+                    ...newMsgs[targetIndex],
+                    ontology_runtime: data,
+                  };
+                  return newMsgs;
+                });
+                const parts = [
+                  data.graph_id ? `实例图 ${data.graph_id}` : '',
+                  decision.risk_level ? `风险 ${decision.risk_level}` : '',
+                  typeof plan.missing_field_count === 'number' ? `缺失字段 ${plan.missing_field_count}` : '',
+                  typeof plan.suggested_tool_count === 'number' ? `建议工具 ${plan.suggested_tool_count}` : '',
+                  typeof plan.suggested_data_source_count === 'number' ? `候选数据源 ${plan.suggested_data_source_count}` : '',
+                  execution.applied_patch_count ? `已补数 ${execution.applied_patch_count}` : '',
+                ].filter(Boolean);
+                setCollaborationStatus({
+                  agentName: '本体运行时',
+                  content: parts.length > 0 ? parts.join(' · ') : (data.message || data.status || '已完成本体分析'),
+                  state: 'active',
+                });
+                continue;
+              }
+
+              if (data.type === 'tool_runtime') {
+                setMessages(prev => {
+                  const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
+                  if (targetIndex === -1) return prev;
+                  const targetMsg: any = prev[targetIndex];
+                  const existingEvents = Array.isArray(targetMsg.tool_runtime_events) ? targetMsg.tool_runtime_events : [];
+                  const eventIndex = existingEvents.findIndex((event: any) => event.tool_call_id === data.tool_call_id);
+                  const nextEvents = [...existingEvents];
+                  if (eventIndex >= 0) {
+                    nextEvents[eventIndex] = { ...nextEvents[eventIndex], ...data };
+                  } else {
+                    nextEvents.push(data);
+                  }
+                  const newMsgs = [...prev];
+                  newMsgs[targetIndex] = {
+                    ...targetMsg,
+                    tool_runtime_events: nextEvents,
+                  };
+                  return newMsgs;
+                });
+                setCollaborationStatus({
+                  agentName: '工具运行时',
+                  content: data.status === 'running'
+                    ? `正在执行 ${data.tool_label || data.tool_name}`
+                    : `${data.tool_label || data.tool_name}：${data.status || '完成'}`,
+                  state: data.status === 'running' ? 'active' : 'completed',
+                });
+                continue;
+              }
+
               // 稳健型受限正则解析器：精准定位 JSON Key，防止被模型思考过程中的描述性文字干扰
               const extractPartialJsonField = (jsonStr: string, fieldName: string) => {
                 // 精准匹配 "key": " 或 "key":" (支持空格)
@@ -931,19 +1002,21 @@ const App: React.FC = () => {
                     background: currentSessionId === s.id ? '#e6f7ff' : 'transparent'
                   }}
                 >
-                  <Text ellipsis={{ tooltip: true }} style={{ flex: 1, fontSize: '13px' }}>
-                    {s.title || 'Untitled'}
-                  </Text>
-                  <Space size={4}>
-                    <EditOutlined
-                      onClick={e => { e.stopPropagation(); renameSession(s.id); }}
-                      style={{ color: '#999', fontSize: '11px' }}
-                    />
-                    <DeleteOutlined
-                      onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
-                      style={{ color: '#ff4d4f', fontSize: '11px' }}
-                    />
-                  </Space>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
+                    <Text ellipsis={{ tooltip: true }} style={{ flex: 1, minWidth: 0, fontSize: '13px' }}>
+                      {s.title || 'Untitled'}
+                    </Text>
+                    <Space size={4} style={{ flexShrink: 0 }}>
+                      <EditOutlined
+                        onClick={e => { e.stopPropagation(); renameSession(s.id); }}
+                        style={{ color: '#999', fontSize: '11px' }}
+                      />
+                      <DeleteOutlined
+                        onClick={e => { e.stopPropagation(); deleteSession(s.id); }}
+                        style={{ color: '#ff4d4f', fontSize: '11px' }}
+                      />
+                    </Space>
+                  </div>
                 </Menu.Item>
               ))}
             </Menu.SubMenu>
@@ -1141,6 +1214,7 @@ const App: React.FC = () => {
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
               <ChatView
                 messages={messages} loading={loading}
+                currentSessionId={currentSessionId}
                 collaborationStatus={collaborationStatus}
                 inputText={inputText} setInputText={setInputText}
                 currentAgent={currentAgent}
@@ -1164,72 +1238,104 @@ const App: React.FC = () => {
                   setCanvasVisible(true);
                 }}
               />
-              <GraphTracePanel
-                visible={graphTraceVisible}
-                onClose={() => setGraphTraceVisible(false)}
-                currentAgentName={currentAgent?.name}
-                isStreaming={loading}
-                nodeEvents={nodeEvents}
-              />
-              <ArtifactCanvas
-                visible={canvasVisible}
-                onClose={() => {
-                  setCanvasVisible(false);
-                }}
-                title={canvasTitle}
-                content={canvasContent}
-                type={canvasType}
-                language={canvasLanguage}
-                loading={loading}
-              />
+              {graphTraceVisible && (
+                <Suspense fallback={<ViewLoading label="正在加载执行轨迹..." />}>
+                  <GraphTracePanel
+                    visible={graphTraceVisible}
+                    onClose={() => setGraphTraceVisible(false)}
+                    currentAgentName={currentAgent?.name}
+                    isStreaming={loading}
+                    nodeEvents={nodeEvents}
+                  />
+                </Suspense>
+              )}
+              {canvasVisible && (
+                <Suspense fallback={<ViewLoading label="正在加载侧边看板..." />}>
+                  <ArtifactCanvas
+                    visible={canvasVisible}
+                    onClose={() => {
+                      setCanvasVisible(false);
+                    }}
+                    title={canvasTitle}
+                    content={canvasContent}
+                    type={canvasType}
+                    language={canvasLanguage}
+                    loading={loading}
+                  />
+                </Suspense>
+              )}
             </div>
           )}
 
           {activeView === 'agents' && (
-            <AgentManager
-              agents={agents} setAgents={setAgents}
-              modelConfigs={modelConfigs} msgApi={message}
-              onRefresh={() => { fetchAgents(); fetchModelConfigs(); }}
-            />
+            <Suspense fallback={<ViewLoading label="正在加载专家管理..." />}>
+              <AgentManager
+                agents={agents} setAgents={setAgents}
+                modelConfigs={modelConfigs} msgApi={message}
+                onRefresh={() => { fetchAgents(); fetchModelConfigs(); }}
+              />
+            </Suspense>
           )}
 
           {activeView === 'providers' && (
-            <ProviderManager
-              modelConfigs={modelConfigs} msgApi={message}
-              onRefresh={fetchModelConfigs}
-            />
+            <Suspense fallback={<ViewLoading label="正在加载模型供应商..." />}>
+              <ProviderManager
+                modelConfigs={modelConfigs} msgApi={message}
+                onRefresh={fetchModelConfigs}
+              />
+            </Suspense>
           )}
 
           {activeView === 'tools' && (
-            <ToolRegistry msgApi={message} />
+            <Suspense fallback={<ViewLoading label="正在加载工具注册表..." />}>
+              <ToolRegistry msgApi={message} />
+            </Suspense>
           )}
 
           {activeView === 'ontology' && (
-            <Suspense fallback={<div style={{ padding: 24 }}><Text type="secondary">正在加载本体控制台...</Text></div>}>
-              <OntologyWorkbench api={api} />
+            <Suspense fallback={<ViewLoading label="正在加载本体控制台..." />}>
+              <OntologyWorkbench
+                api={api}
+                modelConfigs={modelConfigs}
+                onAgentsChanged={fetchAgents}
+                onAgentCreated={(agent: Agent) => {
+                  startNewChat();
+                  setCurrentAgent(agent);
+                  localStorage.setItem('currentAgentId', agent.id);
+                  setActiveView('chat');
+                }}
+              />
             </Suspense>
           )}
 
           {activeView === 'audit' && (
-            <AuditLogView />
+            <Suspense fallback={<ViewLoading label="正在加载审计看板..." />}>
+              <AuditLogView />
+            </Suspense>
           )}
 
           {activeView === 'api_keys' && (
-            <ApiKeyManager api={api} user={user} />
+            <Suspense fallback={<ViewLoading label="正在加载 API Key 管理..." />}>
+              <ApiKeyManager api={api} user={user} />
+            </Suspense>
           )}
 
           {activeView === 'settings' && user && (
-            <SettingsCenter
-              user={user}
-              api={api}
-              modelConfigs={modelConfigs}
-              onRefresh={fetchMe}
-              onBack={() => setActiveView('chat')}
-            />
+            <Suspense fallback={<ViewLoading label="正在加载系统设置..." />}>
+              <SettingsCenter
+                user={user}
+                api={api}
+                modelConfigs={modelConfigs}
+                onRefresh={fetchMe}
+                onBack={() => setActiveView('chat')}
+              />
+            </Suspense>
           )}
 
           {activeView === 'users' && (
-            <UserManager />
+            <Suspense fallback={<ViewLoading label="正在加载用户管理..." />}>
+              <UserManager />
+            </Suspense>
           )}
         </Content>
         <ChangePasswordModal

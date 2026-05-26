@@ -1,19 +1,14 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, message } from 'antd';
+import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, message, Tag, Drawer } from 'antd';
 import { 
-  AppstoreAddOutlined, CopyOutlined, CheckOutlined, SyncOutlined, ExpandOutlined, PartitionOutlined, RobotOutlined, 
-  UserOutlined, HistoryOutlined, PlusOutlined, CaretRightOutlined, CaretDownOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
+  AppstoreAddOutlined, CopyOutlined, SyncOutlined, PartitionOutlined, RobotOutlined, 
+  UserOutlined, HistoryOutlined, PlusOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
   DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined
 } from '@ant-design/icons';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import axios from 'axios';
 
 const { Text } = Typography;
+const MessageContent = React.lazy(() => import('./MarkdownMessage'));
 
 export interface Message {
   id: string;
@@ -24,6 +19,8 @@ export interface Message {
   images?: string[]; 
   feedback?: 'like' | 'dislike' | 'null';
   tool_calls?: { id: string; function: { name: string; arguments: string; }; }[];
+  tool_runtime_events?: any[];
+  ontology_runtime?: any;
 }
 
 export interface Agent {
@@ -31,6 +28,15 @@ export interface Agent {
   name: string;
   description: string;
   tools?: string[];
+  agent_type?: 'general' | 'tool' | 'ontology' | 'workflow';
+  runtime_policy?: {
+    allow_tools?: boolean;
+    allow_web_search?: boolean;
+    allow_swarm?: boolean;
+    allow_canvas?: boolean;
+    allow_ontology?: boolean;
+    tool_call_mode?: string;
+  };
   is_active: boolean;
   is_public: boolean;
   role: 'orchestrator' | 'expert';
@@ -50,6 +56,7 @@ export interface Agent {
 
 interface ChatViewProps {
   messages: Message[];
+  currentSessionId?: string | null;
   loading: boolean;
   inputText: string;
   setInputText: (v: string) => void;
@@ -72,203 +79,247 @@ interface ChatViewProps {
   collaborationStatus?: { agentName?: string, content?: string, state: 'active' | 'completed' | null };
 }
 
-const CodeBlock = ({ language, children, onOpenCanvas }: { language: string, children: string, onOpenCanvas?: any }) => {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => { navigator.clipboard.writeText(children).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
-  return (
-    <div style={{ position: 'relative', margin: '12px 0', borderRadius: '8px', overflow: 'hidden', border: '1px solid #f0f0f0' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px', background: '#f8f8f8', borderBottom: '1px solid #eee', fontSize: '12px', color: '#666' }}>
-        <Space size={12}><span>{language || 'code'}</span></Space>
-        <Space size={12}>
-          <Button type="text" size="small" icon={<ExpandOutlined />} onClick={() => onOpenCanvas?.(`${language} 画布`, children, 'code', language)} />
-          <Button type="text" size="small" icon={copied ? <CheckOutlined style={{ color: '#52c41a' }} /> : <CopyOutlined />} onClick={handleCopy} />
-        </Space>
-      </div>
-      <SyntaxHighlighter 
-        style={oneLight} 
-        language={language} 
-        PreTag="div" 
-        wrapLongLines={true}
-        customStyle={{ 
-          margin: 0, 
-          padding: '12px', 
-          background: '#fff', 
-          fontSize: '13px', 
-          whiteSpace: 'pre-wrap', 
-          wordBreak: 'break-word',
-          overflowWrap: 'break-word',
-          maxWidth: '100%'
-        }}
-        codeTagProps={{
-          style: {
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            display: 'block'
-          }
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
-    </div>
-  );
+interface SessionRuntimeTrace {
+  message_id: string;
+  session_id?: string | null;
+  agent_id?: string | null;
+  created_at?: string;
+  content_preview: string;
+  summary: {
+    has_ontology: boolean;
+    ontology_status?: string | null;
+    ontology_space_id?: string | null;
+    ontology_space_name?: string | null;
+    ontology_space_code?: string | null;
+    risk_level?: string | null;
+    tool_count: number;
+    successful_tool_count: number;
+    blocked_tool_count: number;
+    failed_tool_count: number;
+  };
+  ontology_runtime?: any;
+  tool_runtime_events: any[];
+}
+
+const buildLocalSessionRuntimeTraces = (messages: Message[]): SessionRuntimeTrace[] => {
+  return messages
+    .filter((item) => item.role === 'assistant' && (item.ontology_runtime || (item.tool_runtime_events || []).length > 0))
+    .map((item) => {
+      const ontology = item.ontology_runtime;
+      const tools = item.tool_runtime_events || [];
+      const finalTools = tools.filter((event) => event && (!event.phase || event.phase === 'end'));
+      return {
+        message_id: item.id,
+        created_at: item.timestamp ? new Date(item.timestamp).toISOString() : undefined,
+        content_preview: typeof item.content === 'string' ? item.content.replace(/\s+/g, ' ').slice(0, 140) : '多模态消息',
+        summary: {
+          has_ontology: !!ontology,
+          ontology_status: ontology?.status,
+          ontology_space_id: ontology?.space_id,
+          ontology_space_name: ontology?.space_name,
+          ontology_space_code: ontology?.space_code,
+          risk_level: ontology?.decision?.risk_level,
+          tool_count: finalTools.length,
+          successful_tool_count: finalTools.filter((event) => event.status === 'success').length,
+          blocked_tool_count: finalTools.filter((event) => event.status === 'blocked').length,
+          failed_tool_count: finalTools.filter((event) => event.status === 'error').length,
+        },
+        ontology_runtime: ontology,
+        tool_runtime_events: tools,
+      };
+    });
 };
 
-// 内部协作折叠块组件：通过 isGenerating 判断自动展开/折叠
-const CollaborationBlock: React.FC<{ title: string; children: React.ReactNode; isGenerating?: boolean }> = ({ title, children, isGenerating = false }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  
-  // 流式生成期间保持展开，一旦生成结束，自动折叠
-  useEffect(() => {
-    setIsExpanded(!!isGenerating);
-  }, [isGenerating]);
+const buildSessionRuntimeReport = (traces: SessionRuntimeTrace[]): string => {
+  const lines = [
+    '# 会话运行轨迹报告',
+    '',
+    `生成时间：${new Date().toLocaleString()}`,
+    `回答数量：${traces.length}`,
+    '',
+  ];
+  traces.forEach((trace, index) => {
+    const summary = trace.summary || {};
+    const spaceLabel = summary.ontology_space_name || summary.ontology_space_code || summary.ontology_space_id || '未使用本体';
+    lines.push(`## 回答 ${index + 1}`);
+    if (trace.created_at) lines.push(`时间：${new Date(trace.created_at).toLocaleString()}`);
+    lines.push(`本体空间：${spaceLabel}`);
+    lines.push(`本体状态：${summary.ontology_status || (summary.has_ontology ? '已触发' : '未使用')}`);
+    if (trace.ontology_runtime?.trigger_reason) {
+      lines.push(`触发判断：${trace.ontology_runtime.trigger_reason}`);
+    }
+    if (Array.isArray(trace.ontology_runtime?.trigger_signals) && trace.ontology_runtime.trigger_signals.length > 0) {
+      lines.push(`触发信号：${trace.ontology_runtime.trigger_signals.join('，')}`);
+    }
+    lines.push(`风险等级：${summary.risk_level || '未执行'}`);
+    lines.push(`工具：${summary.tool_count || 0} 次，成功 ${summary.successful_tool_count || 0}，拦截 ${summary.blocked_tool_count || 0}，失败 ${summary.failed_tool_count || 0}`);
+    lines.push(`回答摘要：${trace.content_preview || '无'}`);
+    lines.push('');
+  });
+  return lines.join('\n');
+};
+
+const statusLabelMap: Record<string, string> = {
+  success: '已完成',
+  mapped_only: '已映射',
+  waiting_for_input: '等待输入',
+  missing_mapping: '缺少映射',
+  unavailable: '不可用',
+  error: '执行异常',
+};
+
+const toolStatusMeta: Record<string, { color: string; label: string }> = {
+  running: { color: 'processing', label: '运行中' },
+  success: { color: 'success', label: '成功' },
+  error: { color: 'error', label: '失败' },
+  blocked: { color: 'warning', label: '已拦截' },
+};
+
+const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[] }> = ({ ontology, tools }) => {
+  const toolEvents = (tools || []).filter(Boolean);
+  if (!ontology && toolEvents.length === 0) return null;
+
+  const mapping = ontology?.mapping || {};
+  const decision = ontology?.decision || {};
+  const plan = ontology?.action_plan || {};
+  const execution = ontology?.action_execution || {};
+  const spaceLabel = ontology?.space_name || ontology?.space_code || ontology?.space_id || '未选择空间';
+  const ontologyStatus = ontology ? (statusLabelMap[ontology.status] || ontology.status || '已触发') : '未介入';
+  const ontologyRisk = decision.risk_level || '未执行';
+  const triggerReason = ontology?.trigger_reason || (ontology ? '本体运行时已记录，但未提供触发原因' : '');
+  const triggerSignals: string[] = Array.isArray(ontology?.trigger_signals) ? ontology.trigger_signals : [];
+  const successfulTools = toolEvents.filter(event => event.status === 'success').length;
+  const blockedTools = toolEvents.filter(event => event.status === 'blocked').length;
+  const failedTools = toolEvents.filter(event => event.status === 'error').length;
 
   return (
-    <div style={{ 
-      margin: '12px 0', border: '1px solid #d9f7be', borderRadius: '8px', 
-      background: '#f6ffed', overflow: 'hidden' 
+    <div style={{
+      border: '1px solid #dbe3ef',
+      background: '#fbfdff',
+      borderRadius: 12,
+      padding: '12px 14px',
+      marginBottom: 12,
+      color: '#111827'
     }}>
-      <div 
-        onClick={() => setIsExpanded(!isExpanded)}
-        style={{ 
-          padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, 
-          cursor: 'pointer', userSelect: 'none', color: '#52c41a', fontWeight: 500,
-          background: isExpanded ? 'rgba(82, 196, 26, 0.05)' : 'transparent'
-        }}
-      >
-        <PartitionOutlined />
-        <span style={{ fontSize: '13px' }}>{title || '协作专家'} 处理详情</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', opacity: 0.6 }}>
-          {isExpanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <Space size={8} wrap>
+          <PartitionOutlined style={{ color: '#1677ff' }} />
+          <Text strong>执行轨迹</Text>
+          {ontology && <Tag color="blue">本体：{ontologyStatus}</Tag>}
+          {toolEvents.length > 0 && <Tag>工具 {toolEvents.length}</Tag>}
+          {blockedTools > 0 && <Tag color="warning">拦截 {blockedTools}</Tag>}
+          {failedTools > 0 && <Tag color="error">失败 {failedTools}</Tag>}
+        </Space>
+        {ontology && <Text type="secondary" style={{ fontSize: 12 }}>空间：{spaceLabel}</Text>}
       </div>
-      {isExpanded && (
-        <div style={{ 
-          padding: '12px 16px', borderTop: '1px solid #d9f7be', 
-          background: '#fff', fontSize: '13px' 
-        }}>
-          {children}
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))',
+        gap: 8,
+        marginTop: 10
+      }}>
+        {ontology && (
+          <>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 10px' }}>
+              <div style={{ color: '#64748b', fontSize: 12 }}>本体映射</div>
+              <div style={{ fontWeight: 700, marginTop: 2 }}>{mapping.entity_count || 0} 对象 / {mapping.relation_count || 0} 关系</div>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 10px' }}>
+              <div style={{ color: '#64748b', fontSize: 12 }}>规则风险</div>
+              <div style={{ fontWeight: 700, marginTop: 2 }}>{ontologyRisk}</div>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 10px' }}>
+              <div style={{ color: '#64748b', fontSize: 12 }}>补数计划</div>
+              <div style={{ fontWeight: 700, marginTop: 2 }}>
+                {typeof plan.missing_field_count === 'number' ? `缺失 ${plan.missing_field_count}` : '无缺失'}
+                {execution.applied_patch_count ? ` · 已补 ${execution.applied_patch_count}` : ''}
+              </div>
+            </div>
+          </>
+        )}
+        {toolEvents.length > 0 && (
+          <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 10px' }}>
+            <div style={{ color: '#64748b', fontSize: 12 }}>工具执行</div>
+            <div style={{ fontWeight: 700, marginTop: 2 }}>{successfulTools} 成功 / {blockedTools} 拦截 / {failedTools} 失败</div>
+          </div>
+        )}
+      </div>
+
+      {ontology && (
+        <div style={{ marginTop: 8, color: '#475569', fontSize: 13 }}>
+          {triggerReason}
+          {triggerSignals.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              {triggerSignals.map((signal) => (
+                <Tag key={signal} color="geekblue" style={{ marginBottom: 4 }}>{signal}</Tag>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {toolEvents.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+          {toolEvents.map((event, index) => {
+            const meta = toolStatusMeta[event.status] || { color: 'default', label: event.status || '未知' };
+            const result = event.result || {};
+            return (
+              <div key={event.tool_call_id || `${event.tool_name}-${index}`} style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 10,
+                alignItems: 'start',
+                border: '1px solid #eef2f7',
+                background: '#fff',
+                borderRadius: 10,
+                padding: '8px 10px'
+              }}>
+                <div>
+                  <Space size={6} wrap>
+                    <Text strong>{event.tool_label || event.tool_name || '工具'}</Text>
+                    <Tag color={meta.color}>{meta.label}</Tag>
+                  </Space>
+                  <div style={{ marginTop: 4 }}>
+                    {event.category && <Tag>{event.category}</Tag>}
+                    {event.duration_ms !== undefined && <Text type="secondary" style={{ fontSize: 12 }}>{event.duration_ms} ms</Text>}
+                  </div>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  {event.error ? (
+                    <div style={{ color: '#b42318', fontSize: 13 }}>{event.error}</div>
+                  ) : (
+                    <div style={{
+                      color: '#475569',
+                      fontSize: 12,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 88,
+                      overflow: 'auto'
+                    }}>
+                      {result.preview || '已完成，无结果摘要'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 };
 
-const MessageContent = React.memo(({ content, loading, onOpenCanvas, collaborationStatus }: { 
-  content: string | any[], 
-  loading?: boolean, 
-  onOpenCanvas?: any,
-  collaborationStatus?: { agentName?: string, content?: string, state: 'active' | 'completed' | null } 
-}) => {
-  const textContent = typeof content === 'string' ? content : (Array.isArray(content) ? content.map(item => item.type === 'text' ? item.text : '').join('\n') : '');
-  const preprocessMath = (text: string) => text
-    .replace(/\\\[/g, '$$$$').replace(/\\\]/g, '$$$$')
-    .replace(/\\\(/g, '$$').replace(/\\\)/g, '$$')
-    .replace(/\\r\\n/g, '\n').replace(/\\r/g, '\n');
-  
-  // 状态归并逻辑：
-  // 如果当前消息所属的模型正在通过全局协作条显示进度，则气泡内不再显示重复的长占位符
-  const isExpertActive = loading && collaborationStatus?.state === 'active';
-
-  const renderParts = () => {
-    const parts: React.ReactNode[] = [];
-    const regex = /<collaboration\s+title=['"](.*?)['"]>([\s\S]*?)(?:<\/collaboration>|$)/g;
-    let lastIndex = 0;
-    let match;
-
-    const cleanContent = textContent.replace(/<\/collaboration>\s*<\/collaboration>/g, '</collaboration>');
-    
-    while ((match = regex.exec(cleanContent)) !== null) {
-      let beforeText = cleanContent.substring(lastIndex, match.index);
-      if (beforeText) {
-        parts.push(
-          <ReactMarkdown 
-            key={`md-${lastIndex}`}
-            remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
-            components={{
-              code({ node, inline, className, children, ...props }: any) {
-                const matchCode = /language-(\w+)/.exec(className || '');
-                const codeVal = String(children).replace(/\n$/, '');
-                return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
-              }
-            }}
-          >
-            {preprocessMath(beforeText)}
-          </ReactMarkdown>
-        );
-      }
-
-      const [fullMatch, title, collabContent] = match;
-      const safeCollabContent = collabContent.replace(/<collaboration[^>]*>/g, '').replace(/<\/collaboration>/g, '').trim();
-      
-      const finalDisplayContent = safeCollabContent || (isExpertActive ? "" : (loading ? "_专家计算中..._" : "_专家已完成任务协同_"));
-      
-      if (finalDisplayContent || isExpertActive) {
-          parts.push(
-            <CollaborationBlock key={`collab-${match.index}`} title={title} isGenerating={loading}>
-              <ReactMarkdown 
-                remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
-                components={{
-                  code({ node, inline, className, children, ...props }: any) {
-                    const matchCode = /language-(\w+)/.exec(className || '');
-                    const codeVal = String(children).replace(/\n$/, '');
-                    return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
-                  }
-                }}
-              >
-                {preprocessMath(finalDisplayContent)}
-              </ReactMarkdown>
-            </CollaborationBlock>
-          );
-      }
-      lastIndex = match.index + fullMatch.length;
-    }
-
-    let remainingText = cleanContent.substring(lastIndex);
-    remainingText = remainingText.replace(/<\/collaboration>/g, '').trim();
-    if (remainingText) {
-      parts.push(
-        <ReactMarkdown 
-          key={`md-remaining-${lastIndex}`}
-          remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
-          components={{
-            code({ node, inline, className, children, ...props }: any) {
-              const matchCode = /language-(\w+)/.exec(className || '');
-              const codeVal = String(children).replace(/\n$/, '');
-              return !inline && matchCode ? <CodeBlock language={matchCode[1]} onOpenCanvas={onOpenCanvas}>{codeVal}</CodeBlock> : <code className={className} {...props} style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: '4px' }}>{children}</code>;
-            }
-          }}
-        >
-          {preprocessMath(remainingText)}
-        </ReactMarkdown>
-      );
-    }
-
-    return parts;
-  };
-
-  return (
-    <div className="message-markdown-content" style={{ fontSize: '14px', lineHeight: '1.6', wordBreak: 'break-word', whiteSpace: 'pre-wrap', maxWidth: '100%', overflowWrap: 'break-word' }}>
-      {renderParts()}
-      {loading && !isExpertActive && <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#1890ff', fontSize: '12px', marginTop: 8 }}><SyncOutlined spin />续写中...</div>}
-    </div>
-  );
-}, (prevProps, nextProps) => {
-  // 只有当内容、加载状态或协作状态发生变化时才更新
-  return (
-    prevProps.content === nextProps.content && 
-    prevProps.loading === nextProps.loading &&
-    prevProps.collaborationStatus?.state === nextProps.collaborationStatus?.state &&
-    prevProps.collaborationStatus?.content === nextProps.collaborationStatus?.content
-  );
-});
-
 const ChatView: React.FC<ChatViewProps> = (props) => {
-  const { messages, loading, collaborationStatus, inputText, setInputText, currentAgent, enableMemory, setEnableMemory, enableSwarm, setEnableSwarm, onSend, onStop, onDeleteMessage, onEditMessage, onFeedbackMessage, onRegenerate, pendingImages, setPendingImages, onOpenCanvas, enableAutoCanvas, setEnableAutoCanvas } = props;
+  const { messages, currentSessionId, loading, collaborationStatus, inputText, setInputText, currentAgent, enableMemory, setEnableMemory, enableSwarm, setEnableSwarm, onSend, onStop, onDeleteMessage, onEditMessage, onFeedbackMessage, onRegenerate, pendingImages, setPendingImages, onOpenCanvas, enableAutoCanvas, setEnableAutoCanvas } = props;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const [isIME, setIsIME] = useState(false);
+  const [runtimeDrawerOpen, setRuntimeDrawerOpen] = useState(false);
+  const [runtimeTraceLoading, setRuntimeTraceLoading] = useState(false);
+  const [sessionRuntimeTraces, setSessionRuntimeTraces] = useState<SessionRuntimeTrace[]>([]);
   
 
   const groupMessagesIntoTurns = (msgs: Message[]) => {
@@ -280,6 +331,55 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
     return turns;
   };
   const messageTurns = groupMessagesIntoTurns(messages);
+  const localRuntimeTraces = buildLocalSessionRuntimeTraces(messages);
+  const runtimeTraceCount = localRuntimeTraces.length;
+
+  const openSessionRuntimeTrace = async () => {
+    setRuntimeDrawerOpen(true);
+    setRuntimeTraceLoading(true);
+    const fallbackTraces = buildLocalSessionRuntimeTraces(messages);
+    try {
+      if (!currentSessionId) {
+        setSessionRuntimeTraces(fallbackTraces);
+        return;
+      }
+      const token = localStorage.getItem('token');
+      const res = await axios.get(`/api/v1/chat-sessions/${currentSessionId}/runtime-traces`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setSessionRuntimeTraces(res.data?.items || fallbackTraces);
+    } catch (err) {
+      console.error('Failed to load session runtime traces', err);
+      setSessionRuntimeTraces(fallbackTraces);
+      message.warning('会话运行轨迹接口暂不可用，已显示当前页面缓存轨迹');
+    } finally {
+      setRuntimeTraceLoading(false);
+    }
+  };
+
+  const copySessionRuntimeReport = async () => {
+    const traces = sessionRuntimeTraces.length > 0 ? sessionRuntimeTraces : buildLocalSessionRuntimeTraces(messages);
+    if (traces.length === 0) {
+      message.info('当前会话还没有可复制的运行轨迹');
+      return;
+    }
+    try {
+      if (currentSessionId) {
+        const token = localStorage.getItem('token');
+        const res = await axios.get(`/api/v1/chat-sessions/${currentSessionId}/runtime-report?format=markdown`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          responseType: 'text',
+        });
+        await navigator.clipboard.writeText(res.data || buildSessionRuntimeReport(traces));
+        message.success('会话运行轨迹报告已复制');
+        return;
+      }
+    } catch (err) {
+      console.warn('Failed to export server runtime report, fallback to local report', err);
+    }
+    await navigator.clipboard.writeText(buildSessionRuntimeReport(traces));
+    message.success('会话运行轨迹报告已复制（本地快照）');
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -291,6 +391,13 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#fff', position: 'relative' }}>
+      {runtimeTraceCount > 0 && (
+        <div style={{ position: 'absolute', right: 18, top: 14, zIndex: 3 }}>
+          <Button size="small" icon={<HistoryOutlined />} onClick={openSessionRuntimeTrace}>
+            会话运行轨迹 {runtimeTraceCount}
+          </Button>
+        </div>
+      )}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '24px 0', scrollBehavior: 'smooth' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', padding: '0 24px' }}>
           {messages.length === 0 ? (
@@ -350,12 +457,19 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                                         {editingId === m.id ? (
                                           <div style={{ minWidth: '400px' }}><Input.TextArea autoSize={{ minRows: 2 }} value={editingText} onChange={e => setEditingText(e.target.value)} style={{ marginBottom: 12, borderRadius: 8 }} /><Space><Button size="small" type="primary" onClick={() => { onEditMessage?.(m.id, editingText); setEditingId(null); }}>保存</Button><Button size="small" onClick={() => setEditingId(null)}>取消</Button></Space></div>
                                         ) : (
-                                          <MessageContent 
-                                            content={m.content} 
-                                            loading={isMsgGenerating} 
-                                            onOpenCanvas={onOpenCanvas} 
-                                            collaborationStatus={collaborationStatus}
-                                          />
+                                          <>
+                                            {isAssistant && (m.ontology_runtime || (m.tool_runtime_events && m.tool_runtime_events.length > 0)) && (
+                                              <ExecutionTracePanel ontology={m.ontology_runtime} tools={m.tool_runtime_events} />
+                                            )}
+                                            <React.Suspense fallback={<div style={{ color: '#64748b', fontSize: 13 }}>正在加载消息渲染器...</div>}>
+                                              <MessageContent
+                                                content={m.content}
+                                                loading={isMsgGenerating}
+                                                onOpenCanvas={onOpenCanvas}
+                                                collaborationStatus={collaborationStatus}
+                                              />
+                                            </React.Suspense>
+                                          </>
                                         )}
                                         {m.images && m.images.length > 0 && (
                                             <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
@@ -461,6 +575,78 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
           </div>
         </div>
       </div>
+
+      <Drawer
+        title="会话运行轨迹"
+        placement="right"
+        width={620}
+        open={runtimeDrawerOpen}
+        onClose={() => setRuntimeDrawerOpen(false)}
+        extra={<Button size="small" onClick={copySessionRuntimeReport}>复制报告</Button>}
+      >
+        {runtimeTraceLoading ? (
+          <div style={{ color: '#64748b' }}>正在读取会话轨迹...</div>
+        ) : sessionRuntimeTraces.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前会话还没有本体或工具运行轨迹" />
+        ) : (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {sessionRuntimeTraces.map((trace, index) => {
+              const summary = trace.summary || {};
+              const spaceLabel = summary.ontology_space_name || summary.ontology_space_code || summary.ontology_space_id || '未使用本体';
+              const risk = summary.risk_level || '未执行';
+              return (
+                <div key={trace.message_id || index} style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 12, background: '#fff' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                    <Space size={6} wrap>
+                      <Tag color="blue">回答 {index + 1}</Tag>
+                      {summary.has_ontology ? (
+                        <Tag color={summary.ontology_status === 'success' ? 'green' : 'orange'}>
+                          本体 {statusLabelMap[summary.ontology_status || ''] || summary.ontology_status || '已触发'}
+                        </Tag>
+                      ) : (
+                        <Tag>未使用本体</Tag>
+                      )}
+                      {(summary.tool_count || 0) > 0 && <Tag>工具 {summary.tool_count}</Tag>}
+                    </Space>
+                    {trace.created_at && <Text type="secondary" style={{ fontSize: 12 }}>{new Date(trace.created_at).toLocaleString()}</Text>}
+                  </div>
+                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                    <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
+                      <div style={{ color: '#64748b', fontSize: 12 }}>本体空间</div>
+                      <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spaceLabel}</div>
+                    </div>
+                    <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
+                      <div style={{ color: '#64748b', fontSize: 12 }}>风险等级</div>
+                      <div style={{ fontWeight: 700 }}>{risk}</div>
+                    </div>
+                    <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
+                      <div style={{ color: '#64748b', fontSize: 12 }}>工具结果</div>
+                      <div style={{ fontWeight: 700 }}>
+                        {summary.successful_tool_count || 0} 成功 / {summary.blocked_tool_count || 0} 拦截 / {summary.failed_tool_count || 0} 失败
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 10, color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {trace.ontology_runtime?.trigger_reason && (
+                      <div style={{ marginBottom: 8, color: '#475569' }}>
+                        触发判断：{trace.ontology_runtime.trigger_reason}
+                      </div>
+                    )}
+                    {Array.isArray(trace.ontology_runtime?.trigger_signals) && trace.ontology_runtime.trigger_signals.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        {trace.ontology_runtime.trigger_signals.map((signal: string) => (
+                          <Tag key={signal} color="geekblue" style={{ marginBottom: 4 }}>{signal}</Tag>
+                        ))}
+                      </div>
+                    )}
+                    {trace.content_preview || '无回答摘要'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

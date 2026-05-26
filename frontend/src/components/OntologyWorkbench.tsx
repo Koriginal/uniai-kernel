@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Form, Input, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, AutoComplete, Button, Card, Col, Divider, Form, Input, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { AxiosInstance } from 'axios';
 import { Background, Controls, MarkerType, MiniMap, Panel, ReactFlow, type Connection, type Edge, type Node } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -189,8 +189,106 @@ interface DiffResponse {
   breaking_changes: string[];
 }
 
+interface OntologyStarterTemplate {
+  id: string;
+  title: string;
+  scenario: string;
+  difficulty: string;
+  description: string;
+  sample: Record<string, unknown>;
+  schema: Record<string, unknown>;
+  mapping: Record<string, unknown>;
+  rule: Record<string, unknown>;
+}
+
+interface PlatformTemplateSummary {
+  id: string;
+  title: string;
+  scenario: string;
+  description: string;
+  version: string;
+  package_counts: Record<string, number>;
+  sample: Record<string, unknown>;
+}
+
+interface InstanceGraphRecord {
+  id: string;
+  space_id: string;
+  schema_version?: string | null;
+  mapping_version?: string | null;
+  decision_id?: string | null;
+  source: string;
+  session_id?: string | null;
+  request_id?: string | null;
+  entity_count: number;
+  relation_count: number;
+  graph_snapshot: Record<string, unknown>;
+  input_snapshot?: Record<string, unknown> | null;
+  trace: Record<string, unknown>[];
+  metadata: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+}
+
+interface RuntimeEntityView {
+  id?: string;
+  entity_type?: string;
+  attributes?: Record<string, unknown>;
+}
+
+interface RuntimeRelationView {
+  id?: string;
+  relation_type?: string;
+  source_id?: string;
+  target_id?: string;
+}
+
+interface RuntimeRuleHitView {
+  rule_id?: string;
+  name?: string;
+  severity?: string;
+  action?: string;
+  entity_id?: string;
+  reason?: string;
+}
+
+interface RuntimeRuleMissView {
+  rule_id?: string;
+  reason?: string;
+}
+
+interface RuntimeMissingFieldView {
+  entity_type?: string;
+  entity_id?: string;
+  field?: string;
+  source_path?: string;
+  reason?: string;
+}
+
+interface RuntimeSuggestedDataSourceView {
+  id?: string;
+  name?: string;
+  kind?: string;
+  protocol?: string;
+  score?: number;
+  matched_fields?: string[];
+}
+
+interface RuntimeActionStepView {
+  step_id?: string;
+  kind?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  data_source_id?: string;
+  data_source_name?: string;
+}
+
 interface Props {
   api: AxiosInstance;
+  modelConfigs?: any[];
+  onAgentsChanged?: () => void;
+  onAgentCreated?: (agent: any) => void;
 }
 
 const DEFAULT_PAYLOADS: Record<PackageKind, string> = {
@@ -246,8 +344,288 @@ const DEFAULT_PAYLOADS: Record<PackageKind, string> = {
   ),
 };
 
+const STARTER_TEMPLATES: OntologyStarterTemplate[] = [
+  {
+    id: 'contract-review',
+    title: '合同审核',
+    scenario: '法务 / 销售合同 / 采购合同',
+    difficulty: '推荐新手',
+    description: '识别合同、相对方、金额、期限、自动续约和责任上限，并给出高金额与自动续约风险。',
+    sample: {
+      contract: {
+        id: 'CTR-2026-001',
+        title: '年度服务采购合同',
+        counterparty_name: '星河科技有限公司',
+        amount: 250000,
+        currency: 'CNY',
+        effective_date: '2026-05-01',
+        expiry_date: '2027-04-30',
+        governing_law: '中国法律',
+        auto_renewal: true,
+        liability_cap: '',
+      },
+    },
+    schema: {
+      version: '1.0.0',
+      description: '合同审核本体：合同主体、金额、期限与关键风险字段',
+      entity_types: [
+        {
+          name: 'Contract',
+          attributes: {
+            id: { data_type: 'string', required: true },
+            title: { data_type: 'string', required: true },
+            counterparty_name: { data_type: 'string', required: true },
+            amount: { data_type: 'number', required: true },
+            currency: { data_type: 'string', required: false },
+            effective_date: { data_type: 'string', required: false },
+            expiry_date: { data_type: 'string', required: true },
+            governing_law: { data_type: 'string', required: false },
+            auto_renewal: { data_type: 'boolean', required: false },
+            liability_cap: { data_type: 'string', required: false },
+          },
+          relations: [],
+        },
+      ],
+      taxonomy: {},
+      vocabulary: {
+        risk_terms: ['自动续约', '责任上限', '高金额', '到期日', '管辖法律'],
+      },
+    },
+    mapping: {
+      version: '1.0.0',
+      description: '合同样本到 Contract 对象的默认映射',
+      entity_mappings: [
+        {
+          entity_type: 'Contract',
+          source_path: 'contract',
+          id_template: 'contract:{{row.id}}',
+          field_mappings: [
+            { source_path: 'id', target_attr: 'id', required: true, transform: 'trim' },
+            { source_path: 'title', target_attr: 'title', required: true, transform: 'trim' },
+            { source_path: 'counterparty_name', target_attr: 'counterparty_name', required: true, transform: 'trim' },
+            { source_path: 'amount', target_attr: 'amount', required: true, transform: 'to_float' },
+            { source_path: 'currency', target_attr: 'currency', transform: 'trim' },
+            { source_path: 'effective_date', target_attr: 'effective_date', transform: 'trim' },
+            { source_path: 'expiry_date', target_attr: 'expiry_date', required: true, transform: 'trim' },
+            { source_path: 'governing_law', target_attr: 'governing_law', transform: 'trim' },
+            { source_path: 'auto_renewal', target_attr: 'auto_renewal', transform: 'to_bool' },
+            { source_path: 'liability_cap', target_attr: 'liability_cap', transform: 'trim' },
+          ],
+        },
+      ],
+      relation_mappings: [],
+    },
+    rule: {
+      version: '1.0.0',
+      description: '合同审核默认风险规则',
+      rules: [
+        {
+          rule_id: 'CONTRACT_HIGH_VALUE',
+          name: '合同金额较高',
+          target_entity_type: 'Contract',
+          severity: 'high',
+          action: 'flag',
+          conditions: [{ path: 'entity.amount', operator: 'gt', value: 100000 }],
+          tags: ['amount', 'review'],
+        },
+        {
+          rule_id: 'CONTRACT_AUTO_RENEWAL',
+          name: '存在自动续约条款',
+          target_entity_type: 'Contract',
+          severity: 'medium',
+          action: 'recommend',
+          conditions: [{ path: 'entity.auto_renewal', operator: 'eq', value: true }],
+          tags: ['renewal'],
+        },
+        {
+          rule_id: 'CONTRACT_MISSING_LIABILITY_CAP',
+          name: '责任上限缺失',
+          target_entity_type: 'Contract',
+          severity: 'medium',
+          action: 'recommend',
+          conditions: [{ path: 'entity.liability_cap', operator: 'eq', value: '' }],
+          tags: ['liability'],
+        },
+      ],
+    },
+  },
+  {
+    id: 'procurement-approval',
+    title: '采购准入',
+    scenario: '采购 / 供应商 / 预算审核',
+    difficulty: '易上手',
+    description: '识别采购申请、供应商、预算和紧急程度，快速判断超预算或紧急采购风险。',
+    sample: {
+      request: {
+        id: 'PR-2026-0042',
+        supplier_name: '北辰设备有限公司',
+        category: 'hardware',
+        amount: 88000,
+        budget: 60000,
+        urgent: true,
+        requester: '采购一部',
+      },
+    },
+    schema: {
+      version: '1.0.0',
+      description: '采购准入本体：采购申请、供应商、预算与紧急程度',
+      entity_types: [
+        {
+          name: 'PurchaseRequest',
+          attributes: {
+            id: { data_type: 'string', required: true },
+            supplier_name: { data_type: 'string', required: true },
+            category: { data_type: 'string', required: false },
+            amount: { data_type: 'number', required: true },
+            budget: { data_type: 'number', required: true },
+            urgent: { data_type: 'boolean', required: false },
+            requester: { data_type: 'string', required: false },
+          },
+          relations: [],
+        },
+      ],
+      taxonomy: {},
+      vocabulary: { risk_terms: ['超预算', '紧急采购', '供应商准入'] },
+    },
+    mapping: {
+      version: '1.0.0',
+      description: '采购申请默认映射',
+      entity_mappings: [
+        {
+          entity_type: 'PurchaseRequest',
+          source_path: 'request',
+          id_template: 'purchase:{{row.id}}',
+          field_mappings: [
+            { source_path: 'id', target_attr: 'id', required: true, transform: 'trim' },
+            { source_path: 'supplier_name', target_attr: 'supplier_name', required: true, transform: 'trim' },
+            { source_path: 'category', target_attr: 'category', transform: 'trim' },
+            { source_path: 'amount', target_attr: 'amount', required: true, transform: 'to_float' },
+            { source_path: 'budget', target_attr: 'budget', required: true, transform: 'to_float' },
+            { source_path: 'urgent', target_attr: 'urgent', transform: 'to_bool' },
+            { source_path: 'requester', target_attr: 'requester', transform: 'trim' },
+          ],
+        },
+      ],
+      relation_mappings: [],
+    },
+    rule: {
+      version: '1.0.0',
+      description: '采购准入默认规则',
+      rules: [
+        {
+          rule_id: 'PROCUREMENT_HIGH_AMOUNT',
+          name: '采购金额较高',
+          target_entity_type: 'PurchaseRequest',
+          severity: 'medium',
+          action: 'flag',
+          conditions: [{ path: 'entity.amount', operator: 'gt', value: 50000 }],
+          tags: ['amount'],
+        },
+        {
+          rule_id: 'PROCUREMENT_URGENT',
+          name: '紧急采购需复核',
+          target_entity_type: 'PurchaseRequest',
+          severity: 'medium',
+          action: 'recommend',
+          conditions: [{ path: 'entity.urgent', operator: 'eq', value: true }],
+          tags: ['urgent'],
+        },
+      ],
+    },
+  },
+  {
+    id: 'ticket-triage',
+    title: '客服工单分流',
+    scenario: '客服 / 售后 / SLA',
+    difficulty: '易上手',
+    description: '识别工单渠道、优先级、客户等级和情绪，用于升级处理与 SLA 风险提示。',
+    sample: {
+      ticket: {
+        id: 'TK-2026-0088',
+        customer_tier: 'enterprise',
+        channel: 'email',
+        priority: 'high',
+        sentiment: 'negative',
+        issue_type: 'payment',
+        sla_hours: 4,
+      },
+    },
+    schema: {
+      version: '1.0.0',
+      description: '客服工单本体：客户等级、优先级、情绪与 SLA',
+      entity_types: [
+        {
+          name: 'SupportTicket',
+          attributes: {
+            id: { data_type: 'string', required: true },
+            customer_tier: { data_type: 'string', required: false },
+            channel: { data_type: 'string', required: false },
+            priority: { data_type: 'string', required: true },
+            sentiment: { data_type: 'string', required: false },
+            issue_type: { data_type: 'string', required: false },
+            sla_hours: { data_type: 'number', required: false },
+          },
+          relations: [],
+        },
+      ],
+      taxonomy: {},
+      vocabulary: { risk_terms: ['企业客户', '高优先级', '负面情绪', 'SLA'] },
+    },
+    mapping: {
+      version: '1.0.0',
+      description: '客服工单默认映射',
+      entity_mappings: [
+        {
+          entity_type: 'SupportTicket',
+          source_path: 'ticket',
+          id_template: 'ticket:{{row.id}}',
+          field_mappings: [
+            { source_path: 'id', target_attr: 'id', required: true, transform: 'trim' },
+            { source_path: 'customer_tier', target_attr: 'customer_tier', transform: 'trim' },
+            { source_path: 'channel', target_attr: 'channel', transform: 'trim' },
+            { source_path: 'priority', target_attr: 'priority', required: true, transform: 'trim' },
+            { source_path: 'sentiment', target_attr: 'sentiment', transform: 'trim' },
+            { source_path: 'issue_type', target_attr: 'issue_type', transform: 'trim' },
+            { source_path: 'sla_hours', target_attr: 'sla_hours', transform: 'to_float' },
+          ],
+        },
+      ],
+      relation_mappings: [],
+    },
+    rule: {
+      version: '1.0.0',
+      description: '客服工单默认分流规则',
+      rules: [
+        {
+          rule_id: 'TICKET_ENTERPRISE_HIGH_PRIORITY',
+          name: '企业客户高优先级工单',
+          target_entity_type: 'SupportTicket',
+          severity: 'high',
+          action: 'flag',
+          conditions: [
+            { path: 'entity.customer_tier', operator: 'eq', value: 'enterprise' },
+            { path: 'entity.priority', operator: 'eq', value: 'high' },
+          ],
+          tags: ['sla', 'vip'],
+        },
+        {
+          rule_id: 'TICKET_NEGATIVE_SENTIMENT',
+          name: '负面情绪工单建议升级',
+          target_entity_type: 'SupportTicket',
+          severity: 'medium',
+          action: 'recommend',
+          conditions: [{ path: 'entity.sentiment', operator: 'eq', value: 'negative' }],
+          tags: ['sentiment'],
+        },
+      ],
+    },
+  },
+];
+
 const pretty = (data: unknown) => JSON.stringify(data, null, 2);
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const asRecord = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 const createDefaultVisualEntities = (): VisualEntity[] => [
   {
     id: uid(),
@@ -478,6 +856,7 @@ const pageStyle: React.CSSProperties = {
   overflow: 'auto',
   height: '100%',
   background: '#f5f7fb',
+  boxSizing: 'border-box',
 };
 
 const shellStyle: React.CSSProperties = {
@@ -485,6 +864,8 @@ const shellStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: 20,
   maxWidth: 1680,
+  width: '100%',
+  minWidth: 0,
   margin: '0 auto',
 };
 
@@ -516,6 +897,21 @@ const fieldLabelStyle: React.CSSProperties = {
   letterSpacing: '0.04em',
 };
 
+const compactFieldLabelStyle: React.CSSProperties = {
+  ...fieldLabelStyle,
+  marginBottom: 4,
+};
+
+const compactInfoStyle: React.CSSProperties = {
+  border: '1px solid #bfdbfe',
+  background: '#eff6ff',
+  borderRadius: 8,
+  padding: '10px 12px',
+  color: '#1e3a8a',
+  fontSize: 13,
+  lineHeight: 1.5,
+};
+
 const toolbarStyle: React.CSSProperties = {
   ...surfaceStyle,
   minHeight: 64,
@@ -539,6 +935,14 @@ const contentCardStyle: React.CSSProperties = {
   borderRadius: 10,
   background: '#ffffff',
   boxShadow: 'none',
+  minWidth: 0,
+};
+
+const responsiveTwoColumnStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 640px), 1fr))',
+  gap: 14,
+  minWidth: 0,
 };
 
 const getAllowedReleaseTargets = (stage: Stage): Stage[] => {
@@ -548,7 +952,25 @@ const getAllowedReleaseTargets = (stage: Stage): Stage[] => {
   return [next, 'deprecated'];
 };
 
-const OntologyWorkbench: React.FC<Props> = ({ api }) => {
+const pickDefaultModelConfig = (modelConfigs: any[] = []) => {
+  for (const provider of modelConfigs) {
+    const models = Array.isArray(provider?.models) ? provider.models : [];
+    const usable = models.find((model: any) => {
+      const type = String(model?.model_type || '').toLowerCase();
+      const name = String(model?.model_name || '').toLowerCase();
+      return type === 'llm' || type === 'chat' || name.includes('gpt') || name.includes('qwen') || name.includes('deepseek');
+    });
+    if (usable?.id) {
+      return {
+        id: usable.id,
+        label: `${usable.model_name || '默认模型'}${provider?.display_name ? `（${provider.display_name}）` : ''}`,
+      };
+    }
+  }
+  return null;
+};
+
+const OntologyWorkbench: React.FC<Props> = ({ api, modelConfigs = [], onAgentsChanged, onAgentCreated }) => {
   const [orgs, setOrgs] = useState<OrgItem[]>([]);
   const [newOrgCode, setNewOrgCode] = useState('');
   const [newOrgName, setNewOrgName] = useState('');
@@ -557,6 +979,8 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
 
   const [spaces, setSpaces] = useState<SpaceItem[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const [platformTemplates, setPlatformTemplates] = useState<PlatformTemplateSummary[]>([]);
+  const defaultModelConfig = useMemo(() => pickDefaultModelConfig(modelConfigs), [modelConfigs]);
   const [spacePackageSummary, setSpacePackageSummary] = useState<Record<PackageKind, PackageItem[]>>({
     schema: [],
     mapping: [],
@@ -579,6 +1003,9 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
 
   const [mappingInput, setMappingInput] = useState<string>(pretty({ item: { id: 'demo-1', name: 'demo name' } }));
   const [mappingResult, setMappingResult] = useState<string>('');
+  const [runtimeInput, setRuntimeInput] = useState<string>(pretty({ item: { id: 'demo-1', name: 'demo name' } }));
+  const [runtimeResult, setRuntimeResult] = useState<string>('');
+  const [runtimeStrictRules, setRuntimeStrictRules] = useState<boolean>(false);
 
   const [ruleGraphInput, setRuleGraphInput] = useState<string>(
     pretty({ entities: [{ id: 'entity:demo-1', entity_type: 'Entity', attributes: { name: 'demo name' } }], relations: [] }),
@@ -604,10 +1031,12 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
   const [dataSourceEntryMode, setDataSourceEntryMode] = useState<DataSourceEntryMode>('connector');
   const [dataSources, setDataSources] = useState<OntologyDataSource[]>([]);
   const [secrets, setSecrets] = useState<OntologySecretRecord[]>([]);
+  const [instanceGraphs, setInstanceGraphs] = useState<InstanceGraphRecord[]>([]);
   const [secretScope, setSecretScope] = useState<string>('prod');
   const [secretName, setSecretName] = useState<string>('db-password');
   const [secretValue, setSecretValue] = useState<string>('');
   const [secretDescription, setSecretDescription] = useState<string>('');
+  const [secretModalOpen, setSecretModalOpen] = useState<boolean>(false);
   const [dataSourceKind, setDataSourceKind] = useState<DataSourceKind>('database');
   const [dataSourceName, setDataSourceName] = useState<string>('业务数据库');
   const [dataSourceProtocol, setDataSourceProtocol] = useState<string>('postgresql');
@@ -697,6 +1126,33 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
       return null;
     }
   }, [explainResult]);
+  const runtimeResultObj = useMemo<Record<string, unknown> | null>(() => {
+    if (!runtimeResult) return null;
+    try {
+      return JSON.parse(runtimeResult) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }, [runtimeResult]);
+  const runtimeGraph = useMemo(() => {
+    const mapping = asRecord(runtimeResultObj?.mapping);
+    const graph = asRecord(mapping.graph);
+    return {
+      entities: asArray<RuntimeEntityView>(graph.entities),
+      relations: asArray<RuntimeRelationView>(graph.relations),
+    };
+  }, [runtimeResultObj]);
+  const runtimeDecision = useMemo(() => asRecord(runtimeResultObj?.decision), [runtimeResultObj]);
+  const runtimeExplanation = useMemo(() => asRecord(runtimeResultObj?.explanation), [runtimeResultObj]);
+  const runtimeActionPlan = useMemo(() => asRecord(runtimeResultObj?.action_plan), [runtimeResultObj]);
+  const runtimeActionExecution = useMemo(() => asRecord(runtimeResultObj?.action_execution), [runtimeResultObj]);
+  const runtimeHits = useMemo(() => asArray<RuntimeRuleHitView>(runtimeDecision.hits), [runtimeDecision]);
+  const runtimeMisses = useMemo(() => asArray<RuntimeRuleMissView>(runtimeDecision.misses), [runtimeDecision]);
+  const runtimeWhy = useMemo(() => asArray<string>(runtimeExplanation.why), [runtimeExplanation]);
+  const runtimeMissingFields = useMemo(() => asArray<RuntimeMissingFieldView>(runtimeActionPlan.missing_fields), [runtimeActionPlan]);
+  const runtimeSuggestedDataSources = useMemo(() => asArray<RuntimeSuggestedDataSourceView>(runtimeActionPlan.suggested_data_sources), [runtimeActionPlan]);
+  const runtimeActionSteps = useMemo(() => asArray<RuntimeActionStepView>(runtimeActionPlan.steps), [runtimeActionPlan]);
+  const runtimeExecutionItems = useMemo(() => asArray<Record<string, unknown>>(runtimeActionExecution.executions), [runtimeActionExecution]);
   const mappedEntityCount = useMemo(() => {
     const graph = mappingResultObj?.graph as { entities?: unknown[] } | undefined;
     return Array.isArray(graph?.entities) ? graph.entities.length : 0;
@@ -987,6 +1443,15 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     if (!selectedSpaceId && res.data.length > 0) setSelectedSpaceId(res.data[0].id);
   }, [api, selectedSpaceId]);
 
+  const fetchPlatformTemplates = useCallback(async () => {
+    try {
+      const res = await api.get<PlatformTemplateSummary[]>('/api/v1/ontology/templates');
+      setPlatformTemplates(res.data || []);
+    } catch {
+      setPlatformTemplates([]);
+    }
+  }, [api]);
+
   const fetchPackages = useCallback(async () => {
     if (!selectedSpaceId) return;
     const res = await api.get<PackageItem[]>(`/api/v1/ontology/packages/${selectedSpaceId}/${kind}`);
@@ -1042,10 +1507,22 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     setSecrets(res.data || []);
   }, [api, selectedSpaceId]);
 
+  const fetchInstanceGraphs = useCallback(async () => {
+    if (!selectedSpaceId) {
+      setInstanceGraphs([]);
+      return;
+    }
+    const res = await api.get<InstanceGraphRecord[]>(`/api/v1/ontology/graphs/${selectedSpaceId}`, {
+      params: { limit: 50 },
+    });
+    setInstanceGraphs(res.data || []);
+  }, [api, selectedSpaceId]);
+
   useEffect(() => {
     void fetchOrgs();
     void fetchSpaces();
-  }, [fetchOrgs, fetchSpaces]);
+    void fetchPlatformTemplates();
+  }, [fetchOrgs, fetchSpaces, fetchPlatformTemplates]);
 
   useEffect(() => {
     void fetchPackages();
@@ -1054,7 +1531,8 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     void fetchSpacePackageSummary();
     void fetchDataSources();
     void fetchSecrets();
-  }, [fetchPackages, fetchEvents, fetchApprovals, fetchSpacePackageSummary, fetchDataSources, fetchSecrets]);
+    void fetchInstanceGraphs();
+  }, [fetchPackages, fetchEvents, fetchApprovals, fetchSpacePackageSummary, fetchDataSources, fetchSecrets, fetchInstanceGraphs]);
 
   useEffect(() => {
     const schemaPkg = pickRunnablePackage(spacePackageSummary.schema);
@@ -1173,6 +1651,198 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
       message.success(`${targetKind} 可视化配置已保存`);
     } catch (error) {
       message.error(getRequestErrorMessage(error, `${targetKind} 保存失败`));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyStarterTemplate = async (template: OntologyStarterTemplate) => {
+    if (!selectedSpaceId) {
+      message.warning('请先创建或选择一个本体空间，再套用模板');
+      setGuidedStep(0);
+      return;
+    }
+
+    const schemaPayload = { ...template.schema, space_id: selectedSpaceId };
+    const mappingPayload = { ...template.mapping, space_id: selectedSpaceId };
+    const rulePayload = { ...template.rule, space_id: selectedSpaceId };
+
+    setLoading(true);
+    try {
+      await api.post('/api/v1/ontology/schema', schemaPayload);
+      await api.post('/api/v1/ontology/mapping', mappingPayload);
+      await api.post('/api/v1/ontology/rules', rulePayload);
+
+      const nextEntities = visualEntitiesFromSchemaPayload(template.schema);
+      setVisualEntities(nextEntities);
+      setActiveVisualEntityId(nextEntities[0]?.id || null);
+      setVisualSchemaVersion(String(template.schema.version || '1.0.0'));
+
+      const firstMapping = asArray<Record<string, unknown>>(template.mapping.entity_mappings)[0] || {};
+      const mappingFields = asArray<Record<string, unknown>>(firstMapping.field_mappings).map((field) => ({
+        id: uid(),
+        source_path: String(field.source_path || ''),
+        target_attr: String(field.target_attr || ''),
+        transform: (field.transform || '') as VisualMappingField['transform'],
+        required: Boolean(field.required),
+      }));
+      setVisualMappingVersion(String(template.mapping.version || '1.0.0'));
+      setVisualMappingEntityType(String(firstMapping.entity_type || nextEntities[0]?.name || 'Entity'));
+      setVisualMappingSourcePath(String(firstMapping.source_path || ''));
+      setVisualMappingIdTemplate(String(firstMapping.id_template || 'entity:{{row.id}}'));
+      setVisualMappingFields(mappingFields.length > 0 ? mappingFields : [{ id: uid(), source_path: 'id', target_attr: 'id', transform: 'trim', required: true }]);
+
+      const firstRule = asArray<Record<string, unknown>>(template.rule.rules)[0] || {};
+      const ruleConditions = asArray<Record<string, unknown>>(firstRule.conditions).map((condition) => ({
+        id: uid(),
+        path: String(condition.path || ''),
+        operator: (condition.operator || 'exists') as VisualRuleCondition['operator'],
+        value: condition.value === undefined || condition.value === null ? '' : String(condition.value),
+      }));
+      setVisualRuleVersion(String(template.rule.version || '1.0.0'));
+      setVisualRuleId(String(firstRule.rule_id || 'RULE_TEMPLATE'));
+      setVisualRuleName(String(firstRule.name || template.title));
+      setVisualRuleTargetEntityType(String(firstRule.target_entity_type || firstMapping.entity_type || nextEntities[0]?.name || 'Entity'));
+      setVisualRuleSeverity((firstRule.severity || 'medium') as typeof visualRuleSeverity);
+      setVisualRuleAction((firstRule.action || 'flag') as typeof visualRuleAction);
+      setVisualRuleConditions(ruleConditions.length > 0 ? ruleConditions : [{ id: uid(), path: 'entity.id', operator: 'exists', value: '' }]);
+
+      setSourceInputKind('json');
+      setSourceSampleText(pretty(template.sample));
+      setMappingInput(pretty(template.sample));
+      setRuntimeInput(pretty(template.sample));
+      setPayloadText(pretty(schemaPayload));
+      setKind('schema');
+      setVersion(String(template.schema.version || '1.0.0'));
+      setMappingResult('');
+      setRuleResult('');
+      setExplainResult('');
+      setLatestDecisionId('');
+      setGuidedStep(6);
+      setGuidedBuilderKind('schema');
+
+      await fetchPackages();
+      await fetchSpacePackageSummary();
+      message.success(`已套用「${template.title}」模板，可以直接进入测试验证`);
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, '套用模板失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const applyPlatformTemplate = async (template: PlatformTemplateSummary, mode: 'current' | 'new') => {
+    if (mode === 'current' && !selectedSpaceId) {
+      message.warning('请先创建或选择一个本体空间');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.post(`/api/v1/ontology/templates/${template.id}/apply`, {
+        space_id: mode === 'current' ? selectedSpaceId : undefined,
+        space_name: mode === 'new' ? template.title : undefined,
+        space_code: mode === 'new' ? `${template.id}-${Date.now().toString(36).slice(-5)}` : undefined,
+        publish_ga: true,
+      });
+      const nextSpaceId = res.data?.space_id;
+      if (nextSpaceId) setSelectedSpaceId(nextSpaceId);
+      setSourceInputKind('json');
+      setSourceSampleText(pretty(template.sample || {}));
+      setMappingInput(pretty(template.sample || {}));
+      setRuntimeInput(pretty(template.sample || {}));
+      setMappingResult('');
+      setRuleResult('');
+      setExplainResult('');
+      setLatestDecisionId('');
+      setGuidedStep(6);
+      setActiveTab('mapping');
+      await fetchSpaces();
+      await fetchPackages();
+      await fetchSpacePackageSummary();
+      const warnings = res.data?.warnings || [];
+      if (warnings.length > 0) {
+        message.warning(`模板已导入，但发布需要处理：${warnings[0]}`);
+      } else {
+        message.success(`已导入「${template.title}」，可直接在测试验证中试跑`);
+      }
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, '平台模板导入失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createAgentFromPlatformTemplate = async (template: PlatformTemplateSummary) => {
+    if (!defaultModelConfig?.id) {
+      message.warning('还没有可用模型。请先在“模型供应商”里启用一个对话模型，再创建本体助手。');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const codeSuffix = Date.now().toString(36).slice(-6);
+      const templateRes = await api.post(`/api/v1/ontology/templates/${template.id}/apply`, {
+        space_name: template.title,
+        space_code: `${template.id}-${codeSuffix}`,
+        publish_ga: true,
+      });
+      const spaceId = templateRes.data?.space_id;
+      const spaceCode = templateRes.data?.space_code || `${template.id}-${codeSuffix}`;
+      if (!spaceId) {
+        throw new Error('模板导入成功，但后端没有返回本体空间 ID');
+      }
+
+      const agentRes = await api.post('/api/v1/agents/', {
+        name: `${template.title}助手`,
+        description: `使用「${template.title}」本体空间执行结构化审核、规则判断和解释输出。`,
+        role: 'expert',
+        agent_type: 'ontology',
+        model_config_id: defaultModelConfig.id,
+        system_prompt: [
+          `你是${template.title}助手。`,
+          '收到业务文本或结构化数据时，优先使用绑定的本体空间进行映射、规则评估和解释。',
+          '如果输入是合同、协议、条款或审核材料，不要调用联网搜索、翻译助手、代码助手或其他专家。',
+          '回答必须包含：审核结论、命中风险、依据字段或条款、建议动作。没有本体结果时，说明缺少哪些字段，不要编造。'
+        ].join('\n'),
+        tools: [],
+        runtime_policy: {
+          allow_tools: false,
+          allow_web_search: false,
+          allow_swarm: false,
+          allow_canvas: true,
+          allow_ontology: true,
+          tool_call_mode: 'ontology_preflight',
+        },
+        ontology_config: {
+          enabled: true,
+          mode: 'required',
+          space_id: spaceId,
+          strict_rules: false,
+          explain_required: true,
+          fallback_when_unavailable: 'stop_and_ask',
+        },
+        routing_keywords: ['合同', '协议', '审核', '审查', '风险', '条款', '合规'],
+        handoff_strategy: 'return',
+        is_public: false,
+        is_active: true,
+      });
+
+      setSelectedSpaceId(spaceId);
+      setSourceInputKind('json');
+      setSourceSampleText(pretty(template.sample || {}));
+      setMappingInput(pretty(template.sample || {}));
+      setRuntimeInput(pretty(template.sample || {}));
+      setGuidedStep(6);
+      setActiveTab('mapping');
+      await fetchSpaces();
+      await fetchPackages();
+      await fetchSpacePackageSummary();
+      onAgentsChanged?.();
+      onAgentCreated?.(agentRes.data);
+      message.success(`已创建「${agentRes.data?.name || template.title + '助手'}」，并绑定本体空间 ${spaceCode}`);
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, '创建本体助手失败'));
     } finally {
       setLoading(false);
     }
@@ -1427,6 +2097,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
       });
       setDataSourceSecretRef(res.data.ref);
       setSecretValue('');
+      setSecretModalOpen(false);
       message.success(`密钥已保存：${res.data.ref}`);
       await fetchSecrets();
     } catch (error) {
@@ -1480,6 +2151,37 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onApproveDataSourceRuntime = async (source: OntologyDataSource, approve: boolean) => {
+    const runtime = source.config?.runtime as Record<string, unknown> | undefined;
+    const mode = String(runtime?.mode || '');
+    if (approve && !['live_api', 'live_db'].includes(mode)) {
+      message.warning('只有 runtime.mode 为 live_api 或 live_db 的连接器需要运行时审批');
+      return;
+    }
+    Modal.confirm({
+      title: approve ? '确认允许该数据源参与运行时 live 查询？' : '确认撤销该数据源 live 查询权限？',
+      content: approve
+        ? '审批后仍会受到全局开关、SSRF 防护、只读 SQL、超时和脱敏策略约束。'
+        : '撤销后智能体运行时不会再调用该 live 数据源。',
+      onOk: async () => {
+        setLoading(true);
+        try {
+          await api.post('/api/v1/ontology/data-sources/runtime-approval', {
+            data_source_id: source.id,
+            approve,
+            reason: approve ? 'approved from ontology console' : 'revoked from ontology console',
+          });
+          message.success(approve ? '运行时查询已审批' : '运行时查询权限已撤销');
+          await fetchDataSources();
+        } catch (error) {
+          message.error(getRequestErrorMessage(error, approve ? '审批失败' : '撤销失败'));
+        } finally {
+          setLoading(false);
+        }
+      },
+    });
   };
 
   const createVisualEntity = useCallback(() => {
@@ -1815,6 +2517,44 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     }
   };
 
+  const onRunRuntimePipeline = async () => {
+    if (!selectedSpaceId) return;
+    let inputPayload: Record<string, unknown>;
+    try {
+      inputPayload = JSON.parse(runtimeInput) as Record<string, unknown>;
+    } catch {
+      return message.error('运行时输入 JSON 无效');
+    }
+    setLoading(true);
+    try {
+      const res = await api.post('/api/v1/ontology/runtime/evaluate', {
+        space_id: selectedSpaceId,
+        input_payload: inputPayload,
+        query: 'ontology console runtime evaluation',
+        strict_rules: runtimeStrictRules,
+        explain_required: true,
+        fallback_when_unavailable: 'stop_and_ask',
+      });
+      setRuntimeResult(pretty(res.data));
+      if (res.data?.mapping?.graph) {
+        setMappingResult(pretty(res.data.mapping));
+        setRuleGraphInput(pretty(res.data.mapping.graph));
+      }
+      if (res.data?.decision?.decision_id) {
+        setLatestDecisionId(res.data.decision.decision_id);
+      }
+      if (res.data?.explanation) {
+        setExplainResult(pretty(res.data.explanation));
+      }
+      await fetchInstanceGraphs();
+      message.success('本体运行时执行完成');
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, '本体运行时执行失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const onRunRules = async () => {
     if (!selectedSpaceId) return;
     const rulePkg = runnableRulePackage;
@@ -1875,6 +2615,17 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
     { title: '发布上线', description: hasGaAll ? '已上线' : '推进到 GA', ready: hasGaAll, icon: Rocket },
   ];
   const activeWorkflowItem = workflowItems[guidedStep];
+  const secretRefOptions = useMemo(
+    () => [
+      ...secrets.map((item) => ({
+        value: item.ref,
+        label: `${item.scope}/${item.name}${item.description ? ` - ${item.description}` : ''}`,
+      })),
+      { value: 'env:ONTOLOGY_PG_PASSWORD', label: '环境变量：ONTOLOGY_PG_PASSWORD' },
+      { value: 'env:OPENAPI_TOKEN', label: '环境变量：OPENAPI_TOKEN' },
+    ],
+    [secrets],
+  );
   const getPreviousGuidedStep = useCallback(
     (current: GuidedStep): GuidedStep => {
       if (current === 0) return 0;
@@ -1897,6 +2648,40 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
   return (
     <div style={pageStyle}>
       <div style={shellStyle}>
+        <Modal
+          title="新建密钥引用"
+          open={secretModalOpen}
+          okText="保存并填入"
+          cancelText="取消"
+          confirmLoading={loading}
+          onOk={onSaveSecret}
+          onCancel={() => setSecretModalOpen(false)}
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            <Alert
+              type="info"
+              showIcon
+              message="保存后会生成 secret://scope/name"
+              description="密码或 Token 会密文落库，不会明文回显。保存后自动填入当前数据源。"
+            />
+            <div>
+              <label style={fieldLabelStyle}>Scope</label>
+              <Input value={secretScope} onChange={(e) => setSecretScope(e.target.value)} placeholder="例如 prod、dev、customer-a" />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>Name</label>
+              <Input value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="例如 db-password、openapi-token" />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>密钥值</label>
+              <Input.Password value={secretValue} onChange={(e) => setSecretValue(e.target.value)} placeholder="输入数据库密码或 API Token" />
+            </div>
+            <div>
+              <label style={fieldLabelStyle}>说明</label>
+              <Input value={secretDescription} onChange={(e) => setSecretDescription(e.target.value)} placeholder="可选，例如 生产库只读账号" />
+            </div>
+          </Space>
+        </Modal>
         <div style={toolbarStyle}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1924,8 +2709,16 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
         </div>
 
         {viewMode === 'guided' && (
-          <div style={{ ...surfaceStyle, display: 'grid', gridTemplateColumns: '260px minmax(0, 1fr)', overflow: 'hidden' }}>
-            <div style={{ borderRight: '1px solid #e5e7eb', background: '#ffffff', padding: 18 }}>
+          <div
+            style={{
+              ...surfaceStyle,
+              display: 'grid',
+              gridTemplateColumns: 'minmax(210px, 240px) minmax(0, 1fr)',
+              overflow: 'hidden',
+              minWidth: 0,
+            }}
+          >
+            <div style={{ borderRight: '1px solid #e5e7eb', background: '#ffffff', padding: 16 }}>
               <div style={{ padding: '4px 6px 14px' }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>配置流程</div>
                 <div style={{ marginTop: 4, ...mutedTextStyle, fontSize: 12 }}>保存后可回到任一步调整。</div>
@@ -1973,7 +2766,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
               </Space>
             </div>
 
-            <div style={{ minWidth: 0, padding: 20, background: '#f8fafc' }}>
+            <div style={{ minWidth: 0, padding: 18, background: '#f8fafc', overflow: 'hidden' }}>
               <div style={stepHeaderStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                   <div>
@@ -2060,6 +2853,98 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                       </Col>
                     </Row>
                   </Form>
+                  <Card
+                    size="small"
+                    style={contentCardStyle}
+                    title={<span style={{ fontSize: 16, fontWeight: 800 }}>模板中心：先套一套能跑的本体</span>}
+                    extra={<Text style={mutedTextStyle}>适合第一次上手，后续再按业务改字段和规则。</Text>}
+                  >
+                    {platformTemplates.length > 0 && (
+                      <>
+                        <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 10 }}>平台模板</div>
+                        <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                          {platformTemplates.map((template) => (
+                            <Col xs={24} xl={8} key={template.id}>
+                              <div style={{ border: '1px solid #dbeafe', borderRadius: 10, background: '#f8fbff', padding: 14, height: '100%' }}>
+                                <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                                  <div>
+                                    <div style={{ fontWeight: 800, color: '#0f172a', fontSize: 16 }}>{template.title}</div>
+                                    <div style={{ marginTop: 4, ...mutedTextStyle }}>{template.scenario}</div>
+                                  </div>
+                                  <Text style={mutedTextStyle}>{template.description}</Text>
+                                  <Space wrap size={6}>
+                                    <Tag color="green">{template.package_counts?.schema || 0} 个对象</Tag>
+                                    <Tag color="cyan">{template.package_counts?.mapping || 0} 个映射</Tag>
+                                    <Tag color="gold">{template.package_counts?.rule || 0} 条规则</Tag>
+                                    <Tag>v{template.version}</Tag>
+                                  </Space>
+                                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                    <Button
+                                      type="primary"
+                                      block
+                                      loading={loading}
+                                      disabled={!defaultModelConfig?.id}
+                                      onClick={() => createAgentFromPlatformTemplate(template)}
+                                    >
+                                      创建可用助手
+                                    </Button>
+                                    <Space wrap>
+                                      <Button loading={loading} onClick={() => applyPlatformTemplate(template, 'new')}>
+                                        只导入新空间
+                                      </Button>
+                                      <Button disabled={!selectedSpaceId} loading={loading} onClick={() => applyPlatformTemplate(template, 'current')}>
+                                        覆盖当前空间
+                                      </Button>
+                                    </Space>
+                                  </Space>
+                                  <Text style={{ ...mutedTextStyle, fontSize: 12 }}>
+                                    {defaultModelConfig?.id
+                                      ? `将使用 ${defaultModelConfig.label} 创建专属助手。`
+                                      : '需要先配置一个对话模型，才能直接创建助手。'}
+                                  </Text>
+                                </Space>
+                              </div>
+                            </Col>
+                          ))}
+                        </Row>
+                        <Divider style={{ margin: '10px 0 14px' }} />
+                      </>
+                    )}
+                    <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 10 }}>本地草稿模板</div>
+                    <Row gutter={[12, 12]}>
+                      {STARTER_TEMPLATES.map((template) => (
+                        <Col xs={24} xl={8} key={template.id}>
+                          <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', padding: 14, height: '100%' }}>
+                            <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                                <div>
+                                  <div style={{ fontWeight: 800, color: '#0f172a', fontSize: 16 }}>{template.title}</div>
+                                  <div style={{ marginTop: 4, ...mutedTextStyle }}>{template.scenario}</div>
+                                </div>
+                                <Tag color="blue" style={{ margin: 0 }}>{template.difficulty}</Tag>
+                              </div>
+                              <Text style={mutedTextStyle}>{template.description}</Text>
+                              <Space wrap size={6}>
+                                <Tag color="green">{asArray(template.schema.entity_types).length} 个对象</Tag>
+                                <Tag color="cyan">{asArray(template.mapping.entity_mappings).length} 个映射</Tag>
+                                <Tag color="gold">{asArray(template.rule.rules).length} 条规则</Tag>
+                              </Space>
+                              <Button
+                                type="primary"
+                                ghost
+                                disabled={!selectedSpaceId}
+                                loading={loading}
+                                onClick={() => applyStarterTemplate(template)}
+                              >
+                                套用到当前空间
+                              </Button>
+                              {!selectedSpaceId && <Text style={{ ...mutedTextStyle, fontSize: 12 }}>请先选择或创建空间。</Text>}
+                            </Space>
+                          </div>
+                        </Col>
+                      ))}
+                    </Row>
+                  </Card>
                 </Space>
               )}
 
@@ -2088,15 +2973,13 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
 
                     {dataSourceEntryMode === 'connector' && (
                       <>
-                        <Alert
-                          type="info"
-                          showIcon
-                          message="注册数据库、API 或协议入口"
-                          description="这里保存连接器元数据和安全 dry-run 配置检查，不要求把真实密码写进配置；敏感信息请使用密钥引用。"
-                        />
-                        <Row gutter={[12, 12]}>
-                          <Col xs={24} xl={5}>
-                            <label style={fieldLabelStyle}>类型</label>
+                        <div style={compactInfoStyle}>
+                          <Text strong style={{ color: '#1d4ed8' }}>注册数据库、API 或协议入口：</Text>
+                          <span> 保存连接器元数据并做安全 dry-run 检查，敏感信息请使用密钥引用。</span>
+                        </div>
+                        <Row gutter={[12, 8]} align="top">
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>类型</label>
                             <Select
                               value={dataSourceKind}
                               style={{ width: '100%' }}
@@ -2108,12 +2991,12 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                               ]}
                             />
                           </Col>
-                          <Col xs={24} xl={5}>
-                            <label style={fieldLabelStyle}>名称</label>
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>名称</label>
                             <Input value={dataSourceName} onChange={(e) => setDataSourceName(e.target.value)} />
                           </Col>
-                          <Col xs={24} xl={4}>
-                            <label style={fieldLabelStyle}>协议</label>
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>协议</label>
                             <Select
                               value={dataSourceProtocol}
                               style={{ width: '100%' }}
@@ -2126,24 +3009,39 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                               ).map((item) => ({ value: item, label: item }))}
                             />
                           </Col>
-                          <Col xs={24} xl={5}>
-                            <label style={fieldLabelStyle}>密钥引用</label>
-                            <Input value={dataSourceSecretRef} onChange={(e) => setDataSourceSecretRef(e.target.value)} placeholder="例如 secret://prod/db-password" />
-                            <div style={{ marginTop: 6, ...mutedTextStyle, fontSize: 12 }}>
-                              支持 secret://scope/name 或 env:环境变量名。数据库密码/API Token 不要写进配置 JSON。
+                          <Col xs={24} xl={19}>
+                            <label style={compactFieldLabelStyle}>密钥引用</label>
+                            <Space.Compact style={{ width: '100%' }}>
+                              <AutoComplete
+                                value={dataSourceSecretRef}
+                                onChange={setDataSourceSecretRef}
+                                options={secretRefOptions}
+                                placeholder={secrets.length > 0 ? '选择已保存密钥' : '先新建密钥或填写 env:XXX'}
+                                style={{ width: '100%' }}
+                                filterOption={(inputValue, option) =>
+                                  String(option?.value || '').toLowerCase().includes(inputValue.toLowerCase()) ||
+                                  String(option?.label || '').toLowerCase().includes(inputValue.toLowerCase())
+                                }
+                              />
+                              <Button onClick={() => setSecretModalOpen(true)}>新建</Button>
+                            </Space.Compact>
+                            <div style={{ marginTop: 4, ...mutedTextStyle, fontSize: 12 }}>
+                              选一个已保存密钥，或点“新建”。高级用法仍支持手填 env:环境变量名。
                             </div>
                           </Col>
                           <Col xs={24} xl={5}>
-                            <label style={fieldLabelStyle}>操作</label>
-                            <Button type="primary" onClick={onSaveDataSource} loading={loading} block>保存连接器</Button>
+                            <label style={{ ...compactFieldLabelStyle, visibility: 'hidden' }}>操作</label>
+                            <Button type="primary" onClick={onSaveDataSource} loading={loading} style={{ height: 32, width: 128 }}>
+                              保存连接器
+                            </Button>
                           </Col>
-                          <Col xs={24} xl={12}>
-                            <label style={fieldLabelStyle}>连接配置 JSON</label>
-                            <TextArea value={dataSourceConfigText} onChange={(e) => setDataSourceConfigText(e.target.value)} autoSize={{ minRows: 8, maxRows: 12 }} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                          <Col xs={24} xxl={12}>
+                            <label style={compactFieldLabelStyle}>连接配置 JSON</label>
+                            <TextArea value={dataSourceConfigText} onChange={(e) => setDataSourceConfigText(e.target.value)} autoSize={{ minRows: 6, maxRows: 10 }} style={{ fontFamily: 'monospace', fontSize: 12 }} />
                           </Col>
-                          <Col xs={24} xl={12}>
-                            <label style={fieldLabelStyle}>已注册连接器</label>
-                            <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, minHeight: 240, maxHeight: 360, overflowY: 'auto' }}>
+                          <Col xs={24} xxl={12}>
+                            <label style={compactFieldLabelStyle}>已注册连接器</label>
+                            <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, minHeight: 180, maxHeight: 320, overflowY: 'auto' }}>
                               {dataSources.length === 0 ? (
                                 <div style={{ padding: 18, color: '#64748b' }}>还没有连接器。保存一个数据库、API 或协议连接器后，它会出现在这里。</div>
                               ) : (
@@ -2152,18 +3050,39 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                                   size="small"
                                   pagination={false}
                                   dataSource={dataSources}
+                                  scroll={{ x: 760 }}
                                   columns={[
                                     { title: '名称', dataIndex: 'name' },
                                     { title: '协议', dataIndex: 'protocol', width: 120, render: (value, row) => <Tag>{row.kind}:{String(value)}</Tag> },
                                     { title: '检查', dataIndex: 'last_test_status', width: 100, render: (value) => <Tag color={value === 'ready' ? 'green' : value === 'invalid' ? 'red' : 'default'}>{String(value || '未测试')}</Tag> },
                                     {
+                                      title: '运行时',
+                                      width: 110,
+                                      render: (_, row) => {
+                                        const runtime = row.config?.runtime as Record<string, unknown> | undefined;
+                                        const mode = String(runtime?.mode || 'disabled');
+                                        const approved = Boolean(runtime?.live_approved);
+                                        if (!['live_api', 'live_db'].includes(mode)) return <Tag>离线</Tag>;
+                                        return <Tag color={approved ? 'green' : 'gold'}>{approved ? '已审批' : '待审批'}</Tag>;
+                                      },
+                                    },
+                                    {
                                       title: '操作',
                                       key: 'actions',
-                                      width: 150,
+                                      width: 230,
                                       render: (_, row) => (
                                         <Space size={6}>
                                           <Button size="small" onClick={() => onTestDataSource(row)} loading={loading}>检查</Button>
                                           <Button size="small" type="primary" onClick={() => onDiscoverDataSource(row)} loading={loading}>发现结构</Button>
+                                          {['live_api', 'live_db'].includes(String((row.config?.runtime as Record<string, unknown> | undefined)?.mode || '')) && (
+                                            <Button
+                                              size="small"
+                                              onClick={() => onApproveDataSourceRuntime(row, !Boolean((row.config?.runtime as Record<string, unknown> | undefined)?.live_approved))}
+                                              loading={loading}
+                                            >
+                                              {Boolean((row.config?.runtime as Record<string, unknown> | undefined)?.live_approved) ? '撤销' : '审批'}
+                                            </Button>
+                                          )}
                                         </Space>
                                       ),
                                     },
@@ -2206,7 +3125,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         </Space>
                       </div>
                       <input ref={sourceFileInputRef} type="file" accept=".json,.csv,.tsv,.txt,.xlsx,.xls" style={{ display: 'none' }} onChange={onImportSourceSample} />
-                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 14, marginTop: 14 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 14, marginTop: 14, minWidth: 0 }}>
                         <div>
                           <label style={fieldLabelStyle}>{sourceInputKind === 'json' ? '数据样本 JSON' : '表格样本 CSV / TSV'}</label>
                           <TextArea
@@ -2235,6 +3154,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                                 size="small"
                                 pagination={false}
                                 dataSource={sourceFields}
+                                scroll={{ x: 360 }}
                                 columns={[
                                   { title: '路径', dataIndex: 'path', ellipsis: true },
                                   { title: '字段', dataIndex: 'name', width: 110 },
@@ -2274,13 +3194,14 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                       action={<Button size="small" onClick={() => setGuidedStep(1)}>返回数据来源</Button>}
                     />
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 16, alignItems: 'start' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 16, alignItems: 'start', minWidth: 0 }}>
                       <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', padding: 12 }}>
                         <Table<SourceField>
                           rowKey="path"
                           size="small"
                           pagination={false}
                           dataSource={sourceFields}
+                          scroll={{ x: 760 }}
                           columns={[
                             {
                               title: '使用',
@@ -2385,7 +3306,15 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
 
                   {guidedBuilderKind === 'schema' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(380px, 440px)', gap: 16, alignItems: 'start' }}>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+                        gap: 16,
+                        alignItems: 'start',
+                        minWidth: 0,
+                      }}
+                    >
                       <div style={{ gridColumn: '1 / -1', border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', padding: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                           <Space size={8}>
@@ -2431,7 +3360,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         </div>
                       </div>
 
-                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', padding: 16 }}>
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', padding: 16, minWidth: 0 }}>
                         {activeVisualEntity ? (
                           <Space direction="vertical" style={{ width: '100%' }} size={14}>
                             <Row gutter={[12, 12]} align="bottom">
@@ -2464,6 +3393,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                                       size="small"
                                       pagination={false}
                                       dataSource={activeVisualEntity.attributes}
+                                      scroll={{ x: 560 }}
                                       locale={{ emptyText: '还没有字段，点击下方添加字段。' }}
                                       columns={[
                                         {
@@ -2607,6 +3537,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                                         size="small"
                                         pagination={false}
                                         dataSource={activeVisualEntity.relations || []}
+                                        scroll={{ x: 620 }}
                                         locale={{ emptyText: '暂无关系。对象之间有关联时再添加即可。' }}
                                         columns={[
                                           {
@@ -2758,7 +3689,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         )}
                       </div>
 
-                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', padding: 14 }}>
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', padding: 14, minWidth: 0 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                           <Space size={8} wrap>
                             <Text strong>{schemaInspectorMode === 'graph' ? '本体图视角' : '结构摘要'}</Text>
@@ -2891,7 +3822,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                   )}
 
                   {guidedBuilderKind === 'mapping' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: 14 }}>
+                    <div style={responsiveTwoColumnStyle}>
                       <Space direction="vertical" style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', padding: 16 }} size={14}>
                         <Row gutter={[12, 12]}>
                           <Col xs={24} md={6}>
@@ -2921,6 +3852,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                           size="small"
                           pagination={false}
                           dataSource={visualMappingFields}
+                          scroll={{ x: 820 }}
                           columns={[
                             { title: '输入字段路径', dataIndex: 'source_path', render: (_, row) => <Input value={row.source_path} onChange={(e) => setVisualMappingFields((prev) => prev.map((f) => (f.id === row.id ? { ...f, source_path: e.target.value } : f)))} /> },
                             { title: '写入对象字段', dataIndex: 'target_attr', render: (_, row) => <Input value={row.target_attr} onChange={(e) => setVisualMappingFields((prev) => prev.map((f) => (f.id === row.id ? { ...f, target_attr: e.target.value } : f)))} /> },
@@ -2981,7 +3913,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                   )}
 
                   {guidedBuilderKind === 'rule' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 280px', gap: 14 }}>
+                    <div style={responsiveTwoColumnStyle}>
                       <Space direction="vertical" style={{ width: '100%', border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', padding: 16 }} size={14}>
                         <Row gutter={[12, 12]}>
                           <Col xs={24} md={4}>
@@ -3019,6 +3951,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                           size="small"
                           pagination={false}
                           dataSource={visualRuleConditions}
+                          scroll={{ x: 760 }}
                           columns={[
                             { title: '检查路径', dataIndex: 'path', render: (_, row) => <Input value={row.path} onChange={(e) => setVisualRuleConditions((prev) => prev.map((c) => (c.id === row.id ? { ...c, path: e.target.value } : c)))} /> },
                             {
@@ -3122,7 +4055,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         <Tag color={runnableRulePackage ? 'blue' : 'default'}>规则 {runnableRulePackage ? `${runnableRulePackage.version} / ${STAGE_LABELS[runnableRulePackage.stage]}` : '未保存'}</Tag>
                       </Space>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                       {[
                         { title: '映射', status: mappingResult ? '完成' : '待执行', value: `${mappedEntityCount} 个对象`, color: mappingResult ? '#16a34a' : '#94a3b8' },
                         { title: '规则', status: ruleResult ? '完成' : '待执行', value: RISK_LABELS[ruleRiskLevel] || ruleRiskLevel, color: ruleResult ? '#2563eb' : '#94a3b8' },
@@ -3144,7 +4077,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         <Text strong>执行检查清单</Text>
                         <Text style={mutedTextStyle}>确认每一步的输入和产物是否可继续使用。</Text>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 12 }}>
                         {[
                           {
                             title: '输入映射',
@@ -3199,7 +4132,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
               )}
 
               {selectedSpaceId && guidedStep === 7 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
                   {(['schema', 'mapping', 'rule'] as PackageKind[]).map((targetKind) => {
                     const pkg = latestGuidedPackages[targetKind];
                     const allowedTargets = pkg ? getAllowedReleaseTargets(pkg.stage) : [];
@@ -3777,7 +4710,7 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         description="保存后可直接复制 ref 到数据源的“密钥引用”。也兼容 env:环境变量名。"
                       />
                       <Card size="small" title="新建或更新密钥" style={sectionCardStyle}>
-                        <Row gutter={[12, 12]} align="bottom">
+                        <Row gutter={[12, 12]} align="top">
                           <Col xs={24} md={5}>
                             <label style={fieldLabelStyle}>Scope</label>
                             <Input value={secretScope} onChange={(e) => setSecretScope(e.target.value)} placeholder="prod" />
@@ -3825,11 +4758,11 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                   label: '数据源发现',
                   disabled: !selectedSpaceId,
                   children: (
-                    <Space direction="vertical" style={{ width: '100%' }} size={14}>
+                    <Space direction="vertical" style={{ width: '100%' }} size={12}>
                       <Card size="small" title="连接器配置" style={sectionCardStyle}>
-                        <Row gutter={[12, 12]}>
-                          <Col xs={24} xl={4}>
-                            <label style={fieldLabelStyle}>类型</label>
+                        <Row gutter={[12, 8]} align="top">
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>类型</label>
                             <Select
                               value={dataSourceKind}
                               style={{ width: '100%' }}
@@ -3841,12 +4774,12 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                               ]}
                             />
                           </Col>
-                          <Col xs={24} xl={5}>
-                            <label style={fieldLabelStyle}>名称</label>
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>名称</label>
                             <Input value={dataSourceName} onChange={(e) => setDataSourceName(e.target.value)} />
                           </Col>
-                          <Col xs={24} xl={4}>
-                            <label style={fieldLabelStyle}>协议</label>
+                          <Col xs={24} md={8}>
+                            <label style={compactFieldLabelStyle}>协议</label>
                             <Select
                               value={dataSourceProtocol}
                               style={{ width: '100%' }}
@@ -3859,17 +4792,32 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                               ).map((item) => ({ value: item, label: item }))}
                             />
                           </Col>
-                          <Col xs={24} xl={7}>
-                            <label style={fieldLabelStyle}>密钥引用</label>
-                            <Input value={dataSourceSecretRef} onChange={(e) => setDataSourceSecretRef(e.target.value)} placeholder="secret://prod/db-password" />
+                          <Col xs={24} xl={19}>
+                            <label style={compactFieldLabelStyle}>密钥引用</label>
+                            <Space.Compact style={{ width: '100%' }}>
+                              <AutoComplete
+                                value={dataSourceSecretRef}
+                                onChange={setDataSourceSecretRef}
+                                options={secretRefOptions}
+                                placeholder={secrets.length > 0 ? '选择已保存密钥' : '先新建密钥或填写 env:XXX'}
+                                style={{ width: '100%' }}
+                                filterOption={(inputValue, option) =>
+                                  String(option?.value || '').toLowerCase().includes(inputValue.toLowerCase()) ||
+                                  String(option?.label || '').toLowerCase().includes(inputValue.toLowerCase())
+                                }
+                              />
+                              <Button onClick={() => setSecretModalOpen(true)}>新建</Button>
+                            </Space.Compact>
                           </Col>
-                          <Col xs={24} xl={4}>
-                            <label style={fieldLabelStyle}>操作</label>
-                            <Button type="primary" block onClick={onSaveDataSource} loading={loading}>保存连接器</Button>
+                          <Col xs={24} xl={5}>
+                            <label style={{ ...compactFieldLabelStyle, visibility: 'hidden' }}>操作</label>
+                            <Button type="primary" onClick={onSaveDataSource} loading={loading} style={{ height: 32, width: 128 }}>
+                              保存连接器
+                            </Button>
                           </Col>
                           <Col span={24}>
-                            <label style={fieldLabelStyle}>配置 JSON</label>
-                            <TextArea value={dataSourceConfigText} onChange={(e) => setDataSourceConfigText(e.target.value)} autoSize={{ minRows: 8, maxRows: 14 }} style={{ fontFamily: 'monospace' }} />
+                            <label style={compactFieldLabelStyle}>配置 JSON</label>
+                            <TextArea value={dataSourceConfigText} onChange={(e) => setDataSourceConfigText(e.target.value)} autoSize={{ minRows: 6, maxRows: 10 }} style={{ fontFamily: 'monospace' }} />
                           </Col>
                         </Row>
                       </Card>
@@ -3878,18 +4826,39 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                           rowKey="id"
                           dataSource={dataSources}
                           pagination={{ pageSize: 8 }}
+                          scroll={{ x: 980 }}
                           columns={[
                             { title: '名称', dataIndex: 'name' },
                             { title: '协议', dataIndex: 'protocol', render: (value, row) => <Tag>{row.kind}:{String(value)}</Tag> },
                             { title: '密钥', dataIndex: 'secret_ref', render: (value) => value ? <Tag color="blue">{String(value)}</Tag> : <Text type="secondary">未配置</Text> },
                             { title: '检查', dataIndex: 'last_test_status', render: (value) => <Tag color={value === 'ready' ? 'green' : value === 'invalid' ? 'red' : 'default'}>{String(value || '未测试')}</Tag> },
                             {
+                              title: '运行时审批',
+                              width: 130,
+                              render: (_, row) => {
+                                const runtime = row.config?.runtime as Record<string, unknown> | undefined;
+                                const mode = String(runtime?.mode || 'disabled');
+                                const approved = Boolean(runtime?.live_approved);
+                                if (!['live_api', 'live_db'].includes(mode)) return <Tag>离线/发现</Tag>;
+                                return <Tag color={approved ? 'green' : 'gold'}>{approved ? '已审批' : '待审批'}</Tag>;
+                              },
+                            },
+                            {
                               title: '操作',
-                              width: 220,
+                              width: 320,
                               render: (_, row) => (
                                 <Space>
                                   <Button size="small" onClick={() => onTestDataSource(row)} loading={loading}>检查</Button>
                                   <Button size="small" type="primary" onClick={() => onDiscoverDataSource(row)} loading={loading}>发现结构</Button>
+                                  {['live_api', 'live_db'].includes(String((row.config?.runtime as Record<string, unknown> | undefined)?.mode || '')) && (
+                                    <Button
+                                      size="small"
+                                      onClick={() => onApproveDataSourceRuntime(row, !Boolean((row.config?.runtime as Record<string, unknown> | undefined)?.live_approved))}
+                                      loading={loading}
+                                    >
+                                      {Boolean((row.config?.runtime as Record<string, unknown> | undefined)?.live_approved) ? '撤销运行时' : '审批运行时'}
+                                    </Button>
+                                  )}
                                 </Space>
                               ),
                             },
@@ -3988,6 +4957,286 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                   ),
                 },
                 {
+                  key: 'runtime',
+                  label: '运行时验证',
+                  disabled: !selectedSpaceId,
+                  children: (
+                    <Space direction="vertical" style={{ width: '100%' }} size={14}>
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ borderRadius: 12 }}
+                        message="运行时验证会按智能体真实使用方式执行完整本体链路"
+                        description="系统会自动选择当前空间可运行版本，完成映射、实例图持久化、规则评估、解释生成、行动计划和安全补全。这里用于验证本体是否真的能支撑智能体工作。"
+                      />
+                      <Row gutter={[14, 14]}>
+                        <Col xs={24} xl={10}>
+                          <Card
+                            size="small"
+                            title="输入样本"
+                            style={sectionCardStyle}
+                            extra={<Tag color="blue">JSON</Tag>}
+                          >
+                            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                              <TextArea
+                                value={runtimeInput}
+                                onChange={(e) => setRuntimeInput(e.target.value)}
+                                autoSize={{ minRows: 16, maxRows: 24 }}
+                                style={{ fontFamily: 'monospace' }}
+                              />
+                              <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+                                <Space>
+                                  <Switch checked={runtimeStrictRules} onChange={setRuntimeStrictRules} />
+                                  <Text type="secondary">严格规则模式</Text>
+                                </Space>
+                                <Button
+                                  type="primary"
+                                  onClick={onRunRuntimePipeline}
+                                  loading={loading}
+                                  disabled={!runnableSchemaPackage || !runnableMappingPackage || !runnableRulePackage}
+                                >
+                                  执行完整链路
+                                </Button>
+                              </Space>
+                              {(!runnableSchemaPackage || !runnableMappingPackage || !runnableRulePackage) && (
+                                <Alert
+                                  type="warning"
+                                  showIcon
+                                  message="需要先保存结构、映射和规则三个包"
+                                  description="运行时链路依赖三类包。包可以处于草稿、评审、预发或正式阶段，控制台调试会优先选择最新可运行版本。"
+                                />
+                              )}
+                            </Space>
+                          </Card>
+                        </Col>
+                        <Col xs={24} xl={14}>
+                          <Card
+                            size="small"
+                            title="运行结果"
+                            style={sectionCardStyle}
+                            extra={
+                              runtimeResultObj ? (
+                                <Space wrap>
+                                  <Tag color={runtimeResultObj.status === 'success' ? 'green' : runtimeResultObj.should_block ? 'red' : 'gold'}>
+                                    {String(runtimeResultObj.status || '已返回')}
+                                  </Tag>
+                                  {Boolean(runtimeResultObj.graph_id) && <Tag color="blue">{String(runtimeResultObj.graph_id)}</Tag>}
+                                  <Button size="small" onClick={fetchInstanceGraphs}>刷新实例图</Button>
+                                </Space>
+                              ) : (
+                                <Text type="secondary">等待执行</Text>
+                              )
+                            }
+                          >
+                            <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                              <Col xs={24} md={6}>
+                                <div style={contentCardStyle}>
+                                  <div style={{ padding: 14 }}>
+                                    <Text type="secondary">实体图</Text>
+                                    <div style={{ fontSize: 24, fontWeight: 800, color: '#0f172a' }}>
+                                      {runtimeGraph.entities.length} / {runtimeGraph.relations.length}
+                                    </div>
+                                    <Text type="secondary">实体 / 关系</Text>
+                                  </div>
+                                </div>
+                              </Col>
+                              <Col xs={24} md={6}>
+                                <div style={contentCardStyle}>
+                                  <div style={{ padding: 14 }}>
+                                    <Text type="secondary">风险等级</Text>
+                                    <div style={{ fontSize: 24, fontWeight: 800, color: '#0f172a' }}>
+                                      {RISK_LABELS[String(runtimeDecision.risk_level || '未执行')] || String(runtimeDecision.risk_level || '未执行')}
+                                    </div>
+                                    <Text type="secondary">{runtimeHits.length} 命中 / {runtimeMisses.length} 未命中</Text>
+                                  </div>
+                                </div>
+                              </Col>
+                              <Col xs={24} md={6}>
+                                <div style={contentCardStyle}>
+                                  <div style={{ padding: 14 }}>
+                                    <Text type="secondary">缺失字段</Text>
+                                    <div style={{ fontSize: 24, fontWeight: 800, color: '#0f172a' }}>
+                                      {runtimeMissingFields.length}
+                                    </div>
+                                    <Text type="secondary">待补全字段</Text>
+                                  </div>
+                                </div>
+                              </Col>
+                              <Col xs={24} md={6}>
+                                <div style={contentCardStyle}>
+                                  <div style={{ padding: 14 }}>
+                                    <Text type="secondary">行动执行</Text>
+                                    <div style={{ fontSize: 24, fontWeight: 800, color: '#0f172a' }}>
+                                      {String(runtimeActionExecution.status || '未执行')}
+                                    </div>
+                                    <Text type="secondary">{Number(runtimeActionExecution.applied_patch_count || 0)} 个补丁</Text>
+                                  </div>
+                                </div>
+                              </Col>
+                            </Row>
+                            {!runtimeResultObj ? (
+                              <Alert
+                                type="info"
+                                showIcon
+                                message="还没有运行结果"
+                                description="输入一段样本数据并执行完整链路后，这里会拆解展示实体图、风险命中、缺失字段、推荐数据源和行动计划。"
+                              />
+                            ) : (
+                              <Space direction="vertical" style={{ width: '100%' }} size={14}>
+                                <Row gutter={[12, 12]}>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="实体图概览" style={contentCardStyle}>
+                                      <Table<RuntimeEntityView>
+                                        size="small"
+                                        rowKey={(row, index) => row.id || `${row.entity_type}-${index}`}
+                                        dataSource={runtimeGraph.entities}
+                                        pagination={runtimeGraph.entities.length > 5 ? { pageSize: 5 } : false}
+                                        columns={[
+                                          { title: '实体', dataIndex: 'entity_type', width: 140, render: (value) => <Tag color="blue">{String(value || 'Entity')}</Tag> },
+                                          { title: 'ID', dataIndex: 'id', ellipsis: true },
+                                          {
+                                            title: '字段',
+                                            width: 180,
+                                            render: (_, row) => Object.keys(row.attributes || {}).slice(0, 5).map((key) => <Tag key={key}>{key}</Tag>),
+                                          },
+                                        ]}
+                                      />
+                                      <div style={{ marginTop: 10 }}>
+                                        <Text type="secondary">关系数：</Text>
+                                        <Tag>{runtimeGraph.relations.length}</Tag>
+                                      </div>
+                                    </Card>
+                                  </Col>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="风险命中" style={contentCardStyle}>
+                                      {runtimeHits.length === 0 ? (
+                                        <Alert type="success" showIcon message="当前没有规则命中" />
+                                      ) : (
+                                        <Table<RuntimeRuleHitView>
+                                          size="small"
+                                          rowKey={(row, index) => row.rule_id || `${row.name}-${index}`}
+                                          dataSource={runtimeHits}
+                                          pagination={runtimeHits.length > 5 ? { pageSize: 5 } : false}
+                                          columns={[
+                                            { title: '规则', dataIndex: 'name', render: (value, row) => String(value || row.rule_id || '-') },
+                                            { title: '等级', dataIndex: 'severity', width: 90, render: (value) => <Tag color={value === 'critical' || value === 'high' ? 'red' : 'gold'}>{String(value || '-')}</Tag> },
+                                            { title: '动作', dataIndex: 'action', width: 90 },
+                                            { title: '原因', dataIndex: 'reason', ellipsis: true },
+                                          ]}
+                                        />
+                                      )}
+                                    </Card>
+                                  </Col>
+                                </Row>
+
+                                <Row gutter={[12, 12]}>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="缺失字段" style={contentCardStyle}>
+                                      {runtimeMissingFields.length === 0 ? (
+                                        <Alert type="success" showIcon message="没有发现需要补全的字段" />
+                                      ) : (
+                                        <Table<RuntimeMissingFieldView>
+                                          size="small"
+                                          rowKey={(row, index) => `${row.entity_id || row.entity_type}-${row.field}-${index}`}
+                                          dataSource={runtimeMissingFields}
+                                          pagination={runtimeMissingFields.length > 5 ? { pageSize: 5 } : false}
+                                          columns={[
+                                            { title: '对象', dataIndex: 'entity_type', width: 120 },
+                                            { title: '字段', dataIndex: 'field', width: 120, render: (value) => <Tag color="orange">{String(value || '-')}</Tag> },
+                                            { title: '实体 ID', dataIndex: 'entity_id', ellipsis: true },
+                                            { title: '来源路径', dataIndex: 'source_path', ellipsis: true },
+                                          ]}
+                                        />
+                                      )}
+                                    </Card>
+                                  </Col>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="推荐数据源" style={contentCardStyle}>
+                                      {runtimeSuggestedDataSources.length === 0 ? (
+                                        <Alert type="info" showIcon message="暂无推荐数据源" />
+                                      ) : (
+                                        <Table<RuntimeSuggestedDataSourceView>
+                                          size="small"
+                                          rowKey={(row, index) => row.id || `${row.name}-${index}`}
+                                          dataSource={runtimeSuggestedDataSources}
+                                          pagination={runtimeSuggestedDataSources.length > 5 ? { pageSize: 5 } : false}
+                                          columns={[
+                                            { title: '名称', dataIndex: 'name', render: (value, row) => String(value || row.id || '-') },
+                                            { title: '类型', width: 130, render: (_, row) => <Tag>{row.kind || '-'}:{row.protocol || '-'}</Tag> },
+                                            { title: '匹配字段', dataIndex: 'matched_fields', render: (value) => asArray<string>(value).slice(0, 4).map((item) => <Tag key={item}>{item}</Tag>) },
+                                            { title: '分数', dataIndex: 'score', width: 80 },
+                                          ]}
+                                        />
+                                      )}
+                                    </Card>
+                                  </Col>
+                                </Row>
+
+                                <Row gutter={[12, 12]}>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="行动计划" style={contentCardStyle}>
+                                      <Space direction="vertical" style={{ width: '100%' }}>
+                                        {Boolean(runtimeActionPlan.summary) && <Alert type="info" showIcon message={String(runtimeActionPlan.summary)} />}
+                                        {runtimeActionSteps.length === 0 ? (
+                                          <Text type="secondary">暂无行动步骤。</Text>
+                                        ) : (
+                                          runtimeActionSteps.map((step, index) => (
+                                            <div key={step.step_id || index} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                                              <Space wrap>
+                                                <Tag color="blue">{index + 1}</Tag>
+                                                <Text strong>{step.title || step.step_id || step.kind || '行动步骤'}</Text>
+                                                {step.status && <Tag>{step.status}</Tag>}
+                                              </Space>
+                                              <div style={{ marginTop: 6, ...mutedTextStyle }}>{step.description || step.data_source_name || step.data_source_id || '等待执行器处理'}</div>
+                                            </div>
+                                          ))
+                                        )}
+                                      </Space>
+                                    </Card>
+                                  </Col>
+                                  <Col xs={24} xl={12}>
+                                    <Card size="small" title="解释与执行" style={contentCardStyle}>
+                                      <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                                        {runtimeWhy.length > 0 ? (
+                                          runtimeWhy.slice(0, 5).map((item, index) => (
+                                            <Alert key={`${item}-${index}`} type="success" showIcon message={item} />
+                                          ))
+                                        ) : (
+                                          <Text type="secondary">暂无解释原因。</Text>
+                                        )}
+                                        {runtimeExecutionItems.map((item, index) => (
+                                          <div key={index} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                                            <Space wrap>
+                                              <Tag color={item.status === 'applied' ? 'green' : item.status === 'failed' ? 'red' : 'default'}>{String(item.status || 'unknown')}</Tag>
+                                              <Text>{String(item.data_source_name || item.data_source_id || 'runtime execution')}</Text>
+                                              <Tag>{Number(item.applied_patch_count || 0)} patches</Tag>
+                                            </Space>
+                                            {Boolean(item.reason) && <div style={{ marginTop: 6, ...mutedTextStyle }}>{String(item.reason)}</div>}
+                                          </div>
+                                        ))}
+                                      </Space>
+                                    </Card>
+                                  </Col>
+                                </Row>
+
+                                <details style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, background: '#fff' }}>
+                                  <summary style={{ cursor: 'pointer', fontWeight: 700 }}>高级调试 JSON</summary>
+                                  <TextArea
+                                    value={runtimeResult}
+                                    readOnly
+                                    autoSize={{ minRows: 12, maxRows: 24 }}
+                                    style={{ marginTop: 12, fontFamily: 'monospace' }}
+                                  />
+                                </details>
+                              </Space>
+                            )}
+                          </Card>
+                        </Col>
+                      </Row>
+                    </Space>
+                  ),
+                },
+                {
                   key: 'rules',
                   label: '规则执行',
                   disabled: !selectedSpaceId,
@@ -4003,6 +5252,85 @@ const OntologyWorkbench: React.FC<Props> = ({ api }) => {
                         <TextArea value={ruleResult} readOnly autoSize={{ minRows: 8, maxRows: 16 }} style={{ fontFamily: 'monospace' }} />
                         <TextArea value={explainResult} readOnly autoSize={{ minRows: 8, maxRows: 16 }} style={{ fontFamily: 'monospace' }} />
                       </Space>
+                    </Card>
+                  ),
+                },
+                {
+                  key: 'graphs',
+                  label: '实例图',
+                  disabled: !selectedSpaceId,
+                  children: (
+                    <Card
+                      size="small"
+                      title="本体实例图"
+                      style={sectionCardStyle}
+                      extra={<Button onClick={fetchInstanceGraphs} loading={loading}>刷新</Button>}
+                    >
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 14, borderRadius: 12 }}
+                        message="这里保存智能体或调试流程生成的业务实例图"
+                        description="实例图会记录 schema/mapping 版本、来源、decision_id、实体关系数量和原始 graph 快照，后续可用于复盘、图检索和本体驱动 RAG。"
+                      />
+                      <Table<InstanceGraphRecord>
+                        rowKey="id"
+                        dataSource={instanceGraphs}
+                        pagination={{ pageSize: 8 }}
+                        expandable={{
+                          expandedRowRender: (row) => (
+                            <Row gutter={[12, 12]}>
+                              <Col xs={24} xl={12}>
+                                <Text strong>Graph Snapshot</Text>
+                                <TextArea
+                                  readOnly
+                                  value={JSON.stringify(row.graph_snapshot || {}, null, 2)}
+                                  autoSize={{ minRows: 8, maxRows: 18 }}
+                                  style={{ marginTop: 8, fontFamily: 'monospace' }}
+                                />
+                              </Col>
+                              <Col xs={24} xl={12}>
+                                <Text strong>Input / Trace</Text>
+                                <TextArea
+                                  readOnly
+                                  value={JSON.stringify({ input: row.input_snapshot, trace: row.trace, metadata: row.metadata }, null, 2)}
+                                  autoSize={{ minRows: 8, maxRows: 18 }}
+                                  style={{ marginTop: 8, fontFamily: 'monospace' }}
+                                />
+                              </Col>
+                            </Row>
+                          ),
+                        }}
+                        columns={[
+                          { title: 'Graph ID', dataIndex: 'id', width: 190, render: (value) => <Tag color="blue">{String(value)}</Tag> },
+                          { title: '来源', dataIndex: 'source', width: 130, render: (value) => <Tag>{String(value)}</Tag> },
+                          {
+                            title: '版本',
+                            key: 'versions',
+                            width: 180,
+                            render: (_, row) => (
+                              <Space direction="vertical" size={2}>
+                                <Tag color="geekblue">schema {row.schema_version || '-'}</Tag>
+                                <Tag color="cyan">mapping {row.mapping_version || '-'}</Tag>
+                              </Space>
+                            ),
+                          },
+                          {
+                            title: '规模',
+                            key: 'size',
+                            width: 120,
+                            render: (_, row) => `${row.entity_count} 实体 / ${row.relation_count} 关系`,
+                          },
+                          {
+                            title: 'Decision',
+                            dataIndex: 'decision_id',
+                            width: 180,
+                            render: (value) => value ? <Tag color="green">{String(value)}</Tag> : <Text type="secondary">未关联</Text>,
+                          },
+                          { title: '创建人', dataIndex: 'created_by', width: 130 },
+                          { title: '创建时间', dataIndex: 'created_at', width: 190 },
+                        ]}
+                      />
                     </Card>
                   ),
                 },

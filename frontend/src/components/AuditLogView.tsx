@@ -100,6 +100,36 @@ interface RecentExecution {
   api_key_id?: string | null;
 }
 
+interface RuntimeTraceSummary {
+  has_ontology: boolean;
+  ontology_status?: string | null;
+  ontology_space_id?: string | null;
+  ontology_space_name?: string | null;
+  ontology_space_code?: string | null;
+  risk_level?: string | null;
+  risk_score?: number | null;
+  tool_count: number;
+  successful_tool_count: number;
+  blocked_tool_count: number;
+  failed_tool_count: number;
+}
+
+interface RuntimeTrace {
+  message_id: string;
+  session_id?: string | null;
+  session_title?: string | null;
+  agent_id?: string | null;
+  agent_name: string;
+  user_id?: string | null;
+  created_at: string;
+  content_preview: string;
+  summary: RuntimeTraceSummary;
+  ontology_runtime?: any;
+  tool_runtime_events: any[];
+  auth_source?: string;
+  api_key_id?: string | null;
+}
+
 interface AuthSourceItem {
   source: string;
   sessions: number;
@@ -234,6 +264,9 @@ const AuditLogView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState<DashboardData>(defaultData);
   const [selectedExecution, setSelectedExecution] = useState<RecentExecution | null>(null);
+  const [runtimeTraces, setRuntimeTraces] = useState<RuntimeTrace[]>([]);
+  const [runtimeTraceSummary, setRuntimeTraceSummary] = useState({ total: 0, with_ontology: 0, with_tools: 0, blocked_tools: 0, failed_tools: 0 });
+  const [selectedRuntimeTrace, setSelectedRuntimeTrace] = useState<RuntimeTrace | null>(null);
   const [days, setDays] = useState<number>(7);
   const [scope, setScope] = useState<'mine' | 'global'>('mine');
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -279,6 +312,9 @@ const AuditLogView: React.FC = () => {
       const res = await axios.get(`/api/v1/audit/dashboard?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
+      const traceRes = await axios.get(`/api/v1/audit/runtime-traces?${params.toString()}`, {
+        headers: getAuthHeaders(),
+      });
       setDashboard({
         ...defaultData,
         ...res.data,
@@ -295,6 +331,14 @@ const AuditLogView: React.FC = () => {
         filter_options: res.data?.filter_options || defaultData.filter_options,
         selection: res.data?.selection || {},
       });
+      setRuntimeTraces(traceRes.data?.items || []);
+      setRuntimeTraceSummary({
+        total: traceRes.data?.summary?.total || 0,
+        with_ontology: traceRes.data?.summary?.with_ontology || 0,
+        with_tools: traceRes.data?.summary?.with_tools || 0,
+        blocked_tools: traceRes.data?.summary?.blocked_tools || 0,
+        failed_tools: traceRes.data?.summary?.failed_tools || 0,
+      });
     } catch (err) {
       console.error('Failed to fetch audit dashboard', err);
       const status = (err as any)?.response?.status;
@@ -305,6 +349,8 @@ const AuditLogView: React.FC = () => {
         setScope('mine');
       }
       setDashboard(defaultData);
+      setRuntimeTraces([]);
+      setRuntimeTraceSummary({ total: 0, with_ontology: 0, with_tools: 0, blocked_tools: 0, failed_tools: 0 });
     } finally {
       setLoading(false);
     }
@@ -469,6 +515,84 @@ const AuditLogView: React.FC = () => {
       width: 90,
       render: (_: unknown, record: RecentExecution) => (
         <Text style={{ color: '#1677ff', cursor: 'pointer' }} onClick={() => setSelectedExecution(record)}>
+          查看
+        </Text>
+      ),
+    },
+  ];
+
+  const runtimeTraceColumns = [
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 150,
+      render: (value: string) => dayjs(value).format('MM-DD HH:mm:ss'),
+    },
+    {
+      title: '智能体',
+      dataIndex: 'agent_name',
+      key: 'agent_name',
+      width: 160,
+      ellipsis: true,
+    },
+    {
+      title: '本体',
+      key: 'ontology',
+      width: 220,
+      render: (_: unknown, record: RuntimeTrace) => {
+        const summary = record.summary || {};
+        if (!summary.has_ontology) return <Tag>未使用</Tag>;
+        return (
+          <Space size={4} wrap>
+            <Tag color={summary.ontology_status === 'success' ? 'green' : 'orange'}>
+              {summary.ontology_status || 'unknown'}
+            </Tag>
+            <Text ellipsis style={{ maxWidth: 120 }}>
+              {summary.ontology_space_name || summary.ontology_space_code || summary.ontology_space_id || '-'}
+            </Text>
+          </Space>
+        );
+      },
+    },
+    {
+      title: '风险',
+      key: 'risk',
+      width: 100,
+      render: (_: unknown, record: RuntimeTrace) => {
+        const risk = record.summary?.risk_level;
+        if (!risk) return '-';
+        const color = risk === 'high' ? 'red' : risk === 'medium' ? 'orange' : 'green';
+        return <Tag color={color}>{risk}</Tag>;
+      },
+    },
+    {
+      title: '工具',
+      key: 'tools',
+      width: 180,
+      render: (_: unknown, record: RuntimeTrace) => {
+        const summary = record.summary || {};
+        return (
+          <Space size={4} wrap>
+            <Tag>总 {summary.tool_count || 0}</Tag>
+            {(summary.blocked_tool_count || 0) > 0 && <Tag color="orange">拦截 {summary.blocked_tool_count}</Tag>}
+            {(summary.failed_tool_count || 0) > 0 && <Tag color="red">失败 {summary.failed_tool_count}</Tag>}
+          </Space>
+        );
+      },
+    },
+    {
+      title: '回答摘要',
+      dataIndex: 'content_preview',
+      key: 'content_preview',
+      ellipsis: true,
+    },
+    {
+      title: '详情',
+      key: 'action',
+      width: 90,
+      render: (_: unknown, record: RuntimeTrace) => (
+        <Text style={{ color: '#1677ff', cursor: 'pointer' }} onClick={() => setSelectedRuntimeTrace(record)}>
           查看
         </Text>
       ),
@@ -821,6 +945,38 @@ const AuditLogView: React.FC = () => {
         </Row>
 
         <Card
+          title={isPersonalMode ? '我的回答运行轨迹（本体 / 工具）' : '回答运行轨迹（本体 / 工具）'}
+          extra={
+            <Space size={6} wrap>
+              <Tag>回答 {runtimeTraceSummary.total}</Tag>
+              <Tag color="blue">本体 {runtimeTraceSummary.with_ontology}</Tag>
+              <Tag color="purple">工具 {runtimeTraceSummary.with_tools}</Tag>
+              {runtimeTraceSummary.blocked_tools > 0 && <Tag color="orange">拦截 {runtimeTraceSummary.blocked_tools}</Tag>}
+              {runtimeTraceSummary.failed_tools > 0 && <Tag color="red">失败 {runtimeTraceSummary.failed_tools}</Tag>}
+            </Space>
+          }
+          bordered={false}
+          loading={loading}
+          style={{ ...blockCardStyle, marginBottom: 12 }}
+          bodyStyle={{ padding: 14 }}
+        >
+          {runtimeTraces.length > 0 ? (
+            <Table<RuntimeTrace>
+              columns={runtimeTraceColumns}
+              dataSource={runtimeTraces}
+              rowKey="message_id"
+              pagination={{ pageSize: 8 }}
+              size="small"
+              scroll={{ x: 1080 }}
+            />
+          ) : (
+            <div style={{ minHeight: 84, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 0' }}>
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无本体或工具运行轨迹" style={{ margin: 0 }} />
+            </div>
+          )}
+        </Card>
+
+        <Card
           title={isPersonalMode ? '我的最近执行记录（支持链路追溯）' : '最近执行记录（可追溯到租户/API 来源）'}
           bordered={false}
           loading={loading}
@@ -1007,6 +1163,79 @@ const AuditLogView: React.FC = () => {
               </pre>
             </Descriptions.Item>
           </Descriptions>
+        )}
+      </Drawer>
+
+      <Drawer
+        title="回答运行轨迹"
+        placement="right"
+        width={680}
+        open={!!selectedRuntimeTrace}
+        onClose={() => setSelectedRuntimeTrace(null)}
+      >
+        {selectedRuntimeTrace && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Descriptions bordered column={1} size="small">
+              <Descriptions.Item label="回答时间">
+                {dayjs(selectedRuntimeTrace.created_at).format('YYYY-MM-DD HH:mm:ss')}
+              </Descriptions.Item>
+              <Descriptions.Item label="智能体">{selectedRuntimeTrace.agent_name || '-'}</Descriptions.Item>
+              <Descriptions.Item label="会话">{selectedRuntimeTrace.session_title || selectedRuntimeTrace.session_id || '-'}</Descriptions.Item>
+              <Descriptions.Item label="来源">
+                <Tag>{SOURCE_LABEL[selectedRuntimeTrace.auth_source || 'unknown'] || selectedRuntimeTrace.auth_source || '未知'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="回答摘要">{selectedRuntimeTrace.content_preview || '-'}</Descriptions.Item>
+            </Descriptions>
+
+            <Card size="small" title="本体运行" bordered>
+              {selectedRuntimeTrace.ontology_runtime ? (
+                <Descriptions bordered column={1} size="small">
+                  <Descriptions.Item label="状态">
+                    <Tag color={selectedRuntimeTrace.summary.ontology_status === 'success' ? 'green' : 'orange'}>
+                      {selectedRuntimeTrace.summary.ontology_status || 'unknown'}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="空间">
+                    {selectedRuntimeTrace.summary.ontology_space_name || selectedRuntimeTrace.summary.ontology_space_code || selectedRuntimeTrace.summary.ontology_space_id || '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="风险">
+                    {selectedRuntimeTrace.summary.risk_level ? (
+                      <Tag color={selectedRuntimeTrace.summary.risk_level === 'high' ? 'red' : selectedRuntimeTrace.summary.risk_level === 'medium' ? 'orange' : 'green'}>
+                        {selectedRuntimeTrace.summary.risk_level}
+                      </Tag>
+                    ) : '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="原始快照">
+                    <pre style={{ margin: 0, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {JSON.stringify(selectedRuntimeTrace.ontology_runtime, null, 2)}
+                    </pre>
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该回答未使用本体运行时" />
+              )}
+            </Card>
+
+            <Card size="small" title="工具运行" bordered>
+              {selectedRuntimeTrace.tool_runtime_events?.length > 0 ? (
+                <Table
+                  rowKey={(row: any, index) => row.tool_call_id || `${row.tool_name}-${index}`}
+                  size="small"
+                  pagination={false}
+                  dataSource={selectedRuntimeTrace.tool_runtime_events}
+                  scroll={{ x: 720 }}
+                  columns={[
+                    { title: '工具', dataIndex: 'tool_name', key: 'tool_name', width: 160 },
+                    { title: '状态', dataIndex: 'status', key: 'status', width: 100, render: (value: string) => <Tag color={value === 'success' ? 'green' : value === 'blocked' ? 'orange' : value === 'error' ? 'red' : 'blue'}>{value}</Tag> },
+                    { title: '耗时', dataIndex: 'duration_ms', key: 'duration_ms', width: 100, render: (value: number) => value ? `${Math.round(value)}ms` : '-' },
+                    { title: '说明', dataIndex: 'error', key: 'error', ellipsis: true },
+                  ]}
+                />
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该回答未执行工具" />
+              )}
+            </Card>
+          </Space>
         )}
       </Drawer>
     </div>

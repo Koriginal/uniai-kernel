@@ -144,6 +144,85 @@ const ROLE_CHANGE_HINTS = {
   expert: '改成专家后，它会重新进入专家协作目录，可被主控按路由关键词命中。',
 } as const;
 
+const AGENT_TYPE_OPTIONS = [
+  {
+    value: 'general',
+    label: '通用助手',
+    description: '轻量问答、写作、总结，不默认启用工具和本体。',
+  },
+  {
+    value: 'tool',
+    label: '工具助手',
+    description: '面向查询、检索、API/数据库工具调用，强调权限和审计。',
+  },
+  {
+    value: 'ontology',
+    label: '本体增强',
+    description: '面向审核、风控、合规，优先使用本体映射、规则和解释。',
+  },
+  {
+    value: 'workflow',
+    label: '工作流助手',
+    description: '面向多步骤任务编排，可启用工具、子应用和多专家协作。',
+  },
+] as const;
+
+const RUNTIME_POLICY_LABELS: Record<string, { label: string; enabledText: string; disabledText: string; description: string }> = {
+  allow_tools: {
+    label: '工具调用',
+    enabledText: '允许',
+    disabledText: '禁止',
+    description: '控制是否允许模型调用注册工具。关闭后，即使配置了工具也不会执行。',
+  },
+  allow_web_search: {
+    label: '联网检索',
+    enabledText: '允许',
+    disabledText: '禁止',
+    description: '控制 web_search 等联网工具。关闭后，搜索类请求会被策略拦截。',
+  },
+  allow_swarm: {
+    label: '多专家协作',
+    enabledText: '允许',
+    disabledText: '禁止',
+    description: '控制是否允许主控分发给其他专家或子应用。',
+  },
+  allow_canvas: {
+    label: '自动看板',
+    enabledText: '允许',
+    disabledText: '禁止',
+    description: '控制回答中是否允许生成看板/画布内容。',
+  },
+  allow_ontology: {
+    label: '本体运行',
+    enabledText: '允许',
+    disabledText: '禁止',
+    description: '控制是否允许本体预处理、映射、规则执行和解释。',
+  },
+};
+
+const TOOL_MODE_LABELS: Record<string, string> = {
+  none: '不调用工具',
+  controlled: '受控调用',
+  ontology_preflight: '本体预执行',
+};
+
+const getRuntimePolicyWarnings = (policy: Record<string, any> = {}, tools: string[] = [], ontologyConfig: Record<string, any> = {}) => {
+  const warnings: string[] = [];
+  if (tools.length > 0 && !policy.allow_tools) {
+    warnings.push('已配置工具，但运行策略禁止工具调用；运行时会拦截这些工具。');
+  }
+  if (policy.allow_web_search && !policy.allow_tools) {
+    warnings.push('联网检索依赖工具调用；当前工具调用关闭，联网检索实际不会执行。');
+  }
+  if (ontologyConfig.enabled && !policy.allow_ontology) {
+    warnings.push('已启用本体配置，但运行策略禁止本体运行；回答不会触发本体。');
+  }
+  if (policy.allow_ontology && !ontologyConfig.enabled) {
+    warnings.push('运行策略允许本体，但本体配置未启用；当前不会有默认本体契约。');
+  }
+  return warnings;
+};
+
 const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelConfigs, msgApi, onRefresh }) => {
   const [form] = Form.useForm();
   const [search, setSearch] = useState('');
@@ -314,6 +393,15 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
         model_config_id: agent.model_config_id ? Number(agent.model_config_id) : undefined,
         system_prompt: agent.system_prompt,
         tools: sanitizeTools(agent.tools || []),
+        agent_type: agent.agent_type || (agent.ontology_config?.enabled ? 'ontology' : (agent.tools && agent.tools.length > 0 ? 'tool' : 'general')),
+        runtime_policy: {
+          allow_tools: agent.runtime_policy?.allow_tools ?? ((agent.tools || []).length > 0),
+          allow_web_search: agent.runtime_policy?.allow_web_search ?? ((agent.tools || []).includes('web_search')),
+          allow_swarm: agent.runtime_policy?.allow_swarm ?? (agent.role === 'orchestrator'),
+          allow_canvas: agent.runtime_policy?.allow_canvas ?? true,
+          allow_ontology: agent.runtime_policy?.allow_ontology ?? !!agent.ontology_config?.enabled,
+          tool_call_mode: agent.runtime_policy?.tool_call_mode || 'controlled',
+        },
         ontology_config: {
           enabled: !!agent.ontology_config?.enabled,
           mode: agent.ontology_config?.mode || (agent.ontology_config?.enabled ? 'auto' : 'off'),
@@ -331,9 +419,18 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
     } else {
       form.resetFields();
       form.setFieldsValue({
+        agent_type: 'general',
         role: 'expert',
         handoff_strategy: 'return',
         tools: [],
+        runtime_policy: {
+          allow_tools: false,
+          allow_web_search: false,
+          allow_swarm: false,
+          allow_canvas: true,
+          allow_ontology: false,
+          tool_call_mode: 'none',
+        },
         ontology_config: {
           enabled: false,
           mode: 'off',
@@ -532,6 +629,64 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
       </Tooltip>
     </Space>
   );
+
+  const renderRuntimePolicyOverview = (
+    policy: Record<string, any> = {},
+    tools: string[] = [],
+    ontologyConfig: Record<string, any> = {},
+    compact = false,
+  ) => {
+    const warnings = getRuntimePolicyWarnings(policy, tools, ontologyConfig);
+    return (
+      <Space direction="vertical" size={compact ? 8 : 12} style={{ width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+          {Object.entries(RUNTIME_POLICY_LABELS).map(([key, meta]) => {
+            const enabled = !!policy?.[key];
+            return (
+              <div
+                key={key}
+                style={{
+                  border: `1px solid ${enabled ? '#b7eb8f' : '#e5e7eb'}`,
+                  background: enabled ? '#f6ffed' : '#f8fafc',
+                  borderRadius: 12,
+                  padding: compact ? '8px 10px' : '10px 12px',
+                }}
+              >
+                <Space direction="vertical" size={3}>
+                  <Space size={6}>
+                    <Text strong>{meta.label}</Text>
+                    <Tag color={enabled ? 'green' : 'default'} style={{ margin: 0 }}>
+                      {enabled ? meta.enabledText : meta.disabledText}
+                    </Tag>
+                  </Space>
+                  {!compact && <Text type="secondary" style={{ fontSize: 12 }}>{meta.description}</Text>}
+                </Space>
+              </div>
+            );
+          })}
+        </div>
+        <Space wrap>
+          <Tag color="blue">工具模式：{TOOL_MODE_LABELS[policy?.tool_call_mode] || policy?.tool_call_mode || '未设置'}</Tag>
+          <Tag>已配置工具：{tools.length}</Tag>
+          <Tag color={ontologyConfig?.enabled ? 'cyan' : 'default'}>
+            本体模式：{ontologyConfig?.mode || 'off'}
+          </Tag>
+        </Space>
+        {warnings.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="运行策略存在冲突"
+            description={
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {warnings.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            }
+          />
+        )}
+      </Space>
+    );
+  };
 
   const handleBatchToggleAgents = async (nextActive: boolean) => {
     if (selectedOpsAgents.length === 0) {
@@ -1017,6 +1172,15 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
               </Space>
             </Card>
 
+            <Card size="small" title="运行策略" style={{ borderRadius: 18 }}>
+              {renderRuntimePolicyOverview(
+                selectedAgent.runtime_policy || {},
+                selectedAgent.tools || [],
+                selectedAgent.ontology_config || {},
+                true,
+              )}
+            </Card>
+
             <Card size="small" title="路由与协作" style={{ borderRadius: 18 }}>
               <Space direction="vertical" size={10} style={{ width: '100%' }}>
                 <div>
@@ -1137,6 +1301,73 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                         </Col>
                       </Row>
 
+                      <Form.Item name="agent_type" label="智能体类型" rules={[{ required: true }]}>
+                        <Segmented
+                          block
+                          options={AGENT_TYPE_OPTIONS.map((item) => ({
+                            value: item.value,
+                            label: item.label,
+                          }))}
+                          onChange={(value) => {
+                            const nextType = String(value);
+                            const hasWebSearch = (form.getFieldValue('tools') || []).includes('web_search');
+                            const nextPolicy = {
+                              general: {
+                                allow_tools: false,
+                                allow_web_search: false,
+                                allow_swarm: false,
+                                allow_canvas: true,
+                                allow_ontology: false,
+                                tool_call_mode: 'none',
+                              },
+                              tool: {
+                                allow_tools: true,
+                                allow_web_search: hasWebSearch,
+                                allow_swarm: false,
+                                allow_canvas: true,
+                                allow_ontology: false,
+                                tool_call_mode: 'controlled',
+                              },
+                              ontology: {
+                                allow_tools: false,
+                                allow_web_search: false,
+                                allow_swarm: false,
+                                allow_canvas: true,
+                                allow_ontology: true,
+                                tool_call_mode: 'ontology_preflight',
+                              },
+                              workflow: {
+                                allow_tools: true,
+                                allow_web_search: hasWebSearch,
+                                allow_swarm: true,
+                                allow_canvas: true,
+                                allow_ontology: !!form.getFieldValue(['ontology_config', 'enabled']),
+                                tool_call_mode: 'controlled',
+                              },
+                            }[nextType] || {};
+                            form.setFieldValue('runtime_policy', nextPolicy);
+                            if (nextType === 'ontology') {
+                              form.setFieldValue(['ontology_config', 'enabled'], true);
+                              form.setFieldValue(['ontology_config', 'mode'], 'auto');
+                            }
+                          }}
+                        />
+                      </Form.Item>
+                      <Form.Item shouldUpdate={(prev, curr) => prev.agent_type !== curr.agent_type} noStyle>
+                        {({ getFieldValue }) => {
+                          const selectedType = AGENT_TYPE_OPTIONS.find((item) => item.value === getFieldValue('agent_type'));
+                          return selectedType ? (
+                            <Alert
+                              type={selectedType.value === 'ontology' ? 'success' : selectedType.value === 'tool' ? 'info' : 'warning'}
+                              showIcon
+                              style={{ marginBottom: 12 }}
+                              message={`当前类型：${selectedType.label}`}
+                              description={selectedType.description}
+                            />
+                          ) : null;
+                        }}
+                      </Form.Item>
+
                       <Form.Item shouldUpdate={(prev, curr) => prev.role !== curr.role} noStyle>
                         {({ getFieldValue }) => (
                           <Alert
@@ -1208,6 +1439,61 @@ const AgentManager: React.FC<AgentManagerProps> = ({ agents, setAgents, modelCon
                           </div>
                         </Checkbox.Group>
                       </Form.Item>
+                      <Card size="small" title="运行策略" style={{ borderRadius: 14 }}>
+                        <Form.Item shouldUpdate={(prev, curr) =>
+                          prev.runtime_policy !== curr.runtime_policy ||
+                          prev.tools !== curr.tools ||
+                          prev.ontology_config !== curr.ontology_config
+                        } noStyle>
+                          {({ getFieldValue }) => (
+                            <div style={{ marginBottom: 14 }}>
+                              {renderRuntimePolicyOverview(
+                                getFieldValue('runtime_policy') || {},
+                                getFieldValue('tools') || [],
+                                getFieldValue('ontology_config') || {},
+                              )}
+                            </div>
+                          )}
+                        </Form.Item>
+                        <Row gutter={14}>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'allow_tools']} label="允许工具" valuePropName="checked">
+                              <Switch checkedChildren="允许" unCheckedChildren="禁止" />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'allow_web_search']} label="允许联网" valuePropName="checked">
+                              <Switch checkedChildren="允许" unCheckedChildren="禁止" />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'allow_swarm']} label="允许协作" valuePropName="checked">
+                              <Switch checkedChildren="允许" unCheckedChildren="禁止" />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                        <Row gutter={14}>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'allow_canvas']} label="允许看板" valuePropName="checked">
+                              <Switch checkedChildren="允许" unCheckedChildren="禁止" />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'allow_ontology']} label="允许本体" valuePropName="checked">
+                              <Switch checkedChildren="允许" unCheckedChildren="禁止" />
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item name={['runtime_policy', 'tool_call_mode']} label="工具模式">
+                              <Select>
+                                <Select.Option value="none">不调用工具</Select.Option>
+                                <Select.Option value="controlled">受控调用</Select.Option>
+                                <Select.Option value="ontology_preflight">本体预执行</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      </Card>
                       <Form.Item shouldUpdate={(prev, curr) => prev.role !== curr.role} noStyle>
                         {({ getFieldValue }) =>
                           getFieldValue('role') === 'expert' ? (
