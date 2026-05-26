@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     ENABLE_ONTOLOGY_ENGINE: bool = True
     # 映射/校验 trace 的最大条目数，防止异常输入导致过大响应
     ONTOLOGY_MAX_TRACE_ITEMS: int = 500
+    # 本体运行时 live 数据源执行：默认关闭，必须同时满足全局开关、数据源 active、人工审批和连接器策略。
+    ONTOLOGY_ENABLE_LIVE_DATA_SOURCE_EXECUTION: bool = False
+    ONTOLOGY_LIVE_EXECUTION_TIMEOUT_SECONDS: float = 5.0
+    ONTOLOGY_LIVE_EXECUTION_MAX_ROWS: int = 20
+    ONTOLOGY_LIVE_EXECUTION_MAX_RESPONSE_BYTES: int = 262144
     # 治理审批策略
     ONTOLOGY_REQUIRE_APPROVAL_FOR_STAGING: bool = True
     ONTOLOGY_REQUIRE_APPROVAL_FOR_GA: bool = True

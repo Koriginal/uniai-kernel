@@ -105,6 +105,12 @@ class OntologyDataSourceCreate(BaseModel):
     status: DataSourceStatus = DataSourceStatus.draft
 
 
+class OntologyDataSourceRuntimeApprovalRequest(BaseModel):
+    data_source_id: str
+    approve: bool = True
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class OntologyDataSourceRecord(BaseModel):
     id: str
     space_id: str
@@ -394,6 +400,10 @@ class MappingExecuteRequest(BaseModel):
     input_payload: Dict[str, Any]
     mapping_version: Optional[str] = None
     schema_version: Optional[str] = None
+    persist_graph: bool = False
+    source: str = Field(default="manual", max_length=80)
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    request_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class MappingExecuteResponse(BaseModel):
@@ -401,6 +411,54 @@ class MappingExecuteResponse(BaseModel):
     mapping_version: str
     schema_version: Optional[str] = None
     trace: List[MappingTraceItem] = Field(default_factory=list)
+    graph_id: Optional[str] = None
+
+
+class InstanceGraphRecord(BaseModel):
+    id: str
+    space_id: str
+    schema_version: Optional[str] = None
+    mapping_version: Optional[str] = None
+    decision_id: Optional[str] = None
+    source: str
+    session_id: Optional[str] = None
+    request_id: Optional[str] = None
+    entity_count: int
+    relation_count: int
+    graph_snapshot: Dict[str, Any]
+    input_snapshot: Optional[Dict[str, Any]] = None
+    trace: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str
+    created_at: datetime
+
+
+class OntologyRuntimeExecuteRequest(BaseModel):
+    space_id: str
+    input_payload: Dict[str, Any]
+    query: Optional[str] = Field(default=None, max_length=2000)
+    strict_rules: bool = False
+    explain_required: bool = True
+    fallback_when_unavailable: str = "stop_and_ask"
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    request_id: Optional[str] = Field(default=None, max_length=128)
+
+
+class OntologyRuntimeExecuteResponse(BaseModel):
+    enabled: bool
+    status: str
+    space_id: Optional[str] = None
+    message: str = ""
+    active_versions: Dict[str, str] = Field(default_factory=dict)
+    missing_active_packages: List[str] = Field(default_factory=list)
+    graph_id: Optional[str] = None
+    mapping: Optional[Dict[str, Any]] = None
+    decision: Optional[Dict[str, Any]] = None
+    explanation: Optional[Dict[str, Any]] = None
+    action_plan: Optional[Dict[str, Any]] = None
+    action_execution: Optional[Dict[str, Any]] = None
+    warnings: List[str] = Field(default_factory=list)
+    should_block: bool = False
 
 
 class RuleEvaluateRequest(BaseModel):

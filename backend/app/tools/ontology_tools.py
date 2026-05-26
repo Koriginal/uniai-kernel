@@ -37,11 +37,11 @@ class OntologyListSpacesTool(BaseTool):
             "required": [],
         }
 
-    async def execute(self, user_id: str = "", **_kwargs) -> str:
+    async def execute(self, user_id: str = "", is_admin: bool = False, **_kwargs) -> str:
         if not user_id:
             return "Ontology Error: missing trusted runtime user_id"
         async with SessionLocal() as db:
-            spaces = await persistent_ontology_service.list_spaces(db, owner_user_id=user_id, is_admin=False)
+            spaces = await persistent_ontology_service.list_spaces(db, owner_user_id=user_id, is_admin=is_admin)
             return _jsonable({"spaces": [space.model_dump(mode="json") for space in spaces]})
 
 
@@ -59,16 +59,16 @@ class OntologyRuntimeContractTool(BaseTool):
         return {
             "type": "object",
             "properties": {
-                "space_id": {"type": "string", "description": "本体空间 ID。"},
+                "space_id": {"type": "string", "description": "本体空间技术 ID，仅用于工具调用；回答用户时优先使用空间名称。"},
             },
             "required": ["space_id"],
         }
 
-    async def execute(self, space_id: str, user_id: str = "", **_kwargs) -> str:
+    async def execute(self, space_id: str, user_id: str = "", is_admin: bool = False, **_kwargs) -> str:
         if not user_id:
             return "Ontology Error: missing trusted runtime user_id"
         async with SessionLocal() as db:
-            contract = await ontology_runtime.build_contract(db, space_id=space_id, user_id=user_id, is_admin=False)
+            contract = await ontology_runtime.build_contract(db, space_id=space_id, user_id=user_id, is_admin=is_admin)
             return _jsonable(contract)
 
 
@@ -86,7 +86,7 @@ class OntologyMapInputTool(BaseTool):
         return {
             "type": "object",
             "properties": {
-                "space_id": {"type": "string", "description": "本体空间 ID。"},
+                "space_id": {"type": "string", "description": "本体空间技术 ID，仅用于工具调用；回答用户时优先使用空间名称。"},
                 "input_payload": {"type": "object", "description": "待映射的业务输入 JSON。"},
                 "mapping_version": {"type": "string", "description": "可选，指定 mapping 版本；不填使用当前 GA。"},
                 "schema_version": {"type": "string", "description": "可选，指定 schema 版本；不填使用当前 GA。"},
@@ -99,6 +99,7 @@ class OntologyMapInputTool(BaseTool):
         space_id: str,
         input_payload: Dict[str, Any],
         user_id: str = "",
+        is_admin: bool = False,
         mapping_version: Optional[str] = None,
         schema_version: Optional[str] = None,
         **_kwargs,
@@ -115,7 +116,7 @@ class OntologyMapInputTool(BaseTool):
                     schema_version=schema_version,
                 ),
                 actor_user_id=user_id,
-                is_admin=False,
+                is_admin=is_admin,
             )
             return _jsonable(result)
 
@@ -134,7 +135,7 @@ class OntologyEvaluateRulesTool(BaseTool):
         return {
             "type": "object",
             "properties": {
-                "space_id": {"type": "string", "description": "本体空间 ID。"},
+                "space_id": {"type": "string", "description": "本体空间技术 ID，仅用于工具调用；回答用户时优先使用空间名称。"},
                 "graph": {"type": "object", "description": "本体图，通常来自 ontology_map_input 的 graph。"},
                 "rule_version": {"type": "string", "description": "可选，指定 rule 版本；不填使用当前 GA。"},
                 "context": {"type": "object", "description": "可选，规则执行上下文。"},
@@ -147,6 +148,7 @@ class OntologyEvaluateRulesTool(BaseTool):
         space_id: str,
         graph: Dict[str, Any],
         user_id: str = "",
+        is_admin: bool = False,
         rule_version: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         **_kwargs,
@@ -163,7 +165,7 @@ class OntologyEvaluateRulesTool(BaseTool):
                     context=context or {},
                 ),
                 actor_user_id=user_id,
-                is_admin=False,
+                is_admin=is_admin,
             )
             return _jsonable(result)
 
@@ -187,7 +189,7 @@ class OntologyExplainDecisionTool(BaseTool):
             "required": ["decision_id"],
         }
 
-    async def execute(self, decision_id: str, user_id: str = "", **_kwargs) -> str:
+    async def execute(self, decision_id: str, user_id: str = "", is_admin: bool = False, **_kwargs) -> str:
         if not user_id:
             return "Ontology Error: missing trusted runtime user_id"
         async with SessionLocal() as db:
@@ -195,7 +197,7 @@ class OntologyExplainDecisionTool(BaseTool):
                 db,
                 decision_id=decision_id,
                 actor_user_id=user_id,
-                is_admin=False,
+                is_admin=is_admin,
             )
             return _jsonable(result)
 

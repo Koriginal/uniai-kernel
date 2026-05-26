@@ -20,6 +20,7 @@ dependencies = [
     "greenlet",
     "pgvector",
     "passlib[bcrypt]",
+    "bcrypt==4.0.1",
     "python-jose[cryptography]",
     "email-validator",
     "debugpy>=1.8.20",

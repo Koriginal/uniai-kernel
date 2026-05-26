@@ -29,6 +29,12 @@ class AgentProfile(Base):
     # 如果为 None 或空列表，则不开启任何工具。如果包含 "*" 则开启全部（不推荐）。
     tools = Column(JSON, default=[])
 
+    # 智能体类型：general / tool / ontology / workflow
+    agent_type = Column(String, default="general", nullable=False)
+
+    # 运行策略：控制本体、工具、联网、多专家、Canvas 等能力是否允许参与当前智能体运行。
+    runtime_policy = Column(JSON, default={})
+
     # 本体运行时配置：默认关闭，开启后由 Agent Runtime 注入本体工具与运行契约。
     ontology_config = Column(JSON, default={})
     

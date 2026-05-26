@@ -17,6 +17,7 @@ from app.models.ontology import (
     OntologyApprovalModel,
     OntologyDecisionModel,
     OntologyExplanationModel,
+    OntologyInstanceGraphModel,
     OntologyDataSourceModel,
     OntologySecretModel,
 )

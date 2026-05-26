@@ -10,6 +10,7 @@ from app.models.ontology import (
     OntologyApprovalModel,
     OntologyDecisionModel,
     OntologyExplanationModel,
+    OntologyInstanceGraphModel,
     OntologyPackageModel,
     OntologyReleaseEventModel,
     OntologySpaceModel,
@@ -268,6 +269,68 @@ class SQLAlchemyOntologyRepository:
         result = await db.execute(select(OntologyExplanationModel).where(OntologyExplanationModel.decision_id == decision_id))
         return result.scalar_one_or_none()
 
+    async def create_instance_graph(self, db: AsyncSession, model: OntologyInstanceGraphModel) -> OntologyInstanceGraphModel:
+        db.add(model)
+        await db.commit()
+        await db.refresh(model)
+        return model
+
+    async def update_instance_graph_decision(
+        self,
+        db: AsyncSession,
+        *,
+        graph_id: str,
+        decision_id: str,
+    ) -> Optional[OntologyInstanceGraphModel]:
+        model = await db.get(OntologyInstanceGraphModel, graph_id)
+        if not model:
+            return None
+        model.decision_id = decision_id
+        await db.commit()
+        await db.refresh(model)
+        return model
+
+    async def update_instance_graph_snapshot(
+        self,
+        db: AsyncSession,
+        *,
+        graph_id: str,
+        graph_snapshot: Dict[str, Any],
+        metadata_json: Dict[str, Any],
+    ) -> Optional[OntologyInstanceGraphModel]:
+        model = await db.get(OntologyInstanceGraphModel, graph_id)
+        if not model:
+            return None
+        model.graph_snapshot = graph_snapshot
+        model.entity_count = len((graph_snapshot or {}).get("entities") or [])
+        model.relation_count = len((graph_snapshot or {}).get("relations") or [])
+        model.metadata_json = metadata_json
+        await db.commit()
+        await db.refresh(model)
+        return model
+
+    async def get_instance_graph(self, db: AsyncSession, graph_id: str) -> Optional[OntologyInstanceGraphModel]:
+        return await db.get(OntologyInstanceGraphModel, graph_id)
+
+    async def list_instance_graphs(
+        self,
+        db: AsyncSession,
+        *,
+        space_id: str,
+        limit: int = 50,
+        source: Optional[str] = None,
+    ) -> List[OntologyInstanceGraphModel]:
+        conds = [OntologyInstanceGraphModel.space_id == space_id]
+        if source:
+            conds.append(OntologyInstanceGraphModel.source == source)
+        result = await db.execute(
+            select(OntologyInstanceGraphModel)
+            .where(and_(*conds))
+            .order_by(desc(OntologyInstanceGraphModel.created_at))
+            .limit(max(1, min(limit, 200)))
+        )
+        return result.scalars().all()
+
     async def create_approval(self, db: AsyncSession, approval: OntologyApprovalModel) -> OntologyApprovalModel:
         db.add(approval)
         await db.commit()
@@ -414,6 +477,19 @@ class SQLAlchemyOntologyRepository:
     ) -> OntologyDataSourceModel:
         model.last_test_status = status
         model.last_test_message = message
+        await db.commit()
+        await db.refresh(model)
+        return model
+
+    async def update_data_source_config(
+        self,
+        db: AsyncSession,
+        *,
+        model: OntologyDataSourceModel,
+        config: Dict[str, Any],
+    ) -> OntologyDataSourceModel:
+        model.config = config
+        model.updated_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(model)
         return model

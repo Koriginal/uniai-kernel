@@ -10,6 +10,7 @@ from app.services.agent_service import agent_service
 from app.core.plugins import registry
 from app.api import deps
 from app.models.user import User
+from app.ontology.persistent_service import persistent_ontology_service
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uuid
@@ -28,6 +29,8 @@ class AgentProfileCreate(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str] = []
+    agent_type: str = "general"
+    runtime_policy: Dict[str, Any] = {}
     ontology_config: Dict[str, Any] = {}
     role: str = "expert"  # 'orchestrator' or 'expert'
     routing_keywords: List[str] = []
@@ -41,6 +44,8 @@ class AgentProfileUpdate(BaseModel):
     model_config_id: Optional[int] = None
     system_prompt: Optional[str] = None
     tools: Optional[List[str]] = None
+    agent_type: Optional[str] = None
+    runtime_policy: Optional[Dict[str, Any]] = None
     ontology_config: Optional[Dict[str, Any]] = None
     role: Optional[str] = None
     routing_keywords: Optional[List[str]] = None
@@ -55,6 +60,8 @@ class AgentProfileResponse(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str]
+    agent_type: str = "general"
+    runtime_policy: Dict[str, Any] = {}
     ontology_config: Dict[str, Any] = {}
     role: str
     routing_keywords: List[str]
@@ -82,6 +89,8 @@ class AgentProfileValidationRequest(BaseModel):
     model_config_id: int
     system_prompt: Optional[str] = None
     tools: List[str] = []
+    agent_type: str = "general"
+    runtime_policy: Dict[str, Any] = {}
     ontology_config: Dict[str, Any] = {}
     role: str = "expert"
     routing_keywords: List[str] = []
@@ -105,6 +114,146 @@ class AgentTestRequest(BaseModel):
     enable_canvas: bool = False
 
 
+def _infer_agent_type(data: Dict[str, Any]) -> str:
+    explicit = str(data.get("agent_type") or "").strip().lower()
+    if explicit:
+        return explicit
+    ontology_config = data.get("ontology_config") or {}
+    tools = data.get("tools") or []
+    if isinstance(ontology_config, dict) and ontology_config.get("enabled"):
+        return "ontology"
+    if data.get("role") == "orchestrator":
+        return "workflow"
+    if tools:
+        return "tool"
+    return "general"
+
+
+def _normalize_runtime_policy(data: Dict[str, Any]) -> Dict[str, Any]:
+    agent_type = data.get("agent_type") or _infer_agent_type(data)
+    raw_policy = data.get("runtime_policy") or {}
+    if not isinstance(raw_policy, dict):
+        raise HTTPException(status_code=400, detail="runtime_policy 必须是对象")
+
+    tools = data.get("tools") or []
+    has_tools = bool(tools)
+    has_web_search = "*" in tools or "web_search" in tools
+    ontology_enabled = bool((data.get("ontology_config") or {}).get("enabled"))
+
+    defaults_by_type: Dict[str, Dict[str, Any]] = {
+        "general": {
+            "allow_tools": False,
+            "allow_web_search": False,
+            "allow_swarm": False,
+            "allow_canvas": True,
+            "allow_ontology": False,
+            "tool_call_mode": "none",
+        },
+        "tool": {
+            "allow_tools": True,
+            "allow_web_search": has_web_search,
+            "allow_swarm": False,
+            "allow_canvas": True,
+            "allow_ontology": False,
+            "tool_call_mode": "controlled",
+        },
+        "ontology": {
+            "allow_tools": False,
+            "allow_web_search": False,
+            "allow_swarm": False,
+            "allow_canvas": True,
+            "allow_ontology": True,
+            "tool_call_mode": "ontology_preflight",
+        },
+        "workflow": {
+            "allow_tools": True,
+            "allow_web_search": has_web_search,
+            "allow_swarm": True,
+            "allow_canvas": True,
+            "allow_ontology": ontology_enabled,
+            "tool_call_mode": "controlled",
+        },
+    }
+    policy = {**defaults_by_type[agent_type], **raw_policy}
+    for key in ["allow_tools", "allow_web_search", "allow_swarm", "allow_canvas", "allow_ontology"]:
+        policy[key] = bool(policy.get(key))
+    policy["tool_call_mode"] = str(policy.get("tool_call_mode") or defaults_by_type[agent_type]["tool_call_mode"])
+
+    if agent_type == "general" and has_tools and "allow_tools" not in raw_policy:
+        policy["allow_tools"] = True
+        policy["tool_call_mode"] = "controlled"
+    if agent_type == "tool" and has_tools:
+        policy["allow_tools"] = True
+    if agent_type == "ontology":
+        policy["allow_ontology"] = True
+        policy["allow_swarm"] = False
+    if agent_type == "workflow":
+        policy["allow_swarm"] = True
+    if not policy["allow_tools"]:
+        policy["allow_web_search"] = False
+    return policy
+
+
+def _runtime_policy_explanation(agent: AgentProfile) -> Dict[str, Any]:
+    policy = agent.runtime_policy if isinstance(agent.runtime_policy, dict) else {}
+    ontology_config = agent.ontology_config if isinstance(agent.ontology_config, dict) else {}
+    tools = agent.tools or []
+
+    items = [
+        {
+            "key": "allow_tools",
+            "label": "工具调用",
+            "enabled": bool(policy.get("allow_tools")),
+            "effect": "允许模型调用已注册工具" if policy.get("allow_tools") else "即使配置了工具，运行时也会拦截工具调用",
+        },
+        {
+            "key": "allow_web_search",
+            "label": "联网检索",
+            "enabled": bool(policy.get("allow_web_search")),
+            "effect": "允许联网检索工具" if policy.get("allow_web_search") else "搜索类工具会被拦截或不暴露给模型",
+        },
+        {
+            "key": "allow_swarm",
+            "label": "多专家协作",
+            "enabled": bool(policy.get("allow_swarm")),
+            "effect": "允许主控移交给专家或子应用" if policy.get("allow_swarm") else "不会主动进行专家协作移交",
+        },
+        {
+            "key": "allow_canvas",
+            "label": "自动看板",
+            "enabled": bool(policy.get("allow_canvas")),
+            "effect": "允许生成看板/画布内容" if policy.get("allow_canvas") else "不会自动生成看板/画布",
+        },
+        {
+            "key": "allow_ontology",
+            "label": "本体运行",
+            "enabled": bool(policy.get("allow_ontology")),
+            "effect": "允许本体预处理、映射、规则和解释" if policy.get("allow_ontology") else "不会触发本体运行时",
+        },
+    ]
+    warnings = []
+    if tools and not policy.get("allow_tools"):
+        warnings.append("已配置工具，但运行策略禁止工具调用。")
+    if policy.get("allow_web_search") and not policy.get("allow_tools"):
+        warnings.append("联网检索依赖工具调用；当前工具调用关闭。")
+    if ontology_config.get("enabled") and not policy.get("allow_ontology"):
+        warnings.append("已启用本体配置，但运行策略禁止本体运行。")
+    if policy.get("allow_ontology") and not ontology_config.get("enabled"):
+        warnings.append("运行策略允许本体，但本体配置未启用。")
+
+    return {
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        "agent_type": agent.agent_type or "general",
+        "role": agent.role,
+        "tool_call_mode": policy.get("tool_call_mode") or "none",
+        "tools_count": len(tools),
+        "ontology_mode": ontology_config.get("mode") or "off",
+        "items": items,
+        "warnings": warnings,
+    }
+
+
 def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | AgentProfileValidationRequest) -> Tuple[Dict[str, Any], List[str]]:
     warnings: List[str] = []
     data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else dict(payload)
@@ -123,6 +272,12 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
 
     if "handoff_strategy" in data and data.get("handoff_strategy") not in {"return", "end"}:
         raise HTTPException(status_code=400, detail="handoff_strategy 仅支持 return 或 end")
+
+    if "agent_type" in data or "tools" in data or "ontology_config" in data or "runtime_policy" in data or "role" in data:
+        inferred_type = _infer_agent_type(data)
+        if inferred_type not in {"general", "tool", "ontology", "workflow"}:
+            raise HTTPException(status_code=400, detail="agent_type 仅支持 general、tool、ontology、workflow")
+        data["agent_type"] = inferred_type
 
     if "tools" in data:
         available_tools = {item["name"] for item in registry.get_action_catalog()}
@@ -177,19 +332,28 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
             "fallback_when_unavailable": raw_config.get("fallback_when_unavailable") or "continue_without_ontology",
         }
         if normalized_config["enabled"]:
-            ontology_tools = {
-                "ontology_list_spaces",
-                "ontology_get_runtime_contract",
-                "ontology_map_input",
-                "ontology_evaluate_rules",
-                "ontology_explain_decision",
-            }
-            configured_tools = set(data.get("tools") or [])
-            if "*" not in configured_tools:
-                data["tools"] = sorted(configured_tools | ontology_tools)
             if not normalized_config["space_id"] and normalized_config["mode"] == "required":
                 warnings.append("本体 required 模式未指定 space_id，运行时会要求用户先配置本体空间。")
+            if data.get("agent_type") == "general":
+                data["agent_type"] = "ontology"
+                warnings.append("已根据本体配置将智能体类型调整为 ontology。")
         data["ontology_config"] = normalized_config
+
+    if "agent_type" in data or "runtime_policy" in data or "tools" in data or "ontology_config" in data or "role" in data:
+        data["runtime_policy"] = _normalize_runtime_policy(data)
+        if data["agent_type"] == "general" and data["runtime_policy"].get("allow_tools"):
+            warnings.append("通用助手启用了工具策略，建议改为 tool 类型以便后续治理。")
+        if data["agent_type"] == "tool" and not data["runtime_policy"].get("allow_tools"):
+            warnings.append("工具助手当前关闭了工具调用，将只能进行普通推理。")
+        if data["agent_type"] == "ontology" and not data["ontology_config"].get("enabled"):
+            data["ontology_config"] = {
+                **(data.get("ontology_config") or {}),
+                "enabled": True,
+                "mode": "auto",
+            }
+            warnings.append("本体增强助手已自动开启 ontology auto 模式。")
+        if data["agent_type"] != "ontology" and (data.get("ontology_config") or {}).get("enabled") and not data["runtime_policy"].get("allow_ontology"):
+            warnings.append("当前类型未允许本体运行，ontology_config 会被保存但运行时不会启用。")
 
     if "system_prompt" in data and data.get("system_prompt"):
         prompt = data["system_prompt"].strip()
@@ -205,6 +369,22 @@ def _normalize_agent_payload(payload: AgentProfileCreate | AgentProfileUpdate | 
 
     return data, warnings
 
+
+async def _ensure_agent_ontology_space_access(
+    db: AsyncSession,
+    ontology_config: Dict[str, Any],
+    current_user: User,
+) -> None:
+    if not ontology_config or not ontology_config.get("enabled") or not ontology_config.get("space_id"):
+        return
+    await persistent_ontology_service._ensure_space_access(
+        db,
+        ontology_config["space_id"],
+        current_user.id,
+        current_user.is_admin,
+        action="read",
+    )
+
 # --- Endpoints ---
 
 @router.post("/", response_model=AgentProfileResponse)
@@ -215,6 +395,7 @@ async def create_agent_profile(
 ):
     """创建新的智能体 Profile"""
     normalized, _ = _normalize_agent_payload(profile)
+    await _ensure_agent_ontology_space_access(db, normalized.get("ontology_config") or {}, current_user)
     new_profile = AgentProfile(
         id=f"agent-{uuid.uuid4().hex[:8]}",
         name=normalized["name"],
@@ -223,6 +404,8 @@ async def create_agent_profile(
         system_prompt=normalized.get("system_prompt"),
         tools=normalized.get("tools", []),
         ontology_config=normalized.get("ontology_config", {}),
+        agent_type=normalized.get("agent_type", "general"),
+        runtime_policy=normalized.get("runtime_policy", {}),
         role=normalized.get("role", "expert"),
         routing_keywords=normalized.get("routing_keywords", []),
         handoff_strategy=normalized.get("handoff_strategy", "return"),
@@ -237,36 +420,83 @@ async def create_agent_profile(
 
 @router.get("/", response_model=List[AgentProfileResponse])
 async def list_agent_profiles(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """列出所有智能体 Profile"""
-    result = await db.execute(select(AgentProfile))
+    if current_user.is_admin:
+        result = await db.execute(select(AgentProfile))
+    else:
+        result = await db.execute(
+            select(AgentProfile).where(
+                (AgentProfile.user_id == current_user.id) | (AgentProfile.is_public == True)  # noqa: E712
+            )
+        )
     return result.scalars().all()
 
 @router.get("/{agent_id}", response_model=AgentProfileResponse)
 async def get_agent_profile(
     agent_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """获取单个智能体详情"""
     profile = await db.get(AgentProfile, agent_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Agent profile not found")
+    if not current_user.is_admin and profile.user_id != current_user.id and not profile.is_public:
+        raise HTTPException(status_code=403, detail="forbidden to access this agent profile")
     return profile
+
+
+@router.get("/{agent_id}/runtime-policy")
+async def get_agent_runtime_policy(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """读取智能体运行策略解释，供配置页、审计页和运行诊断复用。"""
+    profile = await db.get(AgentProfile, agent_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Agent profile not found")
+    if not current_user.is_admin and profile.user_id != current_user.id and not profile.is_public:
+        raise HTTPException(status_code=403, detail="forbidden to access this agent profile")
+    return _runtime_policy_explanation(profile)
 
 @router.put("/{agent_id}", response_model=AgentProfileResponse)
 async def update_agent_profile(
     agent_id: str,
     update: AgentProfileUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """更新智能体配置"""
     profile = await db.get(AgentProfile, agent_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Agent profile not found")
+    if not current_user.is_admin and profile.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="forbidden to update this agent profile")
     
     try:
-        normalized, _ = _normalize_agent_payload(update)
+        incoming = update.model_dump(exclude_unset=True)
+        merged_payload = {
+            "name": profile.name,
+            "description": profile.description,
+            "model_config_id": profile.model_config_id,
+            "system_prompt": profile.system_prompt,
+            "tools": profile.tools or [],
+            "agent_type": getattr(profile, "agent_type", "general") or "general",
+            "runtime_policy": getattr(profile, "runtime_policy", {}) or {},
+            "ontology_config": profile.ontology_config or {},
+            "role": profile.role,
+            "routing_keywords": profile.routing_keywords or [],
+            "handoff_strategy": profile.handoff_strategy,
+            "is_public": profile.is_public,
+            "is_active": profile.is_active,
+        }
+        merged_payload.update(incoming)
+        normalized, _ = _normalize_agent_payload(merged_payload)
+        await _ensure_agent_ontology_space_access(db, normalized.get("ontology_config") or {}, current_user)
         for field, value in normalized.items():
             setattr(profile, field, value)
         
@@ -450,7 +680,9 @@ async def agent_chat(
                 identity_context={
                     "source": "dashboard_jwt",
                     "user_id": current_user.id,
+                    "is_admin": bool(current_user.is_admin),
                 },
+                is_admin=current_user.is_admin,
             ),
             media_type="text/event-stream"
         )
@@ -466,7 +698,9 @@ async def agent_chat(
             identity_context={
                 "source": "dashboard_jwt",
                 "user_id": current_user.id,
+                "is_admin": bool(current_user.is_admin),
             },
+            is_admin=current_user.is_admin,
         )
 
 
@@ -499,7 +733,9 @@ async def test_agent_profile(
         identity_context={
             "source": "dashboard_jwt",
             "user_id": current_user.id,
+            "is_admin": bool(current_user.is_admin),
         },
+        is_admin=current_user.is_admin,
     )
     content = response.choices[0].message.content if response.choices else ""
     return {

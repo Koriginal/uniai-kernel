@@ -7,15 +7,52 @@ from app.models.session import ChatSession
 from app.models.user import User
 from app.api import deps
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+def _message_runtime_payload(message: ChatMessage) -> Dict[str, Any]:
+    runtime_events = message.runtime_events or {}
+    return {
+        "message_id": str(message.id),
+        "session_id": message.session_id,
+        "agent_id": message.agent_id,
+        "runtime_events": runtime_events,
+        "ontology_runtime": runtime_events.get("ontology_runtime"),
+        "tool_runtime_events": runtime_events.get("tool_runtime_events") or [],
+    }
+
+
 class MessageUpdate(BaseModel):
     content: Optional[str] = None
     feedback: Optional[str] = None
+
+
+@router.get("/{message_id}/runtime-events")
+async def get_message_runtime_events(
+    message_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """
+    获取单条 assistant 消息的运行轨迹快照。
+
+    这里返回的是消息级展示快照，不重新执行本体/工具。
+    用途：
+    - 历史会话回放
+    - 审计页按消息排障
+    - 后续导出“回答依据”报告
+    """
+    message = await db.get(ChatMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not current_user.is_admin and message.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to read this message")
+    return _message_runtime_payload(message)
+
 
 @router.patch("/{message_id}")
 async def update_message(

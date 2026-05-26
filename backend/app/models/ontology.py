@@ -141,6 +141,35 @@ class OntologyExplanationModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class OntologyInstanceGraphModel(Base):
+    __tablename__ = "ontology_instance_graphs"
+
+    id = Column(String, primary_key=True)
+    space_id = Column(String, ForeignKey("ontology_spaces.id"), nullable=False, index=True)
+    schema_version = Column(String, nullable=True, index=True)
+    mapping_version = Column(String, nullable=True, index=True)
+    decision_id = Column(String, ForeignKey("ontology_decisions.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    source = Column(String, nullable=False, default="manual", index=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+    request_id = Column(String, nullable=True, index=True)
+
+    entity_count = Column(Integer, nullable=False, default=0)
+    relation_count = Column(Integer, nullable=False, default=0)
+    graph_snapshot = Column(JSONB, nullable=False, default={})
+    input_snapshot = Column(JSONB, nullable=True)
+    trace = Column(JSONB, nullable=False, default=[])
+    metadata_json = Column(JSONB, nullable=False, default={})
+
+    created_by = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_ontology_instance_graphs_space_created", "space_id", "created_at"),
+        Index("ix_ontology_instance_graphs_space_source", "space_id", "source"),
+    )
+
+
 class OntologyDataSourceModel(Base):
     __tablename__ = "ontology_data_sources"
 

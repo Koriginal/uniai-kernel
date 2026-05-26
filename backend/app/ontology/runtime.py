@@ -69,7 +69,7 @@ class OntologyRuntime:
         user_id: str,
         is_admin: bool = False,
     ) -> Dict[str, Any]:
-        await persistent_ontology_service._ensure_space_access(db, space_id, user_id, is_admin)
+        space = await persistent_ontology_service._ensure_space_access(db, space_id, user_id, is_admin)
         packages = {}
         missing = []
         for kind in [PackageKind.schema, PackageKind.mapping, PackageKind.rule]:
@@ -88,6 +88,9 @@ class OntologyRuntime:
         return {
             "ontology_enabled": True,
             "space_id": space_id,
+            "space_name": space.name,
+            "space_code": space.code,
+            "space_display_name": f"{space.name} ({space.code})" if space.code and space.code != space.name else space.name,
             "active_versions": {
                 kind: data["version"] for kind, data in packages.items() if data
             },
@@ -131,6 +134,8 @@ class OntologyRuntime:
         return (
             "\n\n[ONTOLOGY RUNTIME]: ENABLED\n"
             f"current_user_id: {user_id}\n"
+            f"space_name: {contract.get('space_name')}\n"
+            f"space_code: {contract.get('space_code')}\n"
             f"space_id: {space_id}\n"
             f"active_versions: {contract.get('active_versions', {})}\n"
             f"missing_active_packages: {contract.get('missing_active_packages', [])}\n"
@@ -140,7 +145,8 @@ class OntologyRuntime:
             "1. 当任务涉及业务审核、合规判断、结构化抽取、风险识别或可解释决策时，优先调用本体工具。\n"
             "2. user_id 由系统运行时自动注入，调用工具时不要填写、猜测或复述用户 ID。\n"
             "3. space_id 默认由系统运行时自动补齐；只有用户明确指定其他可访问空间时才传入 space_id。\n"
-            "4. 不要把完整本体 JSON 直接复述给用户；应输出结论、命中规则、证据和建议。\n"
+            "4. 当用户询问“当前本体空间是什么”时，优先回答 space_name，可括号补充 space_code；不要只回答 space_id。\n"
+            "5. 不要把完整本体 JSON 直接复述给用户；应输出结论、命中规则、证据和建议。\n"
         )
 
     def _summarize_package(self, kind: PackageKind, payload: Dict[str, Any]) -> Dict[str, Any]:

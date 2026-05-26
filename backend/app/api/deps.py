@@ -99,6 +99,7 @@ async def get_identity(
                     "api_key_id": None,
                     "api_key_name": None,
                     "user_id": user_id,
+                    "is_admin": bool(user.is_admin),
                 }
             return user_id
         except (JWTError, HTTPException):
@@ -122,6 +123,7 @@ async def get_identity(
                         "api_key_id": api_key_obj.id,
                         "api_key_name": api_key_obj.name,
                         "user_id": user.id,
+                        "is_admin": bool(user.is_admin),
                     }
                 return user.id
 
@@ -133,6 +135,7 @@ async def get_identity(
                 "api_key_id": None,
                 "api_key_name": None,
                 "user_id": "admin",
+                "is_admin": True,
             }
         return "admin"
 

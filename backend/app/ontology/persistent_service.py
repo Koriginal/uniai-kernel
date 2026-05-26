@@ -5,9 +5,12 @@ import uuid
 import os
 import base64
 import hashlib
+import ipaddress
+import socket
 from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,6 +25,7 @@ from app.models.ontology import (
     OntologyDecisionModel,
     OntologyDataSourceModel,
     OntologyExplanationModel,
+    OntologyInstanceGraphModel,
     OntologySecretModel,
     OntologyPackageModel,
     OntologyReleaseEventModel,
@@ -44,6 +48,7 @@ from app.ontology.domain_models import (
     EntityMappingRule,
     ExplanationResponse,
     InstanceGraph,
+    InstanceGraphRecord,
     MappingExecuteRequest,
     MappingExecuteResponse,
     MappingPackageCreate,
@@ -56,6 +61,7 @@ from app.ontology.domain_models import (
     OntologySpace,
     OntologySpaceCreate,
     OntologyDataSourceCreate,
+    OntologyDataSourceRuntimeApprovalRequest,
     OntologyDataSourceRecord,
     OntologySecretCreate,
     OntologySecretRecord,
@@ -215,13 +221,15 @@ class PersistentOntologyService:
         self._validate_data_source_config(payload)
         existed = await self.repo.get_data_source_by_name(db, space_id=payload.space_id, name=payload.name.strip())
         now = utc_now()
+        sanitized_config = self._sanitize_data_source_config(payload.config)
+        self._strip_runtime_approval_fields(sanitized_config)
         model = OntologyDataSourceModel(
             id=existed.id if existed else f"onto-ds-{uuid.uuid4().hex[:10]}",
             space_id=payload.space_id,
             name=payload.name.strip(),
             kind=payload.kind.value,
             protocol=payload.protocol.strip().lower(),
-            config=self._sanitize_data_source_config(payload.config),
+            config=sanitized_config,
             secret_ref=(payload.secret_ref or "").strip() or None,
             status=payload.status.value,
             created_by=actor_user_id,
@@ -230,6 +238,38 @@ class PersistentOntologyService:
         )
         saved = await self.repo.upsert_data_source(db, existed=existed, new_model=model)
         await self._try_audit(db, user_id=actor_user_id, action_name="ontology.datasource.upsert", output_result=saved.id)
+        return self._data_source_to_domain(saved)
+
+    async def approve_data_source_runtime(
+        self,
+        db: AsyncSession,
+        payload: OntologyDataSourceRuntimeApprovalRequest,
+        actor_user_id: str,
+        is_admin: bool,
+    ) -> OntologyDataSourceRecord:
+        model = await self.repo.get_data_source(db, payload.data_source_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="ontology data source not found")
+        await self._ensure_space_access(db, model.space_id, actor_user_id, is_admin, action="governance")
+
+        config = deepcopy(model.config or {})
+        runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
+        runtime.update(
+            {
+                "live_approved": bool(payload.approve),
+                "approved_by": actor_user_id,
+                "approved_at": utc_now().isoformat(),
+                "approval_reason": payload.reason.strip(),
+            }
+        )
+        config["runtime"] = runtime
+        saved = await self.repo.update_data_source_config(db, model=model, config=config)
+        await self._try_audit(
+            db,
+            user_id=actor_user_id,
+            action_name="ontology.datasource.runtime_approval",
+            output_result=f"{model.id}:{'approved' if payload.approve else 'revoked'}",
+        )
         return self._data_source_to_domain(saved)
 
     async def list_data_sources(
@@ -837,6 +877,23 @@ class PersistentOntologyService:
             schema_version=schema_record.version if schema_record else None,
             trace=trace,
         )
+        if req.persist_graph:
+            record = await self.persist_instance_graph(
+                db,
+                space_id=req.space_id,
+                graph=graph,
+                actor_user_id=actor_user_id,
+                is_admin=is_admin,
+                input_payload=req.input_payload,
+                trace=trace,
+                schema_version=schema_record.version if schema_record else None,
+                mapping_version=mapping_record.version,
+                source=req.source,
+                session_id=req.session_id,
+                request_id=req.request_id,
+                metadata={"created_from": "mapping.execute"},
+            )
+            response.graph_id = record.id
         await self._try_audit(
             db,
             user_id=actor_user_id,
@@ -844,6 +901,130 @@ class PersistentOntologyService:
             output_result=f"{req.space_id}:{mapping_record.version}",
         )
         return response
+
+    async def persist_instance_graph(
+        self,
+        db: AsyncSession,
+        *,
+        space_id: str,
+        graph: InstanceGraph,
+        actor_user_id: str,
+        is_admin: bool,
+        input_payload: Optional[Dict[str, Any]] = None,
+        trace: Optional[List[MappingTraceItem]] = None,
+        schema_version: Optional[str] = None,
+        mapping_version: Optional[str] = None,
+        source: str = "manual",
+        session_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> InstanceGraphRecord:
+        await self._ensure_space_access(db, space_id, actor_user_id, is_admin, action="execute")
+        graph_model = OntologyInstanceGraphModel(
+            id=f"onto-graph-{uuid.uuid4().hex[:12]}",
+            space_id=space_id,
+            schema_version=schema_version,
+            mapping_version=mapping_version,
+            decision_id=decision_id,
+            source=(source or "manual")[:80],
+            session_id=session_id,
+            request_id=request_id,
+            entity_count=len(graph.entities),
+            relation_count=len(graph.relations),
+            graph_snapshot=graph.model_dump(mode="json"),
+            input_snapshot=input_payload,
+            trace=[item.model_dump(mode="json") for item in (trace or [])],
+            metadata_json=metadata or {},
+            created_by=actor_user_id,
+            created_at=utc_now(),
+        )
+        saved = await self.repo.create_instance_graph(db, graph_model)
+        await self._try_audit(
+            db,
+            user_id=actor_user_id,
+            action_name="ontology.instance_graph.create",
+            output_result=saved.id,
+        )
+        return self._instance_graph_to_domain(saved)
+
+    async def link_instance_graph_decision(
+        self,
+        db: AsyncSession,
+        *,
+        graph_id: str,
+        decision_id: str,
+        actor_user_id: str,
+        is_admin: bool,
+    ) -> Optional[InstanceGraphRecord]:
+        graph = await self.repo.get_instance_graph(db, graph_id)
+        if not graph:
+            return None
+        await self._ensure_space_access(db, graph.space_id, actor_user_id, is_admin, action="execute")
+        updated = await self.repo.update_instance_graph_decision(db, graph_id=graph_id, decision_id=decision_id)
+        if not updated:
+            return None
+        return self._instance_graph_to_domain(updated)
+
+    async def update_instance_graph_snapshot(
+        self,
+        db: AsyncSession,
+        *,
+        graph_id: str,
+        graph: InstanceGraph,
+        actor_user_id: str,
+        is_admin: bool,
+        metadata_patch: Optional[Dict[str, Any]] = None,
+    ) -> Optional[InstanceGraphRecord]:
+        existing = await self.repo.get_instance_graph(db, graph_id)
+        if not existing:
+            return None
+        await self._ensure_space_access(db, existing.space_id, actor_user_id, is_admin, action="execute")
+        metadata = dict(existing.metadata_json or {})
+        metadata.update(metadata_patch or {})
+        updated = await self.repo.update_instance_graph_snapshot(
+            db,
+            graph_id=graph_id,
+            graph_snapshot=graph.model_dump(mode="json"),
+            metadata_json=metadata,
+        )
+        if not updated:
+            return None
+        await self._try_audit(
+            db,
+            user_id=actor_user_id,
+            action_name="ontology.instance_graph.update",
+            output_result=graph_id,
+        )
+        return self._instance_graph_to_domain(updated)
+
+    async def get_instance_graph(
+        self,
+        db: AsyncSession,
+        *,
+        graph_id: str,
+        actor_user_id: str,
+        is_admin: bool,
+    ) -> InstanceGraphRecord:
+        graph = await self.repo.get_instance_graph(db, graph_id)
+        if not graph:
+            raise HTTPException(status_code=404, detail="ontology instance graph not found")
+        await self._ensure_space_access(db, graph.space_id, actor_user_id, is_admin)
+        return self._instance_graph_to_domain(graph)
+
+    async def list_instance_graphs(
+        self,
+        db: AsyncSession,
+        *,
+        space_id: str,
+        actor_user_id: str,
+        is_admin: bool,
+        limit: int = 50,
+        source: Optional[str] = None,
+    ) -> List[InstanceGraphRecord]:
+        await self._ensure_space_access(db, space_id, actor_user_id, is_admin)
+        rows = await self.repo.list_instance_graphs(db, space_id=space_id, limit=limit, source=source)
+        return [self._instance_graph_to_domain(row) for row in rows]
 
     async def evaluate_rules(
         self,
@@ -1095,6 +1276,14 @@ class PersistentOntologyService:
                 sanitized.pop(key, None)
         return sanitized
 
+    @staticmethod
+    def _strip_runtime_approval_fields(config: Dict[str, Any]) -> None:
+        runtime = config.get("runtime")
+        if not isinstance(runtime, dict):
+            return
+        for key in ("live_approved", "approved_by", "approved_at", "approval_reason"):
+            runtime.pop(key, None)
+
     def _validate_data_source_config(self, payload: OntologyDataSourceCreate) -> None:
         protocol = payload.protocol.strip().lower()
         config = payload.config or {}
@@ -1175,6 +1364,31 @@ class PersistentOntologyService:
                 raise HTTPException(status_code=404, detail=f"secret not found: secret://{scope}/{name}")
             return self._decrypt_secret(secret.encrypted_value)
         return None
+
+    async def resolve_runtime_secret(self, db: AsyncSession, *, secret_ref: Optional[str], space_id: str) -> Optional[str]:
+        return await self._resolve_secret_value(secret_ref, db=db, space_id=space_id)
+
+    async def audit_runtime_execution(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: str,
+        action_name: str,
+        status: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        try:
+            await audit_service.log_action(
+                db,
+                user_id=user_id,
+                action_name=action_name,
+                status=status,
+                input_params=payload,
+                output_result=f"{payload.get('data_source_id')}:{payload.get('status')}",
+                duration_ms=float(payload.get("duration_ms") or 0),
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _normalize_discovered_type(raw_type: str) -> str:
@@ -1348,6 +1562,7 @@ class PersistentOntologyService:
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             try:
+                self._assert_safe_discovery_url(url, config)
                 async with httpx.AsyncClient(timeout=float(config.get("timeout") or 8), follow_redirects=False) as client:
                     response = await client.get(url, headers=headers)
                     response.raise_for_status()
@@ -1383,6 +1598,27 @@ class PersistentOntologyService:
             entities=entities,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _assert_safe_discovery_url(url: str, config: Dict[str, Any]) -> None:
+        allowed_hosts = config.get("allowed_hosts") or []
+        if not isinstance(allowed_hosts, list) or not allowed_hosts:
+            raise HTTPException(status_code=400, detail="api discovery requires config.allowed_hosts to prevent SSRF")
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise HTTPException(status_code=400, detail="api discovery URL must be http(s) with host")
+        host = parsed.hostname.lower()
+        if host not in {str(item).lower() for item in allowed_hosts}:
+            raise HTTPException(status_code=400, detail="api discovery URL host is not in allowed_hosts")
+        try:
+            for info in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM):
+                ip = ipaddress.ip_address(info[4][0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                    raise HTTPException(status_code=400, detail="api discovery URL resolves to blocked private/reserved address")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"api discovery URL DNS validation failed: {exc}") from exc
 
     @staticmethod
     def _to_pascal_name(value: str) -> str:
@@ -1521,6 +1757,27 @@ class PersistentOntologyService:
             created_by=model.created_by,
             created_at=model.created_at,
             updated_at=model.updated_at,
+        )
+
+    @staticmethod
+    def _instance_graph_to_domain(model: OntologyInstanceGraphModel) -> InstanceGraphRecord:
+        return InstanceGraphRecord(
+            id=model.id,
+            space_id=model.space_id,
+            schema_version=model.schema_version,
+            mapping_version=model.mapping_version,
+            decision_id=model.decision_id,
+            source=model.source,
+            session_id=model.session_id,
+            request_id=model.request_id,
+            entity_count=model.entity_count,
+            relation_count=model.relation_count,
+            graph_snapshot=model.graph_snapshot or {},
+            input_snapshot=model.input_snapshot,
+            trace=model.trace or [],
+            metadata=model.metadata_json or {},
+            created_by=model.created_by,
+            created_at=model.created_at,
         )
 
     async def _try_audit(self, db: AsyncSession, *, user_id: str, action_name: str, output_result: str) -> None:

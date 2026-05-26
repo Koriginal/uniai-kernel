@@ -26,6 +26,7 @@ class ChatMessage(Base):
     token_count = Column(Integer, default=0)  # Token 消耗
     feedback = Column(String, nullable=True)  # "like" | "dislike" | null
     tool_calls = Column(JSON, nullable=True)  # 存储工具调用详情
+    runtime_events = Column(JSON, nullable=True)  # 本体/工具运行时展示快照
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

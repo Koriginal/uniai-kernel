@@ -13,6 +13,7 @@ from app.core.llm import _clean_messages
 from app.models.message import ChatMessage
 from app.models.session import ChatSession
 from app.ontology.registry import ontology_registry
+from app.ontology.pipeline import ontology_runtime_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     db = c["db"]
     session_id = c["session_id"]
     user_id = c["user_id"]
+    is_admin = bool(c.get("is_admin", False))
     enable_memory = c.get("enable_memory", False)
 
     messages = list(state["messages"])
@@ -106,12 +108,43 @@ async def context_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         f"data: {json.dumps({'type': 'semantic', 'frame': semantic_frame}, ensure_ascii=False)}\n\n"
     )
 
+    ontology_pipeline = None
+    ontology_config = (agent_profile or {}).get("ontology_config") or {}
+    try:
+        result = await ontology_runtime_pipeline.run(
+            db,
+            raw_config=ontology_config,
+            user_id=user_id,
+            is_admin=is_admin,
+            query=current_query,
+            session_id=session_id,
+            request_id=c.get("request_id"),
+        )
+        if result.enabled:
+            event = result.to_event()
+            ontology_pipeline = {
+                "prompt_block": result.to_prompt_block(),
+                "event": event,
+            }
+            if current_msg_id:
+                msg_to_update = await db.get(ChatMessage, current_msg_id)
+                if msg_to_update:
+                    runtime_events = dict(msg_to_update.runtime_events or {})
+                    runtime_events["ontology_runtime"] = event
+                    msg_to_update.runtime_events = runtime_events
+                    db.add(msg_to_update)
+                    await db.commit()
+            await callback.emit(f"data: {json.dumps(event, ensure_ascii=False)}\n\n")
+    except Exception as exc:
+        logger.warning(f"[ContextNode] ontology runtime pipeline skipped: {exc}")
+
     return {
         "messages": messages,
         "current_msg_id": current_msg_id,
         "interaction_mode": interaction_mode,
         "semantic_frame": semantic_frame,
         "semantic_slots": semantic_slots,
+        "ontology_pipeline": ontology_pipeline,
     }
 
 

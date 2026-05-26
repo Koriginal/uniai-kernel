@@ -49,6 +49,7 @@ async def generate_sse_stream(
     async for chunk in agent_service.chat_stream(
         request=request,
         user_id=user_id,
+        is_admin=bool((identity_context or {}).get("is_admin", False)),
         session_id=session_id,
         enable_memory=enable_memory,
         req_id=req_id,
@@ -85,6 +86,7 @@ async def chat_completions(
     return await agent_service.chat(
         request=request,
         user_id=user_id,
+        is_admin=bool((identity_context or {}).get("is_admin", False)),
         session_id=session_id,
         enable_memory=enable_memory
         ,

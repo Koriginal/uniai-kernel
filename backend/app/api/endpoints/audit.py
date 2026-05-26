@@ -17,6 +17,46 @@ from datetime import datetime, timedelta, timezone
 router = APIRouter()
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _runtime_trace_summary(runtime_events: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    events = runtime_events if isinstance(runtime_events, dict) else {}
+    ontology = events.get("ontology_runtime") if isinstance(events.get("ontology_runtime"), dict) else None
+    tools = events.get("tool_runtime_events") if isinstance(events.get("tool_runtime_events"), list) else []
+    final_tool_events = [item for item in tools if isinstance(item, dict) and item.get("phase") in (None, "end")]
+
+    blocked_count = sum(1 for item in final_tool_events if item.get("status") == "blocked")
+    failed_count = sum(1 for item in final_tool_events if item.get("status") == "error")
+    success_count = sum(1 for item in final_tool_events if item.get("status") == "success")
+
+    return {
+        "has_ontology": ontology is not None,
+        "ontology_status": ontology.get("status") if ontology else None,
+        "ontology_space_id": ontology.get("space_id") if ontology else None,
+        "ontology_space_name": ontology.get("space_name") if ontology else None,
+        "ontology_space_code": ontology.get("space_code") if ontology else None,
+        "risk_level": (ontology.get("decision") or {}).get("risk_level") if ontology else None,
+        "risk_score": (ontology.get("decision") or {}).get("risk_score") if ontology else None,
+        "tool_count": len(final_tool_events),
+        "successful_tool_count": success_count,
+        "blocked_tool_count": blocked_count,
+        "failed_tool_count": failed_count,
+    }
+
+
+def _content_preview(content: Optional[str], limit: int = 140) -> str:
+    text = " ".join((content or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
 async def _claim_legacy_orphan_sessions_for_admin(db: AsyncSession, current_user: User) -> None:
     """兼容旧数据：管理员访问审计时自动认领 user_id 为空的历史会话。"""
     if not current_user.is_admin:
@@ -27,6 +67,111 @@ async def _claim_legacy_orphan_sessions_for_admin(db: AsyncSession, current_user
         .values(user_id=current_user.id)
     )
     await db.commit()
+
+
+@router.get("/runtime-traces")
+async def list_runtime_traces(
+    days: int = Query(7, ge=1, le=90),
+    scope: str = Query("mine", pattern="^(mine|global)$"),
+    limit: int = Query(50, ge=1, le=100),
+    agent_id: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
+    has_ontology: Optional[bool] = Query(None),
+    has_tools: Optional[bool] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """
+    按 assistant 消息查看本体/工具运行快照。
+
+    返回的是已落库的消息级运行轨迹，不重新执行任何工具。
+    用途：
+    - 审计：某个回答是否用了本体、用了哪些工具、是否被策略拦截
+    - 排障：运行时结果与最终回答是否一致
+    - 后续导出：生成客户可看的“回答依据”报告
+    """
+    if scope == "global" and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Only admin can access global scope")
+    await _claim_legacy_orphan_sessions_for_admin(db, current_user)
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    session_query = select(ChatSession)
+    if scope == "mine":
+        mine_filter = ChatSession.user_id == current_user.id
+        if current_user.is_admin:
+            mine_filter = or_(mine_filter, ChatSession.user_id.is_(None))
+        session_query = session_query.where(mine_filter)
+    scoped_sessions = (await db.execute(session_query)).scalars().all()
+    session_by_id = {session.id: session for session in scoped_sessions}
+
+    scoped_session_ids = list(session_by_id.keys())
+    if session_id:
+        if session_id not in session_by_id:
+            raise HTTPException(status_code=403, detail="Not allowed to access this session")
+        scoped_session_ids = [session_id]
+
+    if not scoped_session_ids:
+        return {"items": [], "summary": {"total": 0, "with_ontology": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0}}
+
+    message_query = (
+        select(ChatMessage)
+        .where(
+            ChatMessage.session_id.in_(scoped_session_ids),
+            ChatMessage.role == "assistant",
+            ChatMessage.created_at >= since,
+            ChatMessage.runtime_events.is_not(None),
+        )
+        .order_by(desc(ChatMessage.created_at))
+        .limit(min(limit * 3, 300))
+    )
+    if agent_id:
+        message_query = message_query.where(ChatMessage.agent_id == agent_id)
+
+    messages = (await db.execute(message_query)).scalars().all()
+    agent_ids = [message.agent_id for message in messages if message.agent_id]
+    agent_name_map: Dict[str, str] = {}
+    if agent_ids:
+        agent_rows = (await db.execute(select(AgentProfile.id, AgentProfile.name).where(AgentProfile.id.in_(agent_ids)))).all()
+        agent_name_map = {row.id: row.name for row in agent_rows}
+
+    items = []
+    totals = {"total": 0, "with_ontology": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0}
+    for message in messages:
+        runtime_events = message.runtime_events if isinstance(message.runtime_events, dict) else {}
+        summary = _runtime_trace_summary(runtime_events)
+        if has_ontology is not None and summary["has_ontology"] != has_ontology:
+            continue
+        if has_tools is not None and (summary["tool_count"] > 0) != has_tools:
+            continue
+
+        session = session_by_id.get(message.session_id)
+        metadata = session.extra_metadata if session and isinstance(session.extra_metadata, dict) else {}
+        totals["total"] += 1
+        totals["with_ontology"] += 1 if summary["has_ontology"] else 0
+        totals["with_tools"] += 1 if summary["tool_count"] > 0 else 0
+        totals["blocked_tools"] += int(summary["blocked_tool_count"] or 0)
+        totals["failed_tools"] += int(summary["failed_tool_count"] or 0)
+
+        items.append({
+            "message_id": message.id,
+            "session_id": message.session_id,
+            "session_title": session.title if session else None,
+            "agent_id": message.agent_id,
+            "agent_name": agent_name_map.get(message.agent_id or "", message.agent_id or "Assistant"),
+            "user_id": session.user_id if session else message.user_id,
+            "created_at": message.created_at,
+            "content_preview": _content_preview(message.content),
+            "summary": summary,
+            "ontology_runtime": runtime_events.get("ontology_runtime"),
+            "tool_runtime_events": runtime_events.get("tool_runtime_events") or [],
+            "auth_source": metadata.get("auth_source", "unknown"),
+            "api_key_id": metadata.get("api_key_id"),
+        })
+        if len(items) >= limit:
+            break
+
+    return {"items": items, "summary": totals}
 
 class ActionLogResponse(BaseModel):
     id: str
