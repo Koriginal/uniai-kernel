@@ -117,6 +117,26 @@ const renderNodeSummary = (summary?: any) => {
   );
 };
 
+const buildStepRuntimeItems = (steps: any[], toolEvents: any[], evaluation: any) => {
+  const checks = Array.isArray(evaluation?.checks) ? evaluation.checks : [];
+  const missing = Array.isArray(evaluation?.missing_requirements) ? evaluation.missing_requirements : [];
+  return (steps || []).map((step, index) => {
+    const stepTools = toolEvents.filter((event) => event.plan_step_id === step.id);
+    const stepArtifacts = stepTools.filter((event) => event.artifact_id);
+    const failedChecks = checks.filter((check: any) => check.status === 'failed');
+    const warningChecks = checks.filter((check: any) => check.status === 'warning');
+    return {
+      step,
+      index,
+      tools: stepTools,
+      artifacts: stepArtifacts,
+      failedChecks,
+      warningChecks,
+      missing,
+    };
+  });
+};
+
 const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents, runtimeEvents = [] }) => {
   const [nodes, setNodes] = useState<any[]>([]);
   const [capabilities, setCapabilities] = useState<any>(null);
@@ -191,6 +211,9 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
     .filter((event) => event.type === 'tool_runtime')
     .map((event) => event.payload || {})
     .filter((payload) => !payload.phase || payload.phase === 'end');
+  const planSteps = Array.isArray(latestPlan.steps) ? latestPlan.steps : [];
+  const stepRuntimeItems = buildStepRuntimeItems(planSteps, finalToolEvents, latestEvaluation);
+  const unassignedToolEvents = finalToolEvents.filter((event) => !event.plan_step_id);
   const artifactCount = finalToolEvents.filter((event) => event.artifact_id).length;
   const blockedToolCount = finalToolEvents.filter((event) => event.status === 'blocked').length;
   const timelineEvents = [
@@ -356,6 +379,95 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
                 };
               })}
            />
+        )}
+
+        {stepRuntimeItems.length > 0 && (
+          <>
+            <Divider style={{ margin: '18px 0 12px' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <Space size={6}>
+                <NodeIndexOutlined style={{ color: '#1677ff' }} />
+                <Text strong style={{ fontSize: 13 }}>计划步骤关联</Text>
+              </Space>
+              <Tag>{stepRuntimeItems.length}</Tag>
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {stepRuntimeItems.map((item) => {
+                const step = item.step || {};
+                const hasMissing = item.missing.length > 0 && (step.status === 'pending' || step.status === 'failed' || step.status === 'blocked');
+                return (
+                  <div key={step.id || item.index} style={{
+                    border: '1px solid #eef2f7',
+                    borderRadius: 8,
+                    background: '#fff',
+                    padding: '8px 9px',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                      <div style={{ minWidth: 0 }}>
+                        <Text strong style={{ fontSize: 12 }}>{item.index + 1}. {step.id || 'step'}</Text>
+                        <div style={{ color: '#64748b', fontSize: 12, lineHeight: 1.5, marginTop: 2 }}>
+                          {step.title || '未命名步骤'}
+                        </div>
+                      </div>
+                      <Tag color={statusColor(step.status)}>{step.status || 'pending'}</Tag>
+                    </div>
+                    <Space size={[4, 4]} wrap style={{ marginTop: 6 }}>
+                      {step.owner && <Tag>{step.owner}</Tag>}
+                      {Array.isArray(step.tool_candidates) && step.tool_candidates.map((tool: string) => (
+                        <Tag key={tool} color="blue">{tool}</Tag>
+                      ))}
+                      {item.tools.length > 0 && <Tag color="purple">工具 {item.tools.length}</Tag>}
+                      {item.artifacts.length > 0 && <Tag color="cyan">产物 {item.artifacts.length}</Tag>}
+                      {item.failedChecks.length > 0 && <Tag color="error">失败检查 {item.failedChecks.length}</Tag>}
+                      {item.warningChecks.length > 0 && <Tag color="warning">风险检查 {item.warningChecks.length}</Tag>}
+                      {hasMissing && <Tag color="error">缺口 {item.missing.length}</Tag>}
+                    </Space>
+                    {item.tools.length > 0 && (
+                      <div style={{ display: 'grid', gap: 5, marginTop: 7 }}>
+                        {item.tools.slice(0, 4).map((tool: any, toolIndex: number) => (
+                          <div key={tool.tool_call_id || toolIndex} style={{
+                            border: '1px solid #f1f5f9',
+                            borderRadius: 6,
+                            padding: '6px 7px',
+                            background: '#f8fafc',
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <Text style={{ fontSize: 12 }}>{tool.tool_label || tool.tool_name || '工具'}</Text>
+                              <Tag color={statusColor(tool.status)} style={{ marginInlineEnd: 0 }}>{tool.status}</Tag>
+                            </div>
+                            <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+                              {tool.policy_decision && <Tag color={statusColor(tool.policy_decision)}>策略 {tool.policy_decision}</Tag>}
+                              {tool.artifact_id && (
+                                <Tooltip title={tool.artifact_id}>
+                                  <Tag color="cyan">产物</Tag>
+                                </Tooltip>
+                              )}
+                              {tool.duration_ms !== undefined && <Tag>{tool.duration_ms} ms</Tag>}
+                            </Space>
+                          </div>
+                        ))}
+                        {item.tools.length > 4 && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>还有 {item.tools.length - 4} 个工具事件</Text>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {unassignedToolEvents.length > 0 && (
+                <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 9, background: '#fff' }}>
+                  <Text strong style={{ fontSize: 12 }}>未关联步骤的工具</Text>
+                  <div style={{ marginTop: 6 }}>
+                    {unassignedToolEvents.slice(0, 4).map((tool: any, index: number) => (
+                      <Tag key={tool.tool_call_id || index} color={statusColor(tool.status)} style={{ marginBottom: 4 }}>
+                        {tool.tool_label || tool.tool_name || '工具'} / {tool.status}
+                      </Tag>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         <Divider style={{ margin: '18px 0 12px' }} />

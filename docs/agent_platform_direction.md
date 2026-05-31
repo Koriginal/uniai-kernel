@@ -176,10 +176,10 @@ created_at
 - GraphTracePanel 已接入本轮 `runtimeEvents`，按时间线混排 `node_event`、`task_runtime`、`tool_runtime`、`ontology_runtime`、`task_evaluation`。
 - GraphTracePanel 顶部展示本轮任务类型、计划状态、验收状态、工具数、拦截数和产物数。
 - `node_event` 已带 `input_summary`、`output_summary`、`duration_ms`，用于定位节点进入时状态、退出时改动和耗时。
+- GraphTracePanel 已按 `execution_plan.steps[]` 聚合工具调用、策略结果、产物数量和验收检查缺口。
 
 下一步：
 
-- 任务计划步骤支持点击查看关联工具调用和产物。
 - 会话运行轨迹 drawer 中补 `task_evaluation.checks` 和 repair 记录。
 
 ### 5. E2E 验证
