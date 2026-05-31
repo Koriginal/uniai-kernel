@@ -412,6 +412,7 @@ const App: React.FC = () => {
         tool_calls: m.tool_calls, // 恢复工具调用持久化状态
         ontology_runtime: m.ontology_runtime || m.runtime_events?.ontology_runtime,
         tool_runtime_events: m.tool_runtime_events || m.runtime_events?.tool_runtime_events || [],
+        task_runtime: m.task_runtime || m.runtime_events?.task_runtime,
       }));
       setMessages(history);
 
@@ -627,6 +628,7 @@ const App: React.FC = () => {
           enable_memory: enableMemory,
           enable_swarm: enableSwarm,
           enable_canvas: enableAutoCanvas, // 同步看板开关状态到后端
+          max_task_repairs: 1,
           skip_save_user: skipSaveUser
         }),
         signal: controller.signal
@@ -744,6 +746,69 @@ const App: React.FC = () => {
                   agentName: '本体运行时',
                   content: parts.length > 0 ? parts.join(' · ') : (data.message || data.status || '已完成本体分析'),
                   state: 'active',
+                });
+                continue;
+              }
+
+              if (data.type === 'task_runtime' || data.type === 'task_runtime_update') {
+                const runtimePayload = data.task_runtime || data.runtime || data;
+                const frame = runtimePayload.task_frame || {};
+                const plan = runtimePayload.execution_plan || {};
+                setMessages(prev => {
+                  const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
+                  if (targetIndex === -1) return prev;
+                  const targetMsg: any = prev[targetIndex];
+                  const previousRuntime = targetMsg.task_runtime || {};
+                  const newMsgs = [...prev];
+                  newMsgs[targetIndex] = {
+                    ...targetMsg,
+                    task_runtime: {
+                      ...previousRuntime,
+                      ...runtimePayload,
+                      task_frame: runtimePayload.task_frame || previousRuntime.task_frame,
+                      execution_plan: runtimePayload.execution_plan || previousRuntime.execution_plan,
+                      execution_artifacts: runtimePayload.execution_artifacts || previousRuntime.execution_artifacts,
+                    },
+                  };
+                  return newMsgs;
+                });
+                const steps = Array.isArray(plan.steps) ? plan.steps : [];
+                setCollaborationStatus({
+                  agentName: '任务运行时',
+                  content: [
+                    frame.kind ? `类型 ${frame.kind}` : '',
+                    steps.length ? `计划 ${steps.length} 步` : '',
+                    plan.current_step ? `当前 ${plan.current_step}` : '',
+                  ].filter(Boolean).join(' · ') || '已生成任务框架',
+                  state: 'active',
+                });
+                continue;
+              }
+
+              if (data.type === 'task_evaluation') {
+                const evaluation = data.task_evaluation || data.evaluation || data;
+                setMessages(prev => {
+                  const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
+                  if (targetIndex === -1) return prev;
+                  const targetMsg: any = prev[targetIndex];
+                  const previousRuntime = targetMsg.task_runtime || {};
+                  const newMsgs = [...prev];
+                  newMsgs[targetIndex] = {
+                    ...targetMsg,
+                    task_evaluation: evaluation,
+                    task_runtime: {
+                      ...previousRuntime,
+                      task_evaluation: evaluation,
+                      task_repair_count: data.task_repair_count ?? previousRuntime.task_repair_count,
+                      pending_repair: data.pending_repair ?? previousRuntime.pending_repair,
+                    },
+                  };
+                  return newMsgs;
+                });
+                setCollaborationStatus({
+                  agentName: '任务验收',
+                  content: evaluation.status ? `结果 ${evaluation.status}` : '已完成任务验收',
+                  state: evaluation.status === 'failed' || data.pending_repair ? 'active' : 'completed',
                 });
                 continue;
               }

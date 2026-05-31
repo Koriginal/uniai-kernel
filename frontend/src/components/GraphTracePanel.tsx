@@ -18,6 +18,7 @@ interface GraphTracePanelProps {
 
 const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents }) => {
   const [nodes, setNodes] = useState<any[]>([]);
+  const [capabilities, setCapabilities] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   // 根据实时事件计算当前活跃步骤和节点状态
@@ -29,7 +30,7 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
     if (!lastStart) return 0;
     
     // 映射节点 ID 到步骤索引
-    const nodeOrder = ['context', 'agent', 'tool_executor', 'handoff', 'synthesize'];
+    const nodeOrder = ['context', 'task_planner', 'agent', 'tool_executor', 'handoff', 'orchestrator_invoke', 'synthesize', 'task_evaluator'];
     const idx = nodeOrder.indexOf(lastStart.node);
     return idx === -1 ? 0 : idx;
   };
@@ -51,21 +52,34 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
   const fetchNodes = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('/api/v1/graph/nodes');
-      setNodes(res.data.nodes || []);
+      const [nodesRes, capabilityRes] = await Promise.all([
+        axios.get('/api/v1/graph/nodes'),
+        axios.get('/api/v1/graph/runtime/capabilities'),
+      ]);
+      setNodes(nodesRes.data.nodes || []);
+      setCapabilities(capabilityRes.data || null);
     } catch {
       // fallback
       setNodes([
-          { id: 'context', label: '上下文构建', description: '加载记忆与 System Prompt', icon: '📥' },
-          { id: 'agent', label: 'LLM 推理', description: '调用核心模型思考', icon: '🤖' },
-          { id: 'tool_executor', label: '工具执行', description: '执行并行工具', icon: '🔧' },
+          { id: 'context', label: '上下文构建', description: '加载记忆、语义帧与本体预处理', icon: '📥' },
+          { id: 'task_planner', label: '任务规划', description: '生成 task_frame 与 execution_plan', icon: '🧭' },
+          { id: 'agent', label: 'LLM 推理', description: '读取运行时契约并生成动作', icon: '🤖' },
+          { id: 'tool_executor', label: '工具执行', description: '执行工具并写入执行产物', icon: '🔧' },
           { id: 'handoff', label: '专家路由', description: '移交控制权', icon: '🤝' },
-          { id: 'synthesize', label: '汇总归还', description: '收尾与回调', icon: '📝' }
+          { id: 'orchestrator_invoke', label: '子主控调用', description: '调用下级编排器处理子任务', icon: '🪄' },
+          { id: 'synthesize', label: '汇总归还', description: '收尾与回调', icon: '📝' },
+          { id: 'task_evaluator', label: '任务验收', description: '检查完成条件并决定是否修复', icon: '✅' }
       ]);
+      setCapabilities(null);
     } finally {
       setLoading(false);
     }
   };
+
+  const taskKinds: string[] = capabilities?.task_kinds
+    || capabilities?.runtime_capabilities?.task_kinds
+    || (Array.isArray(capabilities?.capabilities) ? capabilities.capabilities.map((item: any) => item.name).filter(Boolean) : []);
+  const eventTypes: string[] = capabilities?.events || capabilities?.runtime_events || [];
 
   if (!visible) return null;
 
@@ -108,6 +122,31 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
         <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
            <Text type="secondary">当前编排器</Text>
            <Tag color="cyan">{currentAgentName || 'Orchestrator'}</Tag>
+        </div>
+
+        <div style={{
+          marginBottom: 18,
+          border: '1px solid #eef2f7',
+          background: '#fbfdff',
+          borderRadius: 8,
+          padding: '10px 12px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <Text strong style={{ fontSize: 13 }}>运行时能力</Text>
+            {capabilities ? <Tag color="green">已同步</Tag> : <Tag>本地兜底</Tag>}
+          </div>
+          <Space size={[4, 6]} wrap>
+            {taskKinds.slice(0, 6).map((kind) => <Tag key={kind} color="blue">{kind}</Tag>)}
+            {eventTypes.slice(0, 4).map((event) => <Tag key={event}>{event}</Tag>)}
+            {taskKinds.length === 0 && eventTypes.length === 0 && (
+              <>
+                <Tag color="blue">task_frame</Tag>
+                <Tag color="blue">execution_plan</Tag>
+                <Tag>task_runtime</Tag>
+                <Tag>task_evaluation</Tag>
+              </>
+            )}
+          </Space>
         </div>
 
         {loading ? (

@@ -3,7 +3,8 @@ import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, mess
 import { 
   AppstoreAddOutlined, CopyOutlined, SyncOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
-  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined
+  DislikeOutlined, BorderOutlined, ReloadOutlined, LikeFilled, DislikeFilled, SendOutlined,
+  WarningOutlined, ScheduleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -21,6 +22,8 @@ export interface Message {
   tool_calls?: { id: string; function: { name: string; arguments: string; }; }[];
   tool_runtime_events?: any[];
   ontology_runtime?: any;
+  task_runtime?: any;
+  task_evaluation?: any;
 }
 
 export interface Agent {
@@ -96,17 +99,25 @@ interface SessionRuntimeTrace {
     successful_tool_count: number;
     blocked_tool_count: number;
     failed_tool_count: number;
+    task_status?: string | null;
+    task_kind?: string | null;
+    plan_status?: string | null;
   };
   ontology_runtime?: any;
   tool_runtime_events: any[];
+  task_runtime?: any;
 }
 
 const buildLocalSessionRuntimeTraces = (messages: Message[]): SessionRuntimeTrace[] => {
   return messages
-    .filter((item) => item.role === 'assistant' && (item.ontology_runtime || (item.tool_runtime_events || []).length > 0))
+    .filter((item) => item.role === 'assistant' && (item.task_runtime || item.ontology_runtime || (item.tool_runtime_events || []).length > 0))
     .map((item) => {
       const ontology = item.ontology_runtime;
       const tools = item.tool_runtime_events || [];
+      const taskRuntime = item.task_runtime || {};
+      const taskFrame = taskRuntime.task_frame || {};
+      const taskPlan = taskRuntime.execution_plan || {};
+      const taskEvaluation = taskRuntime.task_evaluation || {};
       const finalTools = tools.filter((event) => event && (!event.phase || event.phase === 'end'));
       return {
         message_id: item.id,
@@ -123,9 +134,13 @@ const buildLocalSessionRuntimeTraces = (messages: Message[]): SessionRuntimeTrac
           successful_tool_count: finalTools.filter((event) => event.status === 'success').length,
           blocked_tool_count: finalTools.filter((event) => event.status === 'blocked').length,
           failed_tool_count: finalTools.filter((event) => event.status === 'error').length,
+          task_status: taskEvaluation.status,
+          task_kind: taskFrame.kind,
+          plan_status: taskPlan.status,
         },
         ontology_runtime: ontology,
         tool_runtime_events: tools,
+        task_runtime: taskRuntime,
       };
     });
 };
@@ -145,6 +160,9 @@ const buildSessionRuntimeReport = (traces: SessionRuntimeTrace[]): string => {
     if (trace.created_at) lines.push(`时间：${new Date(trace.created_at).toLocaleString()}`);
     lines.push(`本体空间：${spaceLabel}`);
     lines.push(`本体状态：${summary.ontology_status || (summary.has_ontology ? '已触发' : '未使用')}`);
+    if (summary.task_kind || summary.task_status) {
+      lines.push(`任务运行时：${summary.task_kind || '未知任务'} / ${summary.task_status || summary.plan_status || '未验收'}`);
+    }
     if (trace.ontology_runtime?.trigger_reason) {
       lines.push(`触发判断：${trace.ontology_runtime.trigger_reason}`);
     }
@@ -175,9 +193,99 @@ const toolStatusMeta: Record<string, { color: string; label: string }> = {
   blocked: { color: 'warning', label: '已拦截' },
 };
 
-const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[] }> = ({ ontology, tools }) => {
+const taskStatusMeta: Record<string, { color: string; label: string }> = {
+  passed: { color: 'success', label: '验收通过' },
+  warning: { color: 'warning', label: '有风险' },
+  failed: { color: 'error', label: '验收失败' },
+  completed: { color: 'success', label: '已完成' },
+  completed_with_warnings: { color: 'warning', label: '有警告' },
+  repairing: { color: 'processing', label: '修复中' },
+};
+
+const TaskRuntimePanel: React.FC<{ runtime?: any }> = ({ runtime }) => {
+  if (!runtime) return null;
+  const frame = runtime.task_frame || {};
+  const plan = runtime.execution_plan || {};
+  const evaluation = runtime.task_evaluation || {};
+  const artifacts = Array.isArray(runtime.execution_artifacts) ? runtime.execution_artifacts : [];
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const statusKey = evaluation.status || plan.evaluation_status || plan.status;
+  const meta = taskStatusMeta[statusKey] || { color: 'default', label: statusKey || '未验收' };
+  const failedChecks = (evaluation.checks || []).filter((check: any) => check.status === 'failed');
+  const warningChecks = (evaluation.checks || []).filter((check: any) => check.status === 'warning');
+
+  return (
+    <div style={{
+      border: '1px solid #d9e8ff',
+      background: '#f8fbff',
+      borderRadius: 12,
+      padding: '12px 14px',
+      marginBottom: 12,
+      color: '#111827'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Space size={8} wrap>
+          <ScheduleOutlined style={{ color: '#1677ff' }} />
+          <Text strong>Agent Runtime</Text>
+          {frame.kind && <Tag color="blue">{frame.kind}</Tag>}
+          <Tag color={meta.color}>{meta.label}</Tag>
+          {runtime.task_repair_count > 0 && <Tag color="purple">修复 {runtime.task_repair_count}</Tag>}
+        </Space>
+        {plan.current_step && <Text type="secondary" style={{ fontSize: 12 }}>当前步骤：{plan.current_step}</Text>}
+      </div>
+
+      {frame.user_goal && (
+        <div style={{ marginTop: 8, color: '#475569', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          目标：{frame.user_goal}
+        </div>
+      )}
+
+      {steps.length > 0 && (
+        <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+          {steps.map((step: any, index: number) => {
+            const stepMeta = taskStatusMeta[step.status] || {
+              color: step.status === 'in_progress' ? 'processing' : 'default',
+              label: step.status || 'pending'
+            };
+            return (
+              <div key={step.id || index} style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto',
+                gap: 8,
+                alignItems: 'center',
+                background: '#fff',
+                border: '1px solid #e5eefb',
+                borderRadius: 10,
+                padding: '7px 9px'
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <Text strong style={{ fontSize: 13 }}>{index + 1}. {step.id}</Text>
+                  <div style={{ color: '#64748b', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{step.title}</div>
+                </div>
+                <Space size={4}>
+                  <Tag>{step.owner}</Tag>
+                  <Tag color={stepMeta.color}>{stepMeta.label}</Tag>
+                </Space>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {(failedChecks.length > 0 || warningChecks.length > 0 || artifacts.length > 0) && (
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {failedChecks.length > 0 && <Tag color="error" icon={<WarningOutlined />}>失败检查 {failedChecks.length}</Tag>}
+          {warningChecks.length > 0 && <Tag color="warning">风险检查 {warningChecks.length}</Tag>}
+          {artifacts.length > 0 && <Tag color="cyan">产物 {artifacts.length}</Tag>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[]; taskRuntime?: any }> = ({ ontology, tools, taskRuntime }) => {
   const toolEvents = (tools || []).filter(Boolean);
-  if (!ontology && toolEvents.length === 0) return null;
+  if (!taskRuntime && !ontology && toolEvents.length === 0) return null;
 
   const mapping = ontology?.mapping || {};
   const decision = ontology?.decision || {};
@@ -201,6 +309,7 @@ const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[] }> = ({ onto
       marginBottom: 12,
       color: '#111827'
     }}>
+      <TaskRuntimePanel runtime={taskRuntime} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <Space size={8} wrap>
           <PartitionOutlined style={{ color: '#1677ff' }} />
@@ -458,8 +567,8 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                                           <div style={{ minWidth: '400px' }}><Input.TextArea autoSize={{ minRows: 2 }} value={editingText} onChange={e => setEditingText(e.target.value)} style={{ marginBottom: 12, borderRadius: 8 }} /><Space><Button size="small" type="primary" onClick={() => { onEditMessage?.(m.id, editingText); setEditingId(null); }}>保存</Button><Button size="small" onClick={() => setEditingId(null)}>取消</Button></Space></div>
                                         ) : (
                                           <>
-                                            {isAssistant && (m.ontology_runtime || (m.tool_runtime_events && m.tool_runtime_events.length > 0)) && (
-                                              <ExecutionTracePanel ontology={m.ontology_runtime} tools={m.tool_runtime_events} />
+                                            {isAssistant && (m.task_runtime || m.ontology_runtime || (m.tool_runtime_events && m.tool_runtime_events.length > 0)) && (
+                                              <ExecutionTracePanel ontology={m.ontology_runtime} tools={m.tool_runtime_events} taskRuntime={m.task_runtime} />
                                             )}
                                             <React.Suspense fallback={<div style={{ color: '#64748b', fontSize: 13 }}>正在加载消息渲染器...</div>}>
                                               <MessageContent
@@ -587,7 +696,7 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
         {runtimeTraceLoading ? (
           <div style={{ color: '#64748b' }}>正在读取会话轨迹...</div>
         ) : sessionRuntimeTraces.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前会话还没有本体或工具运行轨迹" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前会话还没有任务、本体或工具运行轨迹" />
         ) : (
           <div style={{ display: 'grid', gap: 12 }}>
             {sessionRuntimeTraces.map((trace, index) => {
@@ -606,11 +715,20 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                       ) : (
                         <Tag>未使用本体</Tag>
                       )}
+                      {(summary.task_kind || summary.task_status || summary.plan_status) && (
+                        <Tag color={summary.task_status === 'passed' ? 'green' : 'blue'}>
+                          任务 {summary.task_kind || 'general'} / {summary.task_status || summary.plan_status || 'planned'}
+                        </Tag>
+                      )}
                       {(summary.tool_count || 0) > 0 && <Tag>工具 {summary.tool_count}</Tag>}
                     </Space>
                     {trace.created_at && <Text type="secondary" style={{ fontSize: 12 }}>{new Date(trace.created_at).toLocaleString()}</Text>}
                   </div>
-                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+                    <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
+                      <div style={{ color: '#64748b', fontSize: 12 }}>任务类型</div>
+                      <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary.task_kind || '未记录'}</div>
+                    </div>
                     <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
                       <div style={{ color: '#64748b', fontSize: 12 }}>本体空间</div>
                       <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spaceLabel}</div>
