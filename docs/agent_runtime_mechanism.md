@@ -174,7 +174,27 @@ validate_tool_against_plan(tool_name, tool_metadata, task_frame, execution_plan)
 
 这些字段会进入 SSE、消息 `runtime_events.tool_runtime_events`、审计输入和 `execution_artifacts[].metadata`。
 
-### 3. 运行时能力接口
+### 3. 工具产物外置
+
+当前已新增 `tool_artifacts` 表，工具事件保留短摘要，完整结果落库：
+
+```text
+tool_runtime.result.preview          # 前端列表和消息回放使用
+tool_runtime.artifact_id             # 完整产物索引
+tool_artifacts.content               # 完整工具输出
+tool_artifacts.artifact_metadata     # 策略、步骤、耗时等运行信息
+```
+
+读取接口：
+
+```text
+GET /api/v1/messages/{message_id}/artifacts
+GET /api/v1/messages/artifacts/{artifact_id}
+```
+
+当前阶段仍保留 tool message 的 `str(res)`，避免影响模型拿工具结果继续生成。下一步要把 tool message 缩成 `preview + artifact_id`，并由 context builder 在需要时按 artifact id 取回。
+
+### 4. 运行时能力接口
 
 当前已提供接口：
 
@@ -191,24 +211,7 @@ GET /api/v1/graph/runtime/capabilities
 
 ## 后续要接的机制
 
-### 1. 工具结果外置
-
-当前 `tool_executor_node` 仍把 `str(res)` 放进 tool message。后续应新增 `tool_artifacts` 表：
-
-- `id`
-- `session_id`
-- `request_id`
-- `tool_call_id`
-- `tool_name`
-- `content_type`
-- `preview`
-- `content`
-- `metadata`
-- `created_at`
-
-工具消息里只回填 `preview`、`artifact_id` 和必要摘要。这样长搜索结果、大 JSON、代码片段不会撑爆上下文。
-
-### 2. Tool policy 表
+### 1. Tool policy 表
 
 建议新增 `tool_policy_rules`：
 
@@ -231,7 +234,7 @@ GET /api/v1/graph/runtime/capabilities
 3. 工具自己的 `validateInput`。
 4. 动态工具类型策略，例如 CLI allowlist、MCP server allowlist、HTTP host allowlist。
 
-### 3. Skill 层
+### 2. Skill 层
 
 动态工具解决“能执行什么”，Skill 解决“某类任务怎么做”。建议新增 `agent_skills`：
 

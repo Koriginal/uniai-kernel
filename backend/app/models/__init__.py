@@ -7,6 +7,7 @@ from app.models.agent import AgentProfile
 from app.models.audit import ActionLog
 from app.models.user import User, UserApiKey, Organization, UserOrganizationMembership
 from app.models.dynamic_tool import DynamicTool
+from app.models.tool_artifact import ToolArtifact
 from app.models.graph_execution import GraphExecution
 from app.models.agent_score import AgentScoreHistory
 from app.models.graph_template import GraphTemplateModel

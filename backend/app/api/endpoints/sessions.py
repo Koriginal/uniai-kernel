@@ -74,7 +74,7 @@ def _format_trace_time(value: Optional[datetime]) -> str:
 def _build_runtime_trace_item(session_id: str, message: ChatMessage) -> Optional[Dict[str, Any]]:
     runtime_events = message.runtime_events if isinstance(message.runtime_events, dict) else {}
     trace_summary = _runtime_trace_summary(runtime_events)
-    has_runtime = trace_summary["has_ontology"] or trace_summary["tool_count"] > 0
+    has_runtime = trace_summary["has_ontology"] or trace_summary["tool_count"] > 0 or trace_summary.get("has_task_runtime")
     if not has_runtime:
         return None
     return {
@@ -84,6 +84,7 @@ def _build_runtime_trace_item(session_id: str, message: ChatMessage) -> Optional
         "created_at": message.created_at,
         "content_preview": _content_preview(message.content),
         "summary": trace_summary,
+        "task_runtime": runtime_events.get("task_runtime"),
         "ontology_runtime": runtime_events.get("ontology_runtime"),
         "tool_runtime_events": runtime_events.get("tool_runtime_events") or [],
     }
@@ -98,13 +99,14 @@ def _build_runtime_report_markdown(session: ChatSession, items: List[Dict[str, A
         f"- 生成时间：{datetime.utcnow().isoformat()}Z",
         f"- 回答数：{summary.get('total', 0)}",
         f"- 使用本体：{summary.get('with_ontology', 0)}",
+        f"- 记录任务运行时：{summary.get('with_task_runtime', 0)}",
         f"- 使用工具：{summary.get('with_tools', 0)}",
         f"- 工具拦截：{summary.get('blocked_tools', 0)}",
         f"- 工具失败：{summary.get('failed_tools', 0)}",
         "",
     ]
     if not items:
-        lines.append("当前会话没有已落库的本体或工具运行轨迹。")
+        lines.append("当前会话没有已落库的任务、本体或工具运行轨迹。")
         return "\n".join(lines)
 
     for idx, item in enumerate(items, start=1):
@@ -122,6 +124,8 @@ def _build_runtime_report_markdown(session: ChatSession, items: List[Dict[str, A
             f"- 时间：{_format_trace_time(item.get('created_at'))}",
             f"- 消息 ID：{item.get('message_id')}",
             f"- 智能体 ID：{item.get('agent_id') or '-'}",
+            f"- 任务类型：{trace_summary.get('task_kind') or '-'}",
+            f"- 任务验收：{trace_summary.get('task_status') or trace_summary.get('plan_status') or '-'}",
             f"- 本体空间：{space_label}",
             f"- 本体状态：{trace_summary.get('ontology_status') or ('已触发' if trace_summary.get('has_ontology') else '未使用')}",
             f"- 触发判断：{ontology_runtime.get('trigger_reason') or '-'}",
@@ -144,17 +148,21 @@ def _summarize_runtime_trace_items(items: List[Dict[str, Any]]) -> Dict[str, int
     summary = {
         "total": 0,
         "with_ontology": 0,
+        "with_task_runtime": 0,
         "with_tools": 0,
         "blocked_tools": 0,
         "failed_tools": 0,
+        "artifacts": 0,
     }
     for item in items:
         trace_summary = item.get("summary") or {}
         summary["total"] += 1
         summary["with_ontology"] += 1 if trace_summary.get("has_ontology") else 0
+        summary["with_task_runtime"] += 1 if trace_summary.get("has_task_runtime") else 0
         summary["with_tools"] += 1 if trace_summary.get("tool_count", 0) > 0 else 0
         summary["blocked_tools"] += int(trace_summary.get("blocked_tool_count") or 0)
         summary["failed_tools"] += int(trace_summary.get("failed_tool_count") or 0)
+        summary["artifacts"] += int(trace_summary.get("artifact_count") or 0)
     return summary
 
 @router.post("/")

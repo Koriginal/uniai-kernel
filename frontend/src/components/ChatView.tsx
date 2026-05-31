@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, message, Tag, Drawer } from 'antd';
+import { Typography, Avatar, Input, Empty, Space, Divider, Button, Tooltip, message, Tag, Drawer, Modal } from 'antd';
 import { 
   AppstoreAddOutlined, CopyOutlined, SyncOutlined, PartitionOutlined, RobotOutlined, 
   UserOutlined, HistoryOutlined, PlusOutlined, EditOutlined, DeleteOutlined, LikeOutlined, 
@@ -287,6 +287,39 @@ const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[]; taskRuntime
   const toolEvents = (tools || []).filter(Boolean);
   if (!taskRuntime && !ontology && toolEvents.length === 0) return null;
 
+  const openToolArtifact = async (artifactId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.get(`/api/v1/messages/artifacts/${artifactId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const artifact = res.data || {};
+      Modal.info({
+        title: `${artifact.tool_name || '工具'} 产物`,
+        width: 760,
+        content: (
+          <pre style={{
+            margin: 0,
+            maxHeight: '60vh',
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            background: '#f8fafc',
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: 12,
+            fontSize: 12,
+          }}>
+            {typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content, null, 2)}
+          </pre>
+        ),
+      });
+    } catch (err) {
+      console.error('Failed to load tool artifact', err);
+      message.error('工具产物读取失败');
+    }
+  };
+
   const mapping = ontology?.mapping || {};
   const decision = ontology?.decision || {};
   const plan = ontology?.action_plan || {};
@@ -403,6 +436,11 @@ const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[]; taskRuntime
                     <div style={{ marginTop: 4, color: '#64748b', fontSize: 12 }}>
                       {event.policy_reason}
                     </div>
+                  )}
+                  {event.artifact_id && (
+                    <Button size="small" style={{ marginTop: 6 }} onClick={() => openToolArtifact(event.artifact_id)}>
+                      查看产物
+                    </Button>
                   )}
                 </div>
                 <div style={{ minWidth: 0 }}>

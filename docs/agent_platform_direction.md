@@ -130,29 +130,40 @@ class RuntimeCapabilityProvider(Protocol):
 
 ### 3. 工具结果外置
 
-现在工具结果会回填到消息和 runtime events。短结果够用，长搜索结果、大 JSON、文件片段会撑爆上下文。
+现在工具结果不再只回填到消息和 runtime events。短摘要仍留在 `tool_runtime_events`，完整结果写入 `tool_artifacts`，前端通过 `artifact_id` 按需展开。
 
-建议新增表 `tool_artifacts`：
+已新增表 `tool_artifacts`：
 
 ```text
 id
 session_id
-request_id
 message_id
+user_id
+agent_id
+request_id
 tool_call_id
 tool_name
 content_type
 preview
 content
-metadata
+artifact_metadata
+size_bytes
 created_at
 ```
 
-落地动作：
+已落地动作：
 
-- `tool_executor_node` 写入 artifact 表。
-- tool message 只带 `artifact_id`、`preview` 和必要摘要。
-- ChatView 通过 artifact id 展开详情，不直接把大结果塞进气泡。
+- `tool_executor_node` 在工具成功、拦截、异常时尝试写入产物。
+- `tool_runtime` 事件带 `artifact_id`。
+- `execution_artifacts[].metadata.artifact_id` 保留索引。
+- `GET /api/v1/messages/{message_id}/artifacts` 返回消息级产物列表。
+- `GET /api/v1/messages/artifacts/{artifact_id}` 返回完整产物。
+- ChatView 工具卡片出现“查看产物”按钮，按需加载完整内容。
+
+当前取舍：
+
+- 工具消息仍保留 `str(res)`，是为了不一次性改动模型续写链路。下一步再把 tool message 改成 `preview + artifact_id`。
+- artifact 写入失败不会中断对话，只会让本次工具事件没有 `artifact_id`。
 
 ### 4. Runtime Console
 

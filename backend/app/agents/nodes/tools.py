@@ -7,6 +7,7 @@
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any
 from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
@@ -19,6 +20,7 @@ from app.agents.task_runtime import (
     validate_tool_against_plan,
 )
 from app.models.message import ChatMessage
+from app.models.tool_artifact import ToolArtifact
 from app.ontology.runtime import ONTOLOGY_AGENT_TOOL_NAMES, ontology_runtime
 from app.services.audit_service import audit_service
 
@@ -69,6 +71,21 @@ def _summarize_tool_result(result: Any, max_chars: int = 700) -> dict:
         "preview": preview,
         "truncated": truncated,
     }
+
+
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-column-safe value without losing the useful shape."""
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+    except Exception:
+        return str(value)
+
+
+def _estimate_json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception:
+        return len(str(value).encode("utf-8"))
 
 
 def _get_tool_metadata(func_name: str) -> dict:
@@ -128,6 +145,7 @@ async def _audit_tool_runtime(config_data: dict, *, status: str, payload: dict) 
                 "plan_step_id": payload.get("plan_step_id"),
                 "policy_decision": payload.get("policy_decision"),
                 "policy_reason": payload.get("policy_reason"),
+                "artifact_id": payload.get("artifact_id"),
             },
             output_result=result.get("preview") or payload.get("error"),
             duration_ms=float(payload.get("duration_ms") or 0),
@@ -178,6 +196,7 @@ async def _persist_tool_runtime_event(config_data: dict, state: AgentGraphState,
                 "plan_step_id",
                 "policy_decision",
                 "policy_reason",
+                "artifact_id",
             )
             if key in payload
         }
@@ -195,6 +214,59 @@ async def _persist_tool_runtime_event(config_data: dict, state: AgentGraphState,
             await db.rollback()
         except Exception:
             logger.debug("[ToolExecutor] Failed to rollback runtime event persist error", exc_info=True)
+
+
+async def _persist_tool_artifact(
+    config_data: dict,
+    state: AgentGraphState,
+    payload: dict,
+    *,
+    content: Any,
+    content_type: str = "application/json",
+) -> str | None:
+    """Persist full tool output and return artifact id.
+
+    This must stay best-effort. Tool execution already completed at this point;
+    failing to store a large artifact should not fail the conversation.
+    """
+    db = config_data.get("db")
+    session_id = config_data.get("session_id")
+    if not db or not session_id:
+        return None
+    safe_content = _json_safe(content)
+    try:
+        artifact = ToolArtifact(
+            session_id=session_id,
+            message_id=state.get("current_msg_id"),
+            user_id=config_data.get("user_id"),
+            agent_id=state.get("current_agent_id"),
+            request_id=config_data.get("request_id"),
+            tool_call_id=payload.get("tool_call_id"),
+            tool_name=payload.get("tool_name") or "unknown",
+            content_type=content_type,
+            preview=(payload.get("result") or {}).get("preview") or payload.get("error"),
+            content=safe_content,
+            artifact_metadata={
+                "status": payload.get("status"),
+                "category": payload.get("category"),
+                "duration_ms": payload.get("duration_ms"),
+                "plan_step_id": payload.get("plan_step_id"),
+                "policy_decision": payload.get("policy_decision"),
+                "policy_reason": payload.get("policy_reason"),
+                "created_by": "tool_executor",
+            },
+            size_bytes=_estimate_json_size(safe_content),
+        )
+        db.add(artifact)
+        await db.commit()
+        return artifact.id
+    except Exception:
+        logger.debug("[ToolExecutor] Tool artifact persist failed", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.debug("[ToolExecutor] Failed to rollback artifact persist error", exc_info=True)
+        return None
 
 
 def inject_runtime_tool_args(func_name: str, args: dict, config_data: dict, agent_profile: dict | None) -> dict:
@@ -307,6 +379,14 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "policy_decision": plan_policy.get("decision"),
                     "policy_reason": plan_policy.get("reason"),
                 }
+                artifact_id = await _persist_tool_artifact(
+                    c,
+                    state,
+                    runtime_payload,
+                    content={"error": blocked_reason, "arguments": _redact_tool_args(parsed_args)},
+                )
+                if artifact_id:
+                    runtime_payload["artifact_id"] = artifact_id
                 await _emit_tool_runtime(callback, runtime_payload)
                 execution_plan = advance_execution_plan(
                     execution_plan,
@@ -344,6 +424,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 "policy_decision": plan_policy.get("decision"),
                 "policy_reason": plan_policy.get("reason"),
             }
+            artifact_id = await _persist_tool_artifact(c, state, runtime_payload, content=res)
+            if artifact_id:
+                runtime_payload["artifact_id"] = artifact_id
             await _emit_tool_runtime(callback, runtime_payload)
             execution_plan = advance_execution_plan(
                 execution_plan,
@@ -381,6 +464,18 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "policy_decision": plan_policy.get("decision"),
                     "policy_reason": plan_policy.get("reason"),
                 }
+                artifact_id = await _persist_tool_artifact(
+                    c,
+                    state,
+                    runtime_payload,
+                    content={
+                        "error": str(te),
+                        "arguments": _redact_tool_args(parsed_args),
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+                if artifact_id:
+                    runtime_payload["artifact_id"] = artifact_id
                 await _emit_tool_runtime(callback, runtime_payload)
                 execution_plan = advance_execution_plan(
                     execution_plan,

@@ -28,8 +28,12 @@ def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
 def _runtime_trace_summary(runtime_events: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     events = runtime_events if isinstance(runtime_events, dict) else {}
     ontology = events.get("ontology_runtime") if isinstance(events.get("ontology_runtime"), dict) else None
+    task_runtime = events.get("task_runtime") if isinstance(events.get("task_runtime"), dict) else None
     tools = events.get("tool_runtime_events") if isinstance(events.get("tool_runtime_events"), list) else []
     final_tool_events = [item for item in tools if isinstance(item, dict) and item.get("phase") in (None, "end")]
+    task_frame = (task_runtime or {}).get("task_frame") if task_runtime else {}
+    execution_plan = (task_runtime or {}).get("execution_plan") if task_runtime else {}
+    task_evaluation = (task_runtime or {}).get("task_evaluation") if task_runtime else {}
 
     blocked_count = sum(1 for item in final_tool_events if item.get("status") == "blocked")
     failed_count = sum(1 for item in final_tool_events if item.get("status") == "error")
@@ -47,6 +51,11 @@ def _runtime_trace_summary(runtime_events: Optional[Dict[str, Any]]) -> Dict[str
         "successful_tool_count": success_count,
         "blocked_tool_count": blocked_count,
         "failed_tool_count": failed_count,
+        "has_task_runtime": task_runtime is not None,
+        "task_kind": (task_frame or {}).get("kind"),
+        "task_status": (task_evaluation or {}).get("status"),
+        "plan_status": (execution_plan or {}).get("status"),
+        "artifact_count": sum(1 for item in final_tool_events if item.get("artifact_id")),
     }
 
 
@@ -112,7 +121,7 @@ async def list_runtime_traces(
         scoped_session_ids = [session_id]
 
     if not scoped_session_ids:
-        return {"items": [], "summary": {"total": 0, "with_ontology": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0}}
+        return {"items": [], "summary": {"total": 0, "with_ontology": 0, "with_task_runtime": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0, "artifacts": 0}}
 
     message_query = (
         select(ChatMessage)
@@ -136,7 +145,7 @@ async def list_runtime_traces(
         agent_name_map = {row.id: row.name for row in agent_rows}
 
     items = []
-    totals = {"total": 0, "with_ontology": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0}
+    totals = {"total": 0, "with_ontology": 0, "with_task_runtime": 0, "with_tools": 0, "blocked_tools": 0, "failed_tools": 0, "artifacts": 0}
     for message in messages:
         runtime_events = message.runtime_events if isinstance(message.runtime_events, dict) else {}
         summary = _runtime_trace_summary(runtime_events)
@@ -149,9 +158,11 @@ async def list_runtime_traces(
         metadata = session.extra_metadata if session and isinstance(session.extra_metadata, dict) else {}
         totals["total"] += 1
         totals["with_ontology"] += 1 if summary["has_ontology"] else 0
+        totals["with_task_runtime"] += 1 if summary.get("has_task_runtime") else 0
         totals["with_tools"] += 1 if summary["tool_count"] > 0 else 0
         totals["blocked_tools"] += int(summary["blocked_tool_count"] or 0)
         totals["failed_tools"] += int(summary["failed_tool_count"] or 0)
+        totals["artifacts"] += int(summary.get("artifact_count") or 0)
 
         items.append({
             "message_id": message.id,
@@ -163,6 +174,7 @@ async def list_runtime_traces(
             "created_at": message.created_at,
             "content_preview": _content_preview(message.content),
             "summary": summary,
+            "task_runtime": runtime_events.get("task_runtime"),
             "ontology_runtime": runtime_events.get("ontology_runtime"),
             "tool_runtime_events": runtime_events.get("tool_runtime_events") or [],
             "auth_source": metadata.get("auth_source", "unknown"),

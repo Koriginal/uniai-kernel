@@ -4,6 +4,7 @@ from sqlalchemy import select, delete, and_
 from app.core.db import get_db
 from app.models.message import ChatMessage
 from app.models.session import ChatSession
+from app.models.tool_artifact import ToolArtifact
 from app.models.user import User
 from app.api import deps
 from pydantic import BaseModel
@@ -21,6 +22,7 @@ def _message_runtime_payload(message: ChatMessage) -> Dict[str, Any]:
         "session_id": message.session_id,
         "agent_id": message.agent_id,
         "runtime_events": runtime_events,
+        "task_runtime": runtime_events.get("task_runtime"),
         "ontology_runtime": runtime_events.get("ontology_runtime"),
         "tool_runtime_events": runtime_events.get("tool_runtime_events") or [],
     }
@@ -29,6 +31,84 @@ def _message_runtime_payload(message: ChatMessage) -> Dict[str, Any]:
 class MessageUpdate(BaseModel):
     content: Optional[str] = None
     feedback: Optional[str] = None
+
+
+def _can_read_message_resource(message: ChatMessage, current_user: User) -> bool:
+    return bool(current_user.is_admin or not message.user_id or message.user_id == current_user.id)
+
+
+@router.get("/{message_id}/artifacts")
+async def list_message_artifacts(
+    message_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """列出单条消息关联的工具产物，只返回摘要，不返回完整 content。"""
+    message = await db.get(ChatMessage, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if not _can_read_message_resource(message, current_user):
+        raise HTTPException(status_code=403, detail="Not allowed to read this message")
+
+    result = await db.execute(
+        select(ToolArtifact)
+        .where(ToolArtifact.message_id == message_id)
+        .order_by(ToolArtifact.created_at.asc())
+    )
+    artifacts = result.scalars().all()
+    return {
+        "message_id": message_id,
+        "items": [
+            {
+                "id": item.id,
+                "session_id": item.session_id,
+                "message_id": item.message_id,
+                "tool_call_id": item.tool_call_id,
+                "tool_name": item.tool_name,
+                "content_type": item.content_type,
+                "preview": item.preview,
+                "metadata": item.artifact_metadata or {},
+                "size_bytes": item.size_bytes,
+                "created_at": item.created_at,
+            }
+            for item in artifacts
+        ],
+    }
+
+
+@router.get("/artifacts/{artifact_id}")
+async def get_tool_artifact(
+    artifact_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+):
+    """读取工具产物完整内容。"""
+    artifact = await db.get(ToolArtifact, artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    message = await db.get(ChatMessage, artifact.message_id) if artifact.message_id else None
+    if message and not _can_read_message_resource(message, current_user):
+        raise HTTPException(status_code=403, detail="Not allowed to read this artifact")
+    if not message and not current_user.is_admin and artifact.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to read this artifact")
+
+    return {
+        "id": artifact.id,
+        "session_id": artifact.session_id,
+        "message_id": artifact.message_id,
+        "user_id": artifact.user_id,
+        "agent_id": artifact.agent_id,
+        "request_id": artifact.request_id,
+        "tool_call_id": artifact.tool_call_id,
+        "tool_name": artifact.tool_name,
+        "content_type": artifact.content_type,
+        "preview": artifact.preview,
+        "content": artifact.content,
+        "metadata": artifact.artifact_metadata or {},
+        "size_bytes": artifact.size_bytes,
+        "created_at": artifact.created_at,
+    }
 
 
 @router.get("/{message_id}/runtime-events")

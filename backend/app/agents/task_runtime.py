@@ -316,7 +316,7 @@ def record_execution_artifact(
             "preview": (payload.get("result") or {}).get("preview") or payload.get("error"),
             "metadata": {
                 key: payload.get(key)
-                for key in ("category", "duration_ms", "phase", "plan_step_id", "policy_decision", "policy_reason")
+                for key in ("category", "duration_ms", "phase", "plan_step_id", "policy_decision", "policy_reason", "artifact_id")
                 if key in payload
             },
         }
@@ -703,7 +703,7 @@ def _next_open_step(steps: list[dict[str, Any]], *, start_index: int) -> dict[st
 
 
 def _event_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    keys = ("tool_name", "agent_id", "status", "error", "tool_call_id", "plan_step_id", "policy_decision", "policy_reason")
+    keys = ("tool_name", "agent_id", "status", "error", "tool_call_id", "plan_step_id", "policy_decision", "policy_reason", "artifact_id")
     return {key: payload.get(key) for key in keys if payload.get(key) is not None}
 
 
