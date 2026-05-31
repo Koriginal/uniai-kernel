@@ -103,6 +103,7 @@ def _build_runtime_report_markdown(session: ChatSession, items: List[Dict[str, A
         f"- 使用工具：{summary.get('with_tools', 0)}",
         f"- 工具拦截：{summary.get('blocked_tools', 0)}",
         f"- 工具失败：{summary.get('failed_tools', 0)}",
+        f"- 工具产物：{summary.get('artifacts', 0)}",
         "",
     ]
     if not items:
@@ -126,6 +127,8 @@ def _build_runtime_report_markdown(session: ChatSession, items: List[Dict[str, A
             f"- 智能体 ID：{item.get('agent_id') or '-'}",
             f"- 任务类型：{trace_summary.get('task_kind') or '-'}",
             f"- 任务验收：{trace_summary.get('task_status') or trace_summary.get('plan_status') or '-'}",
+            f"- 验收检查：{trace_summary.get('evaluation_check_count', 0)} 项，失败 {trace_summary.get('failed_check_count', 0)}，风险 {trace_summary.get('warning_check_count', 0)}",
+            f"- 修复次数：{trace_summary.get('repair_count', 0)}",
             f"- 本体空间：{space_label}",
             f"- 本体状态：{trace_summary.get('ontology_status') or ('已触发' if trace_summary.get('has_ontology') else '未使用')}",
             f"- 触发判断：{ontology_runtime.get('trigger_reason') or '-'}",
@@ -136,7 +139,8 @@ def _build_runtime_report_markdown(session: ChatSession, items: List[Dict[str, A
                 f"{trace_summary.get('tool_count', 0)} 次，"
                 f"成功 {trace_summary.get('successful_tool_count', 0)}，"
                 f"拦截 {trace_summary.get('blocked_tool_count', 0)}，"
-                f"失败 {trace_summary.get('failed_tool_count', 0)}"
+                f"失败 {trace_summary.get('failed_tool_count', 0)}，"
+                f"产物 {trace_summary.get('artifact_count', 0)}"
             ),
             f"- 回答摘要：{item.get('content_preview') or '无'}",
             "",

@@ -102,6 +102,13 @@ interface SessionRuntimeTrace {
     task_status?: string | null;
     task_kind?: string | null;
     plan_status?: string | null;
+    artifact_count?: number;
+    repair_count?: number;
+    pending_repair?: boolean;
+    evaluation_check_count?: number;
+    failed_check_count?: number;
+    warning_check_count?: number;
+    missing_requirement_count?: number;
   };
   ontology_runtime?: any;
   tool_runtime_events: any[];
@@ -118,6 +125,8 @@ const buildLocalSessionRuntimeTraces = (messages: Message[]): SessionRuntimeTrac
       const taskFrame = taskRuntime.task_frame || {};
       const taskPlan = taskRuntime.execution_plan || {};
       const taskEvaluation = taskRuntime.task_evaluation || {};
+      const evaluationChecks = Array.isArray(taskEvaluation.checks) ? taskEvaluation.checks : [];
+      const missingRequirements = Array.isArray(taskEvaluation.missing_requirements) ? taskEvaluation.missing_requirements : [];
       const finalTools = tools.filter((event) => event && (!event.phase || event.phase === 'end'));
       return {
         message_id: item.id,
@@ -137,6 +146,13 @@ const buildLocalSessionRuntimeTraces = (messages: Message[]): SessionRuntimeTrac
           task_status: taskEvaluation.status,
           task_kind: taskFrame.kind,
           plan_status: taskPlan.status,
+          artifact_count: finalTools.filter((event) => event.artifact_id).length,
+          repair_count: taskRuntime.task_repair_count || 0,
+          pending_repair: !!taskRuntime.pending_repair,
+          evaluation_check_count: evaluationChecks.length,
+          failed_check_count: evaluationChecks.filter((check: any) => check.status === 'failed').length,
+          warning_check_count: evaluationChecks.filter((check: any) => check.status === 'warning').length,
+          missing_requirement_count: missingRequirements.length,
         },
         ontology_runtime: ontology,
         tool_runtime_events: tools,
@@ -163,6 +179,9 @@ const buildSessionRuntimeReport = (traces: SessionRuntimeTrace[]): string => {
     if (summary.task_kind || summary.task_status) {
       lines.push(`任务运行时：${summary.task_kind || '未知任务'} / ${summary.task_status || summary.plan_status || '未验收'}`);
     }
+    if (summary.evaluation_check_count !== undefined) {
+      lines.push(`验收检查：${summary.evaluation_check_count || 0} 项，失败 ${summary.failed_check_count || 0}，风险 ${summary.warning_check_count || 0}，缺口 ${summary.missing_requirement_count || 0}`);
+    }
     if (trace.ontology_runtime?.trigger_reason) {
       lines.push(`触发判断：${trace.ontology_runtime.trigger_reason}`);
     }
@@ -170,7 +189,7 @@ const buildSessionRuntimeReport = (traces: SessionRuntimeTrace[]): string => {
       lines.push(`触发信号：${trace.ontology_runtime.trigger_signals.join('，')}`);
     }
     lines.push(`风险等级：${summary.risk_level || '未执行'}`);
-    lines.push(`工具：${summary.tool_count || 0} 次，成功 ${summary.successful_tool_count || 0}，拦截 ${summary.blocked_tool_count || 0}，失败 ${summary.failed_tool_count || 0}`);
+    lines.push(`工具：${summary.tool_count || 0} 次，成功 ${summary.successful_tool_count || 0}，拦截 ${summary.blocked_tool_count || 0}，失败 ${summary.failed_tool_count || 0}，产物 ${summary.artifact_count || 0}`);
     lines.push(`回答摘要：${trace.content_preview || '无'}`);
     lines.push('');
   });
@@ -277,6 +296,65 @@ const TaskRuntimePanel: React.FC<{ runtime?: any }> = ({ runtime }) => {
           {failedChecks.length > 0 && <Tag color="error" icon={<WarningOutlined />}>失败检查 {failedChecks.length}</Tag>}
           {warningChecks.length > 0 && <Tag color="warning">风险检查 {warningChecks.length}</Tag>}
           {artifacts.length > 0 && <Tag color="cyan">产物 {artifacts.length}</Tag>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const RuntimeChecksPanel: React.FC<{ runtime?: any; tools?: any[] }> = ({ runtime, tools }) => {
+  const plan = runtime?.execution_plan || {};
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const evaluation = runtime?.task_evaluation || {};
+  const checks = Array.isArray(evaluation.checks) ? evaluation.checks : [];
+  const missing = Array.isArray(evaluation.missing_requirements) ? evaluation.missing_requirements : [];
+  const finalTools = (tools || []).filter((event) => event && (!event.phase || event.phase === 'end'));
+  if (steps.length === 0 && checks.length === 0 && finalTools.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+      {checks.length > 0 && (
+        <div style={{ border: '1px solid #eef2f7', borderRadius: 10, padding: '8px 10px', background: '#fbfdff' }}>
+          <Space size={6} wrap>
+            <Text strong style={{ fontSize: 12 }}>验收检查</Text>
+            <Tag color={taskStatusMeta[evaluation.status]?.color || 'default'}>{evaluation.status || 'unknown'}</Tag>
+            {runtime?.task_repair_count > 0 && <Tag color="purple">修复 {runtime.task_repair_count}</Tag>}
+            {missing.length > 0 && <Tag color="error">缺口 {missing.length}</Tag>}
+          </Space>
+          <div style={{ display: 'grid', gap: 5, marginTop: 7 }}>
+            {checks.slice(0, 5).map((check: any, idx: number) => (
+              <div key={check.id || idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                <Text style={{ fontSize: 12 }}>{check.id || `check_${idx + 1}`}</Text>
+                <Tag color={taskStatusMeta[check.status]?.color || (check.status === 'warning' ? 'warning' : 'default')} style={{ marginInlineEnd: 0 }}>
+                  {check.status || 'unknown'}
+                </Tag>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {steps.length > 0 && (
+        <div style={{ border: '1px solid #eef2f7', borderRadius: 10, padding: '8px 10px', background: '#fff' }}>
+          <Text strong style={{ fontSize: 12 }}>计划步骤</Text>
+          <div style={{ display: 'grid', gap: 6, marginTop: 7 }}>
+            {steps.slice(0, 4).map((step: any, idx: number) => {
+              const stepTools = finalTools.filter((event) => event.plan_step_id === step.id);
+              const artifacts = stepTools.filter((event) => event.artifact_id);
+              return (
+                <div key={step.id || idx} style={{ border: '1px solid #f1f5f9', borderRadius: 8, padding: '6px 7px', background: '#f8fafc' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <Text style={{ fontSize: 12 }}>{idx + 1}. {step.id || 'step'}</Text>
+                    <Tag color={taskStatusMeta[step.status]?.color || 'default'} style={{ marginInlineEnd: 0 }}>{step.status || 'pending'}</Tag>
+                  </div>
+                  <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+                    {step.owner && <Tag>{step.owner}</Tag>}
+                    {stepTools.length > 0 && <Tag color="purple">工具 {stepTools.length}</Tag>}
+                    {artifacts.length > 0 && <Tag color="cyan">产物 {artifacts.length}</Tag>}
+                  </Space>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -792,7 +870,14 @@ const ChatView: React.FC<ChatViewProps> = (props) => {
                         {summary.successful_tool_count || 0} 成功 / {summary.blocked_tool_count || 0} 拦截 / {summary.failed_tool_count || 0} 失败
                       </div>
                     </div>
+                    <div style={{ background: '#f8fafc', border: '1px solid #edf2f7', borderRadius: 10, padding: '8px 10px' }}>
+                      <div style={{ color: '#64748b', fontSize: 12 }}>验收与产物</div>
+                      <div style={{ fontWeight: 700 }}>
+                        {summary.evaluation_check_count || 0} 检查 / {summary.missing_requirement_count || 0} 缺口 / {summary.artifact_count || 0} 产物
+                      </div>
+                    </div>
                   </div>
+                  <RuntimeChecksPanel runtime={trace.task_runtime} tools={trace.tool_runtime_events} />
                   <div style={{ marginTop: 10, color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {trace.ontology_runtime?.trigger_reason && (
                       <div style={{ marginBottom: 8, color: '#475569' }}>

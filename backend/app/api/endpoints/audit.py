@@ -34,10 +34,14 @@ def _runtime_trace_summary(runtime_events: Optional[Dict[str, Any]]) -> Dict[str
     task_frame = (task_runtime or {}).get("task_frame") if task_runtime else {}
     execution_plan = (task_runtime or {}).get("execution_plan") if task_runtime else {}
     task_evaluation = (task_runtime or {}).get("task_evaluation") if task_runtime else {}
+    evaluation_checks = task_evaluation.get("checks") if isinstance(task_evaluation, dict) and isinstance(task_evaluation.get("checks"), list) else []
+    missing_requirements = task_evaluation.get("missing_requirements") if isinstance(task_evaluation, dict) and isinstance(task_evaluation.get("missing_requirements"), list) else []
 
     blocked_count = sum(1 for item in final_tool_events if item.get("status") == "blocked")
     failed_count = sum(1 for item in final_tool_events if item.get("status") == "error")
     success_count = sum(1 for item in final_tool_events if item.get("status") == "success")
+    failed_check_count = sum(1 for item in evaluation_checks if isinstance(item, dict) and item.get("status") == "failed")
+    warning_check_count = sum(1 for item in evaluation_checks if isinstance(item, dict) and item.get("status") == "warning")
 
     return {
         "has_ontology": ontology is not None,
@@ -56,6 +60,12 @@ def _runtime_trace_summary(runtime_events: Optional[Dict[str, Any]]) -> Dict[str
         "task_status": (task_evaluation or {}).get("status"),
         "plan_status": (execution_plan or {}).get("status"),
         "artifact_count": sum(1 for item in final_tool_events if item.get("artifact_id")),
+        "repair_count": (task_runtime or {}).get("task_repair_count") or 0,
+        "pending_repair": bool((task_runtime or {}).get("pending_repair")),
+        "evaluation_check_count": len(evaluation_checks),
+        "failed_check_count": failed_check_count,
+        "warning_check_count": warning_check_count,
+        "missing_requirement_count": len(missing_requirements),
     }
 
 

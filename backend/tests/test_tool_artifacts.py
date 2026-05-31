@@ -28,7 +28,15 @@ def test_runtime_trace_summary_counts_task_runtime_and_artifacts():
             "task_runtime": {
                 "task_frame": {"kind": "realtime_research"},
                 "execution_plan": {"status": "completed"},
-                "task_evaluation": {"status": "passed"},
+                "task_repair_count": 1,
+                "task_evaluation": {
+                    "status": "passed",
+                    "checks": [
+                        {"id": "response_present", "status": "passed"},
+                        {"id": "external_facts", "status": "warning"},
+                    ],
+                    "missing_requirements": ["source_timestamp"],
+                },
             },
             "tool_runtime_events": [
                 {
@@ -45,3 +53,7 @@ def test_runtime_trace_summary_counts_task_runtime_and_artifacts():
     assert summary["task_kind"] == "realtime_research"
     assert summary["task_status"] == "passed"
     assert summary["artifact_count"] == 1
+    assert summary["repair_count"] == 1
+    assert summary["evaluation_check_count"] == 2
+    assert summary["warning_check_count"] == 1
+    assert summary["missing_requirement_count"] == 1

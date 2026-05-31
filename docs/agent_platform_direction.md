@@ -177,10 +177,11 @@ created_at
 - GraphTracePanel 顶部展示本轮任务类型、计划状态、验收状态、工具数、拦截数和产物数。
 - `node_event` 已带 `input_summary`、`output_summary`、`duration_ms`，用于定位节点进入时状态、退出时改动和耗时。
 - GraphTracePanel 已按 `execution_plan.steps[]` 聚合工具调用、策略结果、产物数量和验收检查缺口。
+- 会话运行轨迹 drawer 已展示任务验收检查、计划步骤、修复次数、缺口和工具产物统计。
 
 下一步：
 
-- 会话运行轨迹 drawer 中补 `task_evaluation.checks` 和 repair 记录。
+- 会话运行轨迹 drawer 后续可补 artifact 详情按需展开，复用 `GET /api/v1/messages/artifacts/{artifact_id}`。
 
 ### 5. E2E 验证
 
