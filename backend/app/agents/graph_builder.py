@@ -13,6 +13,7 @@ UniAI Kernel — LangGraph 对话图编译器
                                 └──[无 tool_calls，是主控]     → task_evaluator_node → END
 """
 import logging
+import time
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import RunnableConfig
@@ -34,6 +35,54 @@ from app.agents.auto_heal import auto_heal
 from app.agents.adaptive_router import router
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_summary(plan: dict | None) -> dict:
+    if not isinstance(plan, dict):
+        return {}
+    steps = plan.get("steps") if isinstance(plan.get("steps"), list) else []
+    return {
+        "status": plan.get("status"),
+        "current_step": plan.get("current_step"),
+        "step_count": len(steps),
+        "completed_steps": len([step for step in steps if isinstance(step, dict) and step.get("status") == "completed"]),
+        "blocked_steps": len([step for step in steps if isinstance(step, dict) and step.get("status") == "blocked"]),
+        "failed_steps": len([step for step in steps if isinstance(step, dict) and step.get("status") == "failed"]),
+    }
+
+
+def _node_input_summary(state: dict) -> dict:
+    task_frame = state.get("task_frame") if isinstance(state.get("task_frame"), dict) else {}
+    return {
+        "message_count": len(state.get("messages") or []),
+        "pending_tool_calls": len(state.get("pending_tool_calls") or []),
+        "current_agent_id": state.get("current_agent_id"),
+        "iteration_count": state.get("iteration_count"),
+        "task_kind": task_frame.get("kind"),
+        "plan": _plan_summary(state.get("execution_plan")),
+        "artifact_count": len(state.get("execution_artifacts") or []),
+        "repair_count": state.get("task_repair_count") or 0,
+        "pending_repair": bool(state.get("pending_repair")),
+    }
+
+
+def _node_output_summary(before: dict, result: dict | None) -> dict:
+    result = result if isinstance(result, dict) else {}
+    after = {**before, **result}
+    updated_keys = sorted([key for key in result.keys() if not key.startswith("_")])
+    text = result.get("iter_text")
+    evaluation = after.get("task_evaluation") if isinstance(after.get("task_evaluation"), dict) else {}
+    return {
+        "updated_keys": updated_keys[:16],
+        "message_count": len(after.get("messages") or []),
+        "message_delta": len(after.get("messages") or []) - len(before.get("messages") or []),
+        "pending_tool_calls": len(after.get("pending_tool_calls") or []),
+        "iter_text_chars": len(text or "") if isinstance(text, str) else None,
+        "plan": _plan_summary(after.get("execution_plan")),
+        "artifact_count": len(after.get("execution_artifacts") or []),
+        "task_evaluation_status": evaluation.get("status"),
+        "pending_repair": bool(after.get("pending_repair")),
+    }
 
 
 # ─────────────────────────────────────────────
@@ -84,24 +133,40 @@ _compiled_graph = None  # 模块级单例，避免重复编译
 def wrap_telemetry(node_func, name):
     """辅助函数：为节点包裹遥测记录与自愈逻辑"""
     async def wrapped(state, config):
+        started_at = time.perf_counter()
+        input_summary = _node_input_summary(state)
         # 1. 执行前自检与追踪
         heal_state = await auto_heal.pre_node_check(state, name)
         state.update(heal_state)
+        input_summary = _node_input_summary(state)
         
         # ── 获取流式回调 (推送实时轨迹给前端) ──
         callback = config.get("configurable", {}).get("stream_callback")
         if callback:
-            await callback.emit_node_event("start", name)
+            await callback.emit_node_event("start", name, {
+                "status": "running",
+                "input_summary": input_summary,
+            })
         
         async with telemetry.trace_node(name, state, config):
             try:
                 result = await node_func(state, config)
                 # 2. 执行成功后登记
                 success_state = await auto_heal.post_node_success(state, name)
+                output_summary = _node_output_summary(
+                    state,
+                    {**(result or {}), **(success_state or {})} if isinstance(result, dict) else success_state,
+                )
+                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                 
                 # 推送结束事件
                 if callback:
-                    await callback.emit_node_event("end", name, {"status": "success"})
+                    await callback.emit_node_event("end", name, {
+                        "status": "success",
+                        "duration_ms": duration_ms,
+                        "input_summary": input_summary,
+                        "output_summary": output_summary,
+                    })
                 
                 if result and isinstance(result, dict):
                     result.update(success_state)
@@ -113,9 +178,13 @@ def wrap_telemetry(node_func, name):
                 
                 # 推送错误事件
                 if callback:
+                    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
                     await callback.emit_node_event("end", name, {
                         "status": "error", 
-                        "message": str(e)
+                        "message": str(e),
+                        "duration_ms": duration_ms,
+                        "input_summary": input_summary,
+                        "output_summary": _node_output_summary(state, error_state),
                     })
                 raise e
     return wrapped

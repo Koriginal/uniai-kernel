@@ -91,6 +91,32 @@ const summarizeRuntimeEvent = (event: any) => {
   };
 };
 
+const renderNodeSummary = (summary?: any) => {
+  if (!summary || typeof summary !== 'object') return null;
+  const plan = summary.plan || {};
+  const updatedKeys = Array.isArray(summary.updated_keys) ? summary.updated_keys : [];
+  return (
+    <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+      <Space size={[4, 4]} wrap>
+        {typeof summary.message_count === 'number' && <Tag>消息 {summary.message_count}</Tag>}
+        {typeof summary.message_delta === 'number' && summary.message_delta !== 0 && <Tag color="blue">消息变化 {summary.message_delta > 0 ? '+' : ''}{summary.message_delta}</Tag>}
+        {typeof summary.pending_tool_calls === 'number' && summary.pending_tool_calls > 0 && <Tag color="purple">工具待执行 {summary.pending_tool_calls}</Tag>}
+        {summary.task_kind && <Tag color="blue">{summary.task_kind}</Tag>}
+        {plan.current_step && <Tag>步骤 {plan.current_step}</Tag>}
+        {plan.status && <Tag color={statusColor(plan.status)}>计划 {plan.status}</Tag>}
+        {typeof summary.artifact_count === 'number' && summary.artifact_count > 0 && <Tag color="cyan">产物 {summary.artifact_count}</Tag>}
+        {summary.task_evaluation_status && <Tag color={statusColor(summary.task_evaluation_status)}>验收 {summary.task_evaluation_status}</Tag>}
+        {summary.pending_repair && <Tag color="warning">待修复</Tag>}
+      </Space>
+      {updatedKeys.length > 0 && (
+        <div style={{ color: '#64748b', fontSize: 11, lineHeight: 1.5 }}>
+          更新：{updatedKeys.join(', ')}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents, runtimeEvents = [] }) => {
   const [nodes, setNodes] = useState<any[]>([]);
   const [capabilities, setCapabilities] = useState<any>(null);
@@ -280,8 +306,11 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
                 const isActive = index === activeStep && isStreaming;
                 
                 // 获取具体的错误信息
+                const startEvent = [...nodeEvents].reverse().find(e => e.node === nodeName && e.event === 'start');
                 const errorEvent = nodeEvents.find(e => e.node === nodeName && e.event === 'end' && e.payload?.status === 'error');
+                const endEvent = [...nodeEvents].reverse().find(e => e.node === nodeName && e.event === 'end');
                 const errorMessage = errorEvent?.payload?.message;
+                const duration = endEvent?.payload?.duration_ms;
                 
                 return {
                   title: (
@@ -295,6 +324,13 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
                   description: (
                       <div style={{ fontSize: 12, marginTop: 4, opacity: (isActive || isCompleted || isError) ? 1 : 0.5 }}>
                           {node.description}
+                          {duration !== undefined && (
+                            <div style={{ marginTop: 4 }}>
+                              <Tag bordered={false} style={{ fontSize: 10 }}>{duration} ms</Tag>
+                            </div>
+                          )}
+                          {isActive && renderNodeSummary(startEvent?.payload?.input_summary)}
+                          {!isActive && endEvent?.payload?.output_summary && renderNodeSummary(endEvent.payload.output_summary)}
                           {isActive && (
                               <div style={{ marginTop: 8, color: '#1890ff', display: 'flex', alignItems: 'center', gap: 6 }}>
                                   <SyncOutlined spin /> <Text style={{ fontSize: 11, color: '#1890ff' }}>Executing Node...</Text>
@@ -343,6 +379,10 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
               const nodeTitle = isNode ? `${nodePayload.node || 'node'} ${nodePayload.event || ''}` : summary.title;
               const nodeStatus = isNode ? nodePayload.payload?.status || nodePayload.event : summary.status;
               const nodeDetail = isNode ? nodePayload.payload?.message || '' : summary.detail;
+              const nodeDuration = isNode ? nodePayload.payload?.duration_ms : undefined;
+              const nodeSummary = isNode
+                ? (nodePayload.event === 'start' ? nodePayload.payload?.input_summary : nodePayload.payload?.output_summary)
+                : null;
               return (
                 <div key={`${event.type}-${event.timestamp}-${index}`} style={{
                   border: '1px solid #eef2f7',
@@ -357,12 +397,14 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
                   <Space size={[4, 4]} wrap style={{ marginTop: 5 }}>
                     <Tag color={isNode ? 'geekblue' : 'blue'}>{eventLabelMap[event.type] || event.type}</Tag>
                     {nodeStatus && <Tag color={statusColor(nodeStatus)}>{nodeStatus}</Tag>}
+                    {nodeDuration !== undefined && <Tag>{nodeDuration} ms</Tag>}
                   </Space>
                   {nodeDetail && (
                     <div style={{ marginTop: 5, color: '#64748b', fontSize: 12, lineHeight: 1.5, wordBreak: 'break-word' }}>
                       {nodeDetail}
                     </div>
                   )}
+                  {renderNodeSummary(nodeSummary)}
                 </div>
               );
             })}

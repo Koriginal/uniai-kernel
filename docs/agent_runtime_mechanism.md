@@ -209,6 +209,51 @@ GET /api/v1/graph/runtime/capabilities
 - `events`：前端和 SDK 需要监听的事件类型。
 - `request_config`：调用方可传的运行时参数。
 
+### 5. 节点遥测摘要
+
+`wrap_telemetry()` 现在会在 `node_event` 中输出轻量摘要：
+
+```json
+{
+  "type": "node_event",
+  "event": "end",
+  "node": "tool_executor",
+  "payload": {
+    "status": "success",
+    "duration_ms": 42.3,
+    "input_summary": {},
+    "output_summary": {}
+  }
+}
+```
+
+`input_summary` 只包含计数和状态字段：
+
+- `message_count`
+- `pending_tool_calls`
+- `current_agent_id`
+- `iteration_count`
+- `task_kind`
+- `plan.status`
+- `plan.current_step`
+- `artifact_count`
+- `repair_count`
+- `pending_repair`
+
+`output_summary` 记录本节点改变了哪些运行状态：
+
+- `updated_keys`
+- `message_delta`
+- `pending_tool_calls`
+- `iter_text_chars`
+- `plan.status`
+- `plan.current_step`
+- `artifact_count`
+- `task_evaluation_status`
+- `pending_repair`
+
+这里不输出消息正文、工具参数正文或工具完整结果。完整工具结果走 `tool_artifacts`，消息正文仍由 ChatMessage 保存。
+
 ## 后续要接的机制
 
 ### 1. Tool policy 表
