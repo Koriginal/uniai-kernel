@@ -103,20 +103,30 @@ class RuntimeCapabilityProvider(Protocol):
 
 ### 2. Plan-aware Tool Policy
 
-工具执行器现在主要看 `pending_tool_calls` 和 Agent runtime policy。下一步要把 `execution_plan.current_step` 纳入工具准入。
+工具执行器不能只看 `pending_tool_calls` 和 Agent runtime policy。现在已经新增 `validate_tool_against_plan()`，工具执行前会读取 `execution_plan.current_step`、步骤候选工具和任务约束，给出准入决策。
 
-规则建议：
+当前规则：
 
-- 当前 step 没有工具候选时，高风险工具默认拒绝或要求确认。
-- 当前 step 有 `tool_candidates` 时，工具名、类别或能力标签必须命中一个。
-- `requires_external_facts=true` 时，如果没有 retrieve 产物，最终回答只能给出缺口，不能伪装成已验证事实。
-- `requires_governance=true` 时，必须先读取 ontology runtime 的判定。
+- 当前 step 有 `tool_candidates` 时，工具名、类别或通配候选必须命中。
+- 工具命中后续未完成步骤时允许执行，并把 `plan_step_id` 写回事件。
+- 任务要求外部事实时，`web_search` 可以作为检索证据工具放行。
+- 已存在明确候选工具但本次工具完全不匹配时，直接拦截。
+- 没有任何步骤声明候选工具时，先放行并标记 `policy_decision=warn`，避免早期阶段误伤正常工具。
 
-落地动作：
+已落地字段：
 
-- 在 `tool_executor_node` 调用工具前读取 `execution_plan.current_step`。
-- 新增 `validate_tool_against_plan(tool_call, state)`。
-- 工具 runtime event 增加 `plan_step_id`、`policy_decision`、`policy_reason`。
+- `tool_runtime.plan_step_id`
+- `tool_runtime.policy_decision`: `allow | warn | deny`
+- `tool_runtime.policy_reason`
+- `execution_artifacts[].metadata.plan_step_id`
+- `execution_artifacts[].metadata.policy_decision`
+- `execution_artifacts[].metadata.policy_reason`
+
+下一步动作：
+
+- 把工具注册表的 `metadata.category` 和能力标签规范化。
+- 给文件、终端、HTTP、数据库类工具增加更细的 effect 分类。
+- 高风险工具在 `policy_decision=warn` 时改为要求确认，而不是直接执行。
 
 ### 3. 工具结果外置
 
@@ -187,4 +197,3 @@ created_at
 短期不建议先做复杂多智能体市场、角色模板市场或大而全工作流编辑器。现在真正影响框架成型的是运行时状态和执行约束。
 
 短期也不建议把所有判断都交给模型。分类、计划、验收可以逐步引入模型，但输出字段要固定，调用点要可测试。否则系统会回到“几段提示词解释一切”的状态。
-

@@ -78,6 +78,14 @@ def get_runtime_capability_catalog() -> list[dict[str, Any]]:
             "config": ["max_task_repairs"],
             "description": "验收失败且仍有额度时，重开缺口步骤并回到 agent 补执行。",
         },
+        {
+            "id": "plan_aware_tool_policy",
+            "label": "计划约束工具",
+            "node": "tool_executor",
+            "state_fields": ["task_frame", "execution_plan"],
+            "events": ["tool_runtime", "task_runtime_update"],
+            "description": "工具执行前读取当前计划步骤，记录准入决策，拦截明显偏离计划的工具调用。",
+        },
     ]
 
 
@@ -308,12 +316,92 @@ def record_execution_artifact(
             "preview": (payload.get("result") or {}).get("preview") or payload.get("error"),
             "metadata": {
                 key: payload.get(key)
-                for key in ("category", "duration_ms", "phase")
+                for key in ("category", "duration_ms", "phase", "plan_step_id", "policy_decision", "policy_reason")
                 if key in payload
             },
         }
     )
     return items[-30:]
+
+
+def validate_tool_against_plan(
+    *,
+    tool_name: str,
+    tool_metadata: dict[str, Any] | None,
+    task_frame: dict[str, Any] | None,
+    execution_plan: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return a deterministic tool policy decision from the current plan state.
+
+    This is intentionally conservative, not a full permission system. Agent
+    runtime policy still decides whether tools are globally enabled. This check
+    answers a narrower question: does the requested tool fit the current
+    task plan well enough to run now?
+    """
+    plan = execution_plan or {}
+    steps = [dict(step) for step in plan.get("steps") or []]
+    current_step_id = plan.get("current_step")
+    if not steps:
+        return _tool_policy_decision(
+            allowed=True,
+            decision="allow",
+            reason="no execution_plan available",
+            plan_step_id=None,
+        )
+
+    current_step = _find_step(steps, current_step_id) or _first_open_step(steps) or steps[0]
+    current_candidates = current_step.get("tool_candidates") or []
+    tool_category = (tool_metadata or {}).get("category")
+    matched_step = _match_tool_step(steps, tool_name=tool_name, tool_category=tool_category)
+    constraints = (task_frame or {}).get("constraints") or {}
+
+    if _tool_matches_candidates(tool_name, tool_category, current_candidates):
+        return _tool_policy_decision(
+            allowed=True,
+            decision="allow",
+            reason="tool matches current plan step candidates",
+            plan_step_id=current_step.get("id"),
+        )
+
+    if current_step.get("owner") == "tool" and not current_candidates:
+        return _tool_policy_decision(
+            allowed=True,
+            decision="allow",
+            reason="current tool step does not restrict tool candidates",
+            plan_step_id=current_step.get("id"),
+        )
+
+    if matched_step:
+        return _tool_policy_decision(
+            allowed=True,
+            decision="allow",
+            reason="tool matches an open plan step",
+            plan_step_id=matched_step.get("id"),
+        )
+
+    if tool_name == "web_search" and constraints.get("requires_external_facts"):
+        return _tool_policy_decision(
+            allowed=True,
+            decision="allow",
+            reason="task requires external facts and web_search provides retrieval evidence",
+            plan_step_id=(current_step.get("id") if current_step.get("owner") == "tool" else None),
+        )
+
+    has_explicit_tool_candidates = any(step.get("tool_candidates") for step in steps if step.get("status") != "completed")
+    if has_explicit_tool_candidates:
+        return _tool_policy_decision(
+            allowed=False,
+            decision="deny",
+            reason="tool does not match any open plan step candidate",
+            plan_step_id=current_step.get("id"),
+        )
+
+    return _tool_policy_decision(
+        allowed=True,
+        decision="warn",
+        reason="tool is allowed but no plan step explicitly requested it",
+        plan_step_id=current_step.get("id"),
+    )
 
 
 async def persist_task_runtime_state(
@@ -571,6 +659,8 @@ def _resolve_step_id(
     payload: dict[str, Any],
     current_step_id: str | None,
 ) -> str | None:
+    if payload.get("plan_step_id"):
+        return payload.get("plan_step_id")
     if event_type.startswith("tool_"):
         tool_name = payload.get("tool_name")
         for step in steps:
@@ -613,8 +703,69 @@ def _next_open_step(steps: list[dict[str, Any]], *, start_index: int) -> dict[st
 
 
 def _event_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    keys = ("tool_name", "agent_id", "status", "error", "tool_call_id")
+    keys = ("tool_name", "agent_id", "status", "error", "tool_call_id", "plan_step_id", "policy_decision", "policy_reason")
     return {key: payload.get(key) for key in keys if payload.get(key) is not None}
+
+
+def _find_step(steps: list[dict[str, Any]], step_id: str | None) -> dict[str, Any] | None:
+    if not step_id:
+        return None
+    return next((step for step in steps if step.get("id") == step_id), None)
+
+
+def _first_open_step(steps: list[dict[str, Any]]) -> dict[str, Any] | None:
+    terminal = {"completed", "failed", "blocked"}
+    return next((step for step in steps if step.get("status") not in terminal), None)
+
+
+def _match_tool_step(
+    steps: list[dict[str, Any]],
+    *,
+    tool_name: str,
+    tool_category: str | None,
+) -> dict[str, Any] | None:
+    terminal = {"completed", "failed", "blocked"}
+    for step in steps:
+        if step.get("status") in terminal:
+            continue
+        if _tool_matches_candidates(tool_name, tool_category, step.get("tool_candidates") or []):
+            return step
+    return None
+
+
+def _tool_matches_candidates(
+    tool_name: str,
+    tool_category: str | None,
+    candidates: list[str],
+) -> bool:
+    normalized = {str(item).strip() for item in candidates or [] if str(item).strip()}
+    if not normalized:
+        return False
+    if "*" in normalized or "any" in normalized:
+        return True
+    if tool_name in normalized:
+        return True
+    if tool_category and tool_category in normalized:
+        return True
+    for candidate in normalized:
+        if candidate.endswith("*") and tool_name.startswith(candidate[:-1]):
+            return True
+    return False
+
+
+def _tool_policy_decision(
+    *,
+    allowed: bool,
+    decision: str,
+    reason: str,
+    plan_step_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "allowed": allowed,
+        "decision": decision,
+        "reason": reason,
+        "plan_step_id": plan_step_id,
+    }
 
 
 def _has_artifact(

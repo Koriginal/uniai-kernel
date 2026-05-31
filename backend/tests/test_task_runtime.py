@@ -10,6 +10,7 @@ from app.agents.task_runtime import (
     reopen_plan_for_repair,
     record_execution_artifact,
     should_repair_task,
+    validate_tool_against_plan,
 )
 
 
@@ -107,6 +108,82 @@ def test_record_execution_artifact_keeps_tool_preview():
     assert artifacts[0]["tool_name"] == "web_search"
     assert artifacts[0]["preview"] == "source summary"
     assert artifacts[0]["metadata"]["duration_ms"] == 12.5
+
+
+def test_validate_tool_against_plan_allows_current_candidate():
+    frame = build_task_frame(
+        query="今天金价有什么变化？",
+        semantic_frame={},
+        semantic_slots={},
+        agent_profile={},
+    )
+    plan = build_execution_plan(
+        task_frame=frame,
+        available_tools=["web_search"],
+        enable_swarm=False,
+    )
+    plan = advance_execution_plan(plan, event_type="agent_complete", payload={"agent_id": "root"})
+
+    decision = validate_tool_against_plan(
+        tool_name="web_search",
+        tool_metadata={"category": "search"},
+        task_frame=frame,
+        execution_plan=plan,
+    )
+
+    assert decision["allowed"]
+    assert decision["decision"] == "allow"
+    assert decision["plan_step_id"] == "retrieve"
+
+
+def test_validate_tool_against_plan_blocks_off_plan_tool_when_candidates_exist():
+    frame = build_task_frame(
+        query="今天金价有什么变化？",
+        semantic_frame={},
+        semantic_slots={},
+        agent_profile={},
+    )
+    plan = build_execution_plan(
+        task_frame=frame,
+        available_tools=["web_search"],
+        enable_swarm=False,
+    )
+    plan = advance_execution_plan(plan, event_type="agent_complete", payload={"agent_id": "root"})
+
+    decision = validate_tool_against_plan(
+        tool_name="upsert_canvas",
+        tool_metadata={"category": "canvas"},
+        task_frame=frame,
+        execution_plan=plan,
+    )
+
+    assert not decision["allowed"]
+    assert decision["decision"] == "deny"
+    assert "candidate" in decision["reason"]
+
+
+def test_validate_tool_against_plan_warns_when_no_step_requests_tool():
+    frame = build_task_frame(
+        query="帮我写一段说明",
+        semantic_frame={},
+        semantic_slots={},
+        agent_profile={},
+    )
+    plan = build_execution_plan(
+        task_frame=frame,
+        available_tools=[],
+        enable_swarm=False,
+    )
+
+    decision = validate_tool_against_plan(
+        tool_name="upsert_canvas",
+        tool_metadata={"category": "canvas"},
+        task_frame=frame,
+        execution_plan=plan,
+    )
+
+    assert decision["allowed"]
+    assert decision["decision"] == "warn"
 
 
 def test_evaluate_realtime_task_requires_retrieval():
@@ -234,3 +311,4 @@ def test_runtime_capability_catalog_exposes_framework_nodes():
     assert "execution_ledger" in ids
     assert "task_evaluation" in ids
     assert "runtime_repair" in ids
+    assert "plan_aware_tool_policy" in ids

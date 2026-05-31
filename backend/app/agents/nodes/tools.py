@@ -16,6 +16,7 @@ from app.agents.task_runtime import (
     build_task_runtime_update_event,
     persist_task_runtime_state,
     record_execution_artifact,
+    validate_tool_against_plan,
 )
 from app.models.message import ChatMessage
 from app.ontology.runtime import ONTOLOGY_AGENT_TOOL_NAMES, ontology_runtime
@@ -124,6 +125,9 @@ async def _audit_tool_runtime(config_data: dict, *, status: str, payload: dict) 
                 "category": payload.get("category"),
                 "arguments": payload.get("arguments"),
                 "error": payload.get("error"),
+                "plan_step_id": payload.get("plan_step_id"),
+                "policy_decision": payload.get("policy_decision"),
+                "policy_reason": payload.get("policy_reason"),
             },
             output_result=result.get("preview") or payload.get("error"),
             duration_ms=float(payload.get("duration_ms") or 0),
@@ -171,6 +175,9 @@ async def _persist_tool_runtime_event(config_data: dict, state: AgentGraphState,
                 "result",
                 "error",
                 "agent_id",
+                "plan_step_id",
+                "policy_decision",
+                "policy_reason",
             )
             if key in payload
         }
@@ -243,6 +250,7 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
         tool_meta = _get_tool_metadata(func_name)
         started_at = time.perf_counter()
         parsed_args: dict = {}
+        plan_policy: dict = {}
         try:
             agent_name = agent_profile.get("name", "Assistant") if agent_profile else "Assistant"
             await callback.emit(
@@ -254,10 +262,25 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 raise ValueError("Tool arguments must be a JSON object")
             parsed_args = inject_runtime_tool_args(func_name, args, c, agent_profile)
             is_allowed, blocked_reason = _is_tool_allowed_by_policy(func_name, runtime_policy)
+            plan_policy = validate_tool_against_plan(
+                tool_name=func_name,
+                tool_metadata=tool_meta,
+                task_frame=task_frame,
+                execution_plan=execution_plan,
+            )
+            if is_allowed and not plan_policy.get("allowed", True):
+                is_allowed = False
+                blocked_reason = plan_policy.get("reason") or "工具调用不符合当前执行计划"
             execution_plan = advance_execution_plan(
                 execution_plan,
                 event_type="tool_start",
-                payload={"tool_name": func_name, "tool_call_id": tool_call_id},
+                payload={
+                    "tool_name": func_name,
+                    "tool_call_id": tool_call_id,
+                    "plan_step_id": plan_policy.get("plan_step_id"),
+                    "policy_decision": plan_policy.get("decision"),
+                    "policy_reason": plan_policy.get("reason"),
+                },
             )
             await _emit_tool_runtime(callback, {
                 **tool_meta,
@@ -265,6 +288,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 "phase": "start",
                 "status": "running",
                 "arguments": _redact_tool_args(parsed_args),
+                "plan_step_id": plan_policy.get("plan_step_id"),
+                "policy_decision": plan_policy.get("decision"),
+                "policy_reason": plan_policy.get("reason"),
             })
             if not is_allowed:
                 duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
@@ -277,6 +303,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "arguments": _redact_tool_args(parsed_args),
                     "error": blocked_reason,
                     "agent_id": state.get("current_agent_id"),
+                    "plan_step_id": plan_policy.get("plan_step_id"),
+                    "policy_decision": plan_policy.get("decision"),
+                    "policy_reason": plan_policy.get("reason"),
                 }
                 await _emit_tool_runtime(callback, runtime_payload)
                 execution_plan = advance_execution_plan(
@@ -311,6 +340,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 "arguments": _redact_tool_args(parsed_args),
                 "result": _summarize_tool_result(res),
                 "agent_id": state.get("current_agent_id"),
+                "plan_step_id": plan_policy.get("plan_step_id"),
+                "policy_decision": plan_policy.get("decision"),
+                "policy_reason": plan_policy.get("reason"),
             }
             await _emit_tool_runtime(callback, runtime_payload)
             execution_plan = advance_execution_plan(
@@ -345,6 +377,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "arguments": _redact_tool_args(parsed_args),
                     "error": str(te),
                     "agent_id": state.get("current_agent_id"),
+                    "plan_step_id": plan_policy.get("plan_step_id"),
+                    "policy_decision": plan_policy.get("decision"),
+                    "policy_reason": plan_policy.get("reason"),
                 }
                 await _emit_tool_runtime(callback, runtime_payload)
                 execution_plan = advance_execution_plan(

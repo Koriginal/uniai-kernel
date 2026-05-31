@@ -146,7 +146,35 @@ advance_execution_plan(state, event_type, payload) -> dict
 - `synthesize`：记录汇总归还。
 - `task_evaluator`：记录验收结果，并决定是否进入修复。
 
-### 2. 运行时能力接口
+### 2. 计划约束工具执行
+
+当前已提供统一函数：
+
+```python
+validate_tool_against_plan(tool_name, tool_metadata, task_frame, execution_plan) -> dict
+```
+
+工具执行器在真正调用工具前执行这层检查。它不会替代 Agent runtime policy，而是补一个计划约束：
+
+- 当前步骤有 `tool_candidates` 时，工具名、类别或通配候选必须命中。
+- 工具命中后续未完成步骤时，允许执行，并把命中的 `plan_step_id` 写入事件。
+- `requires_external_facts=true` 时，`web_search` 作为证据检索工具放行。
+- 已存在明确候选工具但本次工具完全不匹配时，工具事件标记 `blocked`。
+- 没有步骤声明候选工具时，先放行并标记 `policy_decision=warn`。
+
+工具运行事件新增字段：
+
+```json
+{
+  "plan_step_id": "retrieve",
+  "policy_decision": "allow | warn | deny",
+  "policy_reason": "tool matches current plan step candidates"
+}
+```
+
+这些字段会进入 SSE、消息 `runtime_events.tool_runtime_events`、审计输入和 `execution_artifacts[].metadata`。
+
+### 3. 运行时能力接口
 
 当前已提供接口：
 
@@ -163,16 +191,7 @@ GET /api/v1/graph/runtime/capabilities
 
 ## 后续要接的机制
 
-### 1. 工具执行按计划约束
-
-工具执行器目前只看 `pending_tool_calls` 和 Agent runtime policy。下一步要增加 plan policy：
-
-- 如果当前 step 没有工具需求，默认拒绝高风险工具。
-- 如果 step 的 `tool_candidates` 不为空，优先允许候选工具。
-- 对 `requires_external_facts=true` 且 `web_search` 可用的任务，必须先有 retrieve 结果再回答。
-- 对 `requires_governance=true` 的任务，优先读本体运行时结果，不让模型绕过规则直接给结论。
-
-### 2. 工具结果外置
+### 1. 工具结果外置
 
 当前 `tool_executor_node` 仍把 `str(res)` 放进 tool message。后续应新增 `tool_artifacts` 表：
 
@@ -189,7 +208,7 @@ GET /api/v1/graph/runtime/capabilities
 
 工具消息里只回填 `preview`、`artifact_id` 和必要摘要。这样长搜索结果、大 JSON、代码片段不会撑爆上下文。
 
-### 3. Tool policy 表
+### 2. Tool policy 表
 
 建议新增 `tool_policy_rules`：
 
@@ -212,7 +231,7 @@ GET /api/v1/graph/runtime/capabilities
 3. 工具自己的 `validateInput`。
 4. 动态工具类型策略，例如 CLI allowlist、MCP server allowlist、HTTP host allowlist。
 
-### 4. Skill 层
+### 3. Skill 层
 
 动态工具解决“能执行什么”，Skill 解决“某类任务怎么做”。建议新增 `agent_skills`：
 

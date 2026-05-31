@@ -391,8 +391,19 @@ const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[]; taskRuntime
                   </Space>
                   <div style={{ marginTop: 4 }}>
                     {event.category && <Tag>{event.category}</Tag>}
+                    {event.plan_step_id && <Tag color="blue">步骤 {event.plan_step_id}</Tag>}
+                    {event.policy_decision && (
+                      <Tag color={event.policy_decision === 'deny' ? 'error' : event.policy_decision === 'warn' ? 'warning' : 'green'}>
+                        策略 {event.policy_decision}
+                      </Tag>
+                    )}
                     {event.duration_ms !== undefined && <Text type="secondary" style={{ fontSize: 12 }}>{event.duration_ms} ms</Text>}
                   </div>
+                  {event.policy_reason && (
+                    <div style={{ marginTop: 4, color: '#64748b', fontSize: 12 }}>
+                      {event.policy_reason}
+                    </div>
+                  )}
                 </div>
                 <div style={{ minWidth: 0 }}>
                   {event.error ? (
