@@ -236,6 +236,7 @@ const App: React.FC = () => {
   // --- Graph Trace State ---
   const [graphTraceVisible, setGraphTraceVisible] = useState(false);
   const [nodeEvents, setNodeEvents] = useState<any[]>([]); // 实时节点事件流
+  const [runtimeEvents, setRuntimeEvents] = useState<any[]>([]); // 任务/工具/验收事件流
 
   useEffect(() => {
     localStorage.setItem('enableAutoCanvas', String(enableAutoCanvas));
@@ -586,6 +587,7 @@ const App: React.FC = () => {
 
     setLoading(true);
     setNodeEvents([]); // 发起新请求前重置事件流
+    setRuntimeEvents([]);
 
     // 若无会话，自动创建 (Lazy Creation)
     let sessionId = currentSessionId;
@@ -721,6 +723,7 @@ const App: React.FC = () => {
               }
 
               if (data.type === 'ontology_runtime') {
+                setRuntimeEvents(prev => [...prev, { type: data.type, timestamp: Date.now(), payload: data }]);
                 const plan = data.action_plan || {};
                 const decision = data.decision || {};
                 const execution = data.action_execution || {};
@@ -751,6 +754,7 @@ const App: React.FC = () => {
               }
 
               if (data.type === 'task_runtime' || data.type === 'task_runtime_update') {
+                setRuntimeEvents(prev => [...prev, { type: data.type, timestamp: Date.now(), payload: data }]);
                 const runtimePayload = data.task_runtime || data.runtime || data;
                 const frame = runtimePayload.task_frame || {};
                 const plan = runtimePayload.execution_plan || {};
@@ -786,6 +790,7 @@ const App: React.FC = () => {
               }
 
               if (data.type === 'task_evaluation') {
+                setRuntimeEvents(prev => [...prev, { type: data.type, timestamp: Date.now(), payload: data }]);
                 const evaluation = data.task_evaluation || data.evaluation || data;
                 setMessages(prev => {
                   const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
@@ -814,6 +819,7 @@ const App: React.FC = () => {
               }
 
               if (data.type === 'tool_runtime') {
+                setRuntimeEvents(prev => [...prev, { type: data.type, timestamp: Date.now(), payload: data }]);
                 setMessages(prev => {
                   const targetIndex = prev.findLastIndex(m => m.id === assistantMsgId || m.id === initialTempId);
                   if (targetIndex === -1) return prev;
@@ -1311,6 +1317,7 @@ const App: React.FC = () => {
                     currentAgentName={currentAgent?.name}
                     isStreaming={loading}
                     nodeEvents={nodeEvents}
+                    runtimeEvents={runtimeEvents}
                   />
                 </Suspense>
               )}

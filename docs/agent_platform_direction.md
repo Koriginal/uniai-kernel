@@ -173,10 +173,11 @@ created_at
 
 - ChatView 消息内展示 `task_runtime`、本体运行态、工具运行态。
 - GraphTracePanel 展示运行图节点，并读取 `/graph/runtime/capabilities`。
+- GraphTracePanel 已接入本轮 `runtimeEvents`，按时间线混排 `node_event`、`task_runtime`、`tool_runtime`、`ontology_runtime`、`task_evaluation`。
+- GraphTracePanel 顶部展示本轮任务类型、计划状态、验收状态、工具数、拦截数和产物数。
 
 下一步：
 
-- GraphTracePanel 增加 runtime event 时间线。
 - 每个节点展示输入摘要、输出摘要、耗时和错误。
 - 任务计划步骤支持点击查看关联工具调用和产物。
 - 会话运行轨迹 drawer 中补 `task_evaluation.checks` 和 repair 记录。

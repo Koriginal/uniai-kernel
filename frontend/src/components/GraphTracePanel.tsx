@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Typography, Steps, Tag, Space, Spin, Tooltip } from 'antd';
+import { Card, Typography, Steps, Tag, Space, Spin, Tooltip, Divider, Button } from 'antd';
 import { 
   ThunderboltOutlined, CheckCircleOutlined, SyncOutlined, 
-  LeftCircleOutlined, NodeIndexOutlined
+  LeftCircleOutlined, NodeIndexOutlined, ClockCircleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -14,9 +14,84 @@ interface GraphTracePanelProps {
   currentAgentName?: string;
   isStreaming: boolean;
   nodeEvents: any[];
+  runtimeEvents?: any[];
 }
 
-const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents }) => {
+const eventLabelMap: Record<string, string> = {
+  task_runtime: '任务规划',
+  task_runtime_update: '任务更新',
+  task_evaluation: '任务验收',
+  tool_runtime: '工具执行',
+  ontology_runtime: '本体运行',
+  node_event: '节点事件',
+};
+
+const statusColor = (status?: string) => {
+  if (!status) return 'default';
+  if (['success', 'passed', 'completed'].includes(status)) return 'green';
+  if (['running', 'repairing', 'in_progress'].includes(status)) return 'processing';
+  if (['blocked', 'warning', 'warn'].includes(status)) return 'warning';
+  if (['error', 'failed', 'deny'].includes(status)) return 'error';
+  return 'default';
+};
+
+const compactTime = (value?: number) => {
+  if (!value) return '';
+  return new Date(value).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+const summarizeRuntimeEvent = (event: any) => {
+  const payload = event?.payload || {};
+  if (event.type === 'tool_runtime') {
+    return {
+      title: payload.tool_label || payload.tool_name || '工具',
+      status: payload.status,
+      detail: [
+        payload.plan_step_id ? `步骤 ${payload.plan_step_id}` : '',
+        payload.policy_decision ? `策略 ${payload.policy_decision}` : '',
+        payload.artifact_id ? `产物 ${payload.artifact_id}` : '',
+      ].filter(Boolean).join(' · ') || payload.policy_reason || '',
+    };
+  }
+  if (event.type === 'task_evaluation') {
+    const evaluation = payload.task_evaluation || payload.evaluation || payload;
+    return {
+      title: '任务验收',
+      status: evaluation.status,
+      detail: Array.isArray(evaluation.missing_requirements) && evaluation.missing_requirements.length > 0
+        ? `缺口 ${evaluation.missing_requirements.join(', ')}`
+        : `检查 ${Array.isArray(evaluation.checks) ? evaluation.checks.length : 0} 项`,
+    };
+  }
+  if (event.type === 'task_runtime' || event.type === 'task_runtime_update') {
+    const runtime = payload.task_runtime || payload.runtime || payload;
+    const frame = runtime.task_frame || {};
+    const plan = runtime.execution_plan || {};
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    return {
+      title: frame.kind || '任务运行时',
+      status: plan.status,
+      detail: [
+        steps.length ? `${steps.length} 步` : '',
+        plan.current_step ? `当前 ${plan.current_step}` : '',
+      ].filter(Boolean).join(' · '),
+    };
+  }
+  if (event.type === 'ontology_runtime') {
+    return {
+      title: payload.space_name || payload.space_code || '本体运行',
+      status: payload.status,
+      detail: payload.trigger_reason || '',
+    };
+  }
+  return {
+    title: event.type || '事件',
+    status: payload.status,
+    detail: payload.message || '',
+  };
+};
+
+const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents, runtimeEvents = [] }) => {
   const [nodes, setNodes] = useState<any[]>([]);
   const [capabilities, setCapabilities] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -80,6 +155,22 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
     || capabilities?.runtime_capabilities?.task_kinds
     || (Array.isArray(capabilities?.capabilities) ? capabilities.capabilities.map((item: any) => item.name).filter(Boolean) : []);
   const eventTypes: string[] = capabilities?.events || capabilities?.runtime_events || [];
+  const latestTaskRuntimeEvent = [...runtimeEvents].reverse().find((event) => event.type === 'task_runtime' || event.type === 'task_runtime_update');
+  const latestTaskRuntime = latestTaskRuntimeEvent?.payload?.task_runtime || latestTaskRuntimeEvent?.payload?.runtime || latestTaskRuntimeEvent?.payload || {};
+  const latestTaskFrame = latestTaskRuntime.task_frame || {};
+  const latestPlan = latestTaskRuntime.execution_plan || {};
+  const latestEvaluationEvent = [...runtimeEvents].reverse().find((event) => event.type === 'task_evaluation');
+  const latestEvaluation = latestEvaluationEvent?.payload?.task_evaluation || latestEvaluationEvent?.payload?.evaluation || latestEvaluationEvent?.payload || {};
+  const finalToolEvents = runtimeEvents
+    .filter((event) => event.type === 'tool_runtime')
+    .map((event) => event.payload || {})
+    .filter((payload) => !payload.phase || payload.phase === 'end');
+  const artifactCount = finalToolEvents.filter((event) => event.artifact_id).length;
+  const blockedToolCount = finalToolEvents.filter((event) => event.status === 'blocked').length;
+  const timelineEvents = [
+    ...nodeEvents.map((event) => ({ type: 'node_event', timestamp: event.timestamp, payload: event })),
+    ...runtimeEvents,
+  ].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
   if (!visible) return null;
 
@@ -122,6 +213,32 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
         <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
            <Text type="secondary">当前编排器</Text>
            <Tag color="cyan">{currentAgentName || 'Orchestrator'}</Tag>
+        </div>
+
+        <div style={{
+          marginBottom: 18,
+          border: '1px solid #e5e7eb',
+          background: '#fff',
+          borderRadius: 8,
+          padding: '10px 12px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <Text strong style={{ fontSize: 13 }}>本轮运行</Text>
+            {isStreaming ? <Tag color="processing">执行中</Tag> : <Tag color="green">已停止</Tag>}
+          </div>
+          <Space size={[4, 6]} wrap>
+            {latestTaskFrame.kind && <Tag color="blue">{latestTaskFrame.kind}</Tag>}
+            {latestPlan.status && <Tag color={statusColor(latestPlan.status)}>计划 {latestPlan.status}</Tag>}
+            {latestEvaluation.status && <Tag color={statusColor(latestEvaluation.status)}>验收 {latestEvaluation.status}</Tag>}
+            {finalToolEvents.length > 0 && <Tag>工具 {finalToolEvents.length}</Tag>}
+            {blockedToolCount > 0 && <Tag color="warning">拦截 {blockedToolCount}</Tag>}
+            {artifactCount > 0 && <Tag color="cyan">产物 {artifactCount}</Tag>}
+          </Space>
+          {latestPlan.current_step && (
+            <div style={{ marginTop: 8, color: '#64748b', fontSize: 12 }}>
+              当前步骤：{latestPlan.current_step}
+            </div>
+          )}
         </div>
 
         <div style={{
@@ -203,6 +320,58 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
                 };
               })}
            />
+        )}
+
+        <Divider style={{ margin: '18px 0 12px' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <Space size={6}>
+            <ClockCircleOutlined style={{ color: '#1677ff' }} />
+            <Text strong style={{ fontSize: 13 }}>运行时间线</Text>
+          </Space>
+          <Tag>{timelineEvents.length}</Tag>
+        </div>
+        {timelineEvents.length === 0 ? (
+          <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 12, color: '#8c8c8c', fontSize: 12 }}>
+            本轮还没有运行事件。
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {timelineEvents.slice(-18).map((event, index) => {
+              const summary = summarizeRuntimeEvent(event);
+              const isNode = event.type === 'node_event';
+              const nodePayload = event.payload || {};
+              const nodeTitle = isNode ? `${nodePayload.node || 'node'} ${nodePayload.event || ''}` : summary.title;
+              const nodeStatus = isNode ? nodePayload.payload?.status || nodePayload.event : summary.status;
+              const nodeDetail = isNode ? nodePayload.payload?.message || '' : summary.detail;
+              return (
+                <div key={`${event.type}-${event.timestamp}-${index}`} style={{
+                  border: '1px solid #eef2f7',
+                  borderRadius: 8,
+                  padding: '8px 9px',
+                  background: '#fff',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                    <Text strong style={{ fontSize: 12 }}>{nodeTitle}</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{compactTime(event.timestamp)}</Text>
+                  </div>
+                  <Space size={[4, 4]} wrap style={{ marginTop: 5 }}>
+                    <Tag color={isNode ? 'geekblue' : 'blue'}>{eventLabelMap[event.type] || event.type}</Tag>
+                    {nodeStatus && <Tag color={statusColor(nodeStatus)}>{nodeStatus}</Tag>}
+                  </Space>
+                  {nodeDetail && (
+                    <div style={{ marginTop: 5, color: '#64748b', fontSize: 12, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                      {nodeDetail}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {timelineEvents.length > 18 && (
+              <Button size="small" disabled>
+                仅显示最近 18 条
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
