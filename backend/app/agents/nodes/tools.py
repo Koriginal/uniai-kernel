@@ -11,6 +11,12 @@ from typing import Any
 from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
 from app.core.plugins import registry
+from app.agents.task_runtime import (
+    advance_execution_plan,
+    build_task_runtime_update_event,
+    persist_task_runtime_state,
+    record_execution_artifact,
+)
 from app.models.message import ChatMessage
 from app.ontology.runtime import ONTOLOGY_AGENT_TOOL_NAMES, ontology_runtime
 from app.services.audit_service import audit_service
@@ -213,6 +219,9 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
     messages = list(state["messages"])
     pending_tool_calls = state["pending_tool_calls"]
     iter_text = state["iter_text"]
+    task_frame = state.get("task_frame") or {}
+    execution_plan = state.get("execution_plan") or {}
+    execution_artifacts = list(state.get("execution_artifacts") or [])
 
     # 先将 assistant 消息（含 tool_calls）追加到消息列表
     tool_calls_for_msg = [
@@ -245,6 +254,11 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 raise ValueError("Tool arguments must be a JSON object")
             parsed_args = inject_runtime_tool_args(func_name, args, c, agent_profile)
             is_allowed, blocked_reason = _is_tool_allowed_by_policy(func_name, runtime_policy)
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="tool_start",
+                payload={"tool_name": func_name, "tool_call_id": tool_call_id},
+            )
             await _emit_tool_runtime(callback, {
                 **tool_meta,
                 "tool_call_id": tool_call_id,
@@ -265,6 +279,17 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "agent_id": state.get("current_agent_id"),
                 }
                 await _emit_tool_runtime(callback, runtime_payload)
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="tool_blocked",
+                    payload=runtime_payload,
+                )
+                execution_artifacts = record_execution_artifact(
+                    execution_artifacts,
+                    artifact_type="tool_result",
+                    payload=runtime_payload,
+                )
+                await _emit_task_runtime_update(callback, c, state, task_frame, execution_plan, execution_artifacts)
                 await _persist_tool_runtime_event(c, state, runtime_payload)
                 await _audit_tool_runtime(c, status="blocked", payload=runtime_payload)
                 messages.append({
@@ -288,6 +313,17 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 "agent_id": state.get("current_agent_id"),
             }
             await _emit_tool_runtime(callback, runtime_payload)
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="tool_success",
+                payload=runtime_payload,
+            )
+            execution_artifacts = record_execution_artifact(
+                execution_artifacts,
+                artifact_type="tool_result",
+                payload=runtime_payload,
+            )
+            await _emit_task_runtime_update(callback, c, state, task_frame, execution_plan, execution_artifacts)
             await _persist_tool_runtime_event(c, state, runtime_payload)
             await _audit_tool_runtime(c, status="success", payload=runtime_payload)
             messages.append({
@@ -311,6 +347,17 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                     "agent_id": state.get("current_agent_id"),
                 }
                 await _emit_tool_runtime(callback, runtime_payload)
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="tool_error",
+                    payload=runtime_payload,
+                )
+                execution_artifacts = record_execution_artifact(
+                    execution_artifacts,
+                    artifact_type="tool_result",
+                    payload=runtime_payload,
+                )
+                await _emit_task_runtime_update(callback, c, state, task_frame, execution_plan, execution_artifacts)
                 await _persist_tool_runtime_event(c, state, runtime_payload)
                 await _audit_tool_runtime(c, status="error", payload=runtime_payload)
             except Exception:
@@ -325,4 +372,26 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
     return {
         "messages": messages,
         "iter_text": "",  # 清空本轮文本，下一个 agent_node 重新开始
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts,
     }
+
+
+async def _emit_task_runtime_update(
+    callback: Any,
+    config_data: dict,
+    state: AgentGraphState,
+    task_frame: dict,
+    execution_plan: dict | None,
+    execution_artifacts: list,
+) -> None:
+    await callback.emit(
+        f"data: {json.dumps(build_task_runtime_update_event(task_frame=task_frame, execution_plan=execution_plan, execution_artifacts=execution_artifacts), ensure_ascii=False, default=str)}\n\n"
+    )
+    await persist_task_runtime_state(
+        config_data.get("db"),
+        state.get("current_msg_id"),
+        task_frame=task_frame,
+        execution_plan=execution_plan,
+        execution_artifacts=execution_artifacts,
+    )

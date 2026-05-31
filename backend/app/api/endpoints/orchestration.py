@@ -8,6 +8,7 @@ import uuid
 from app.core.db import get_db
 from app.models.graph_template import GraphTemplateModel
 from app.agents.graph_registry import graph_registry
+from app.agents.task_runtime import get_runtime_capability_catalog
 from app.api import deps
 
 router = APIRouter(dependencies=[Depends(deps.get_current_active_user)])
@@ -75,9 +76,19 @@ async def compile_template(
         # 清除旧缓存并尝试获取新实例
         graph_registry.invalidate_cache(template_id)
         graph = await graph_registry.get_compiled_graph(template_id)
+        template_topology = None
+        # For framework users, show the runtime-normalized topology when a stored
+        # template exists; otherwise clients can infer from compiled nodes.
+        from app.core.db import SessionLocal
+        async with SessionLocal() as db:
+            template = await db.get(GraphTemplateModel, template_id)
+            if template:
+                template_topology = graph_registry._normalize_runtime_topology(template.topology)
         return {
             "status": "success",
             "nodes": list(graph.nodes.keys()),
+            "runtime_capabilities": get_runtime_capability_catalog(),
+            "normalized_topology": template_topology,
             "message": f"Graph {template_id} compiled successfully."
         }
     except Exception as e:

@@ -40,7 +40,7 @@ class DeterministicStrategy(RoutingStrategy):
         if state.get("current_agent_id") != orchestrator_id:
             return "synthesize"
             
-        return END
+        return "task_evaluator"
 
 class ScoreBasedStrategy(RoutingStrategy):
     """
@@ -139,7 +139,8 @@ class AdaptiveRouter:
         max_iter = config.get("configurable", {}).get("max_iterations", 10)
         if state.get("iteration_count", 0) >= max_iter:
             logger.warning(f"[AdaptiveRouter] Max iterations ({max_iter}) reached.")
-            return END
+            orchestrator_id = config.get("configurable", {}).get("orchestrator_agent_id", "")
+            return "synthesize" if state.get("current_agent_id") != orchestrator_id else "task_evaluator"
             
         # 2. 执行选定策略
         strategy = self.strategies.get(self.current_strategy, self.strategies["deterministic"])

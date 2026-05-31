@@ -7,6 +7,12 @@
 import json
 import logging
 from langgraph.types import RunnableConfig
+from app.agents.task_runtime import (
+    advance_execution_plan,
+    build_task_runtime_update_event,
+    persist_task_runtime_state,
+    record_execution_artifact,
+)
 from app.core.graph_state import AgentGraphState
 from app.services.swarm_service import swarm_service
 
@@ -29,6 +35,9 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     pending_tool_calls = state["pending_tool_calls"]
     called_expert_ids = list(state["called_expert_ids"])
     iter_text = state["iter_text"]
+    task_frame = state.get("task_frame") or {}
+    execution_plan = state.get("execution_plan") or {}
+    execution_artifacts = list(state.get("execution_artifacts") or [])
 
     # 找出 transfer_to_agent 调用
     handoff_calls = [
@@ -50,6 +59,11 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         try:
             args = json.loads(tc["function"]["arguments"])
             tid = args.get("agent_id")
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="handoff_start",
+                payload={"agent_id": tid, "tool_call_id": tc.get("id")},
+            )
             if not tid or tid in called_expert_ids:
                 # 已调用过，追加失败消息
                 messages.append({
@@ -58,6 +72,11 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                     "content": f"Skipped: agent '{tid}' already consulted.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="handoff_skipped",
+                    payload={"agent_id": tid, "status": "blocked", "tool_call_id": tc.get("id")},
+                )
                 continue
 
             expert = await swarm_service.handle_handoff(db, session_id, tid)
@@ -86,6 +105,22 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                     "content": f"Successfully consulted expert: {expert.name}",
                     "tool_call_id": tc["id"]
                 })
+                payload = {
+                    "agent_id": expert.id,
+                    "status": "success",
+                    "tool_call_id": tc.get("id"),
+                    "result": {"preview": f"consulted expert: {expert.name}"},
+                }
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="handoff_success",
+                    payload=payload,
+                )
+                execution_artifacts = record_execution_artifact(
+                    execution_artifacts,
+                    artifact_type="handoff",
+                    payload=payload,
+                )
             else:
                 messages.append({
                     "role": "tool",
@@ -93,6 +128,11 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                     "content": f"Expert Error: target expert '{tid}' unavailable.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="handoff_error",
+                    payload={"agent_id": tid, "status": "error", "error": "target expert unavailable", "tool_call_id": tc.get("id")},
+                )
         except Exception as ee:
             logger.error(f"[HandoffNode] Handoff failed: {ee}")
             messages.append({
@@ -101,6 +141,22 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
                 "content": f"Expert Error: {ee}",
                 "tool_call_id": tc["id"]
             })
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="handoff_error",
+                payload={"status": "error", "error": str(ee), "tool_call_id": tc.get("id")},
+            )
+
+    await callback.emit(
+        f"data: {json.dumps(build_task_runtime_update_event(task_frame=task_frame, execution_plan=execution_plan, execution_artifacts=execution_artifacts), ensure_ascii=False, default=str)}\n\n"
+    )
+    await persist_task_runtime_state(
+        db,
+        state.get("current_msg_id"),
+        task_frame=task_frame,
+        execution_plan=execution_plan,
+        execution_artifacts=execution_artifacts,
+    )
 
     return {
         "messages": messages,
@@ -110,4 +166,6 @@ async def handoff_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         "iter_text": "",
         "pending_tool_calls": [],
         "pending_delegate_type": "expert",
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts,
     }

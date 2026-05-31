@@ -13,7 +13,12 @@ from langgraph.types import RunnableConfig
 from app.core.graph_state import AgentGraphState
 from app.core.llm import completion, _clean_messages
 from app.core.plugins import registry
-from app.agents.task_runtime import build_runtime_prompt_block
+from app.agents.task_runtime import (
+    advance_execution_plan,
+    build_runtime_prompt_block,
+    build_task_runtime_update_event,
+    persist_task_runtime_state,
+)
 from app.models.openai import (
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionChunkDelta
 )
@@ -179,7 +184,6 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     user_id = c.get("user_id", "")
 
     messages = list(state["messages"])
-    latest_user_query = _extract_latest_user_text(messages)
     current_agent_id = state["current_agent_id"]
     agent_profile = state["current_agent_profile"]
     current_msg_id = state["current_msg_id"]
@@ -194,7 +198,13 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     semantic_frame = state.get("semantic_frame") or {}
     semantic_slots = state.get("semantic_slots") or {}
     task_frame = state.get("task_frame") or {}
-    execution_plan = state.get("execution_plan") or {}
+    latest_user_query = str(task_frame.get("user_goal") or _extract_latest_user_text(messages))
+    execution_plan = advance_execution_plan(
+        state.get("execution_plan") or {},
+        event_type="agent_start",
+        payload={"agent_id": current_agent_id},
+    )
+    execution_artifacts = list(state.get("execution_artifacts") or [])
     ontology_pipeline = state.get("ontology_pipeline")
     ontology_config = (agent_profile or {}).get("ontology_config") or {}
     runtime_policy = (agent_profile or {}).get("runtime_policy") or {}
@@ -397,6 +407,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     total_prompt_tokens = 0
     total_completion_tokens = 0
 
+    agent_failed = False
     try:
         latest_user_query = _extract_latest_user_text(cleaned_internal)
         force_web_search = has_web_search and not runtime_task_lock_active and _is_realtime_query(latest_user_query)
@@ -599,6 +610,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
             logger.info(f"[AgentNode] LLM iteration finished. Total tool calls: {len(tool_calls_buffer)}")
 
     except Exception as e:
+        agent_failed = True
         logger.error(f"[AgentNode] LLM call failed: {e}")
         err_chunk = ChatCompletionChunk(
             id=stream_chunk_id, model=model_name,
@@ -614,6 +626,26 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if tool_calls_buffer:
         pending_tool_calls = _sanitize_tool_calls(list(tool_calls_buffer.values()))
         total_tool_calls_list.extend(pending_tool_calls)
+
+    execution_plan = advance_execution_plan(
+        execution_plan,
+        event_type="agent_error" if agent_failed else "agent_complete",
+        payload={
+            "agent_id": current_agent_id,
+            "status": "error" if agent_failed else "completed",
+        },
+    )
+    if callback and execution_plan:
+        await callback.emit(
+            f"data: {json.dumps(build_task_runtime_update_event(task_frame=task_frame, execution_plan=execution_plan, execution_artifacts=execution_artifacts), ensure_ascii=False, default=str)}\n\n"
+        )
+    await persist_task_runtime_state(
+        db,
+        current_msg_id,
+        task_frame=task_frame,
+        execution_plan=execution_plan,
+        execution_artifacts=execution_artifacts,
+    )
 
     # ---- 7. 持久化当前消息 ----
     if session_id and current_msg_id:
@@ -640,4 +672,6 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
         "global_tool_index_offset": new_global_offset,
         "iter_text": iter_text,
         "iteration_count": iteration_count,
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts,
     }

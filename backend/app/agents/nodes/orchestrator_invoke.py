@@ -8,6 +8,12 @@ import json
 import logging
 from langgraph.types import RunnableConfig
 
+from app.agents.task_runtime import (
+    advance_execution_plan,
+    build_task_runtime_update_event,
+    persist_task_runtime_state,
+    record_execution_artifact,
+)
 from app.core.graph_state import AgentGraphState
 from app.services.swarm_service import swarm_service
 from app.ontology.registry import ontology_registry
@@ -30,6 +36,9 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
     semantic_frame = dict(state.get("semantic_frame") or {})
     interaction_mode = state.get("interaction_mode", "chat")
     orchestrator_agent_id = c.get("orchestrator_agent_id")
+    task_frame = state.get("task_frame") or {}
+    execution_plan = state.get("execution_plan") or {}
+    execution_artifacts = list(state.get("execution_artifacts") or [])
 
     invoke_calls = [
         tc for tc in pending_tool_calls
@@ -57,6 +66,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
             args = json.loads(tc["function"]["arguments"])
             tid = str(args.get("agent_id") or "").strip()
             requested_task = (args.get("task") or "").strip()
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="orchestrator_invoke_start",
+                payload={"agent_id": tid, "tool_call_id": tc.get("id")},
+            )
             if not tid:
                 messages.append({
                     "role": "tool",
@@ -64,6 +78,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": "Rejected: missing target orchestrator id.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_rejected",
+                    payload={"status": "blocked", "error": "missing target orchestrator id", "tool_call_id": tc.get("id")},
+                )
                 continue
 
             if tid == new_agent_id:
@@ -73,6 +92,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": f"Skipped: application '{tid}' is already active.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_rejected",
+                    payload={"agent_id": tid, "status": "blocked", "error": "already active", "tool_call_id": tc.get("id")},
+                )
                 continue
 
             if tid == orchestrator_agent_id and state["current_agent_id"] != orchestrator_agent_id:
@@ -82,6 +106,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": "Skipped: root orchestrator handback is managed by runtime.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_rejected",
+                    payload={"agent_id": tid, "status": "blocked", "error": "root handback managed by runtime", "tool_call_id": tc.get("id")},
+                )
                 continue
 
             if tid in called_expert_ids:
@@ -91,6 +120,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": f"Skipped: application '{tid}' already consulted.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_rejected",
+                    payload={"agent_id": tid, "status": "blocked", "error": "already consulted", "tool_call_id": tc.get("id")},
+                )
                 continue
 
             decision = ontology_registry.delegation_policy.evaluate_orchestrator_delegate(
@@ -104,6 +138,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": f"Rejected by policy: {decision.reason} (confidence={decision.confidence:.2f}).",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_rejected",
+                    payload={"agent_id": tid, "status": "blocked", "error": decision.reason, "tool_call_id": tc.get("id")},
+                )
                 continue
 
             delegated_task = decision.recommended_task or requested_task
@@ -142,6 +181,22 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     ),
                     "tool_call_id": tc["id"]
                 })
+                payload = {
+                    "agent_id": orchestrator.id,
+                    "status": "success",
+                    "tool_call_id": tc.get("id"),
+                    "result": {"preview": f"invoked sub-orchestrator: {orchestrator.name}"},
+                }
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_success",
+                    payload=payload,
+                )
+                execution_artifacts = record_execution_artifact(
+                    execution_artifacts,
+                    artifact_type="orchestrator_invoke",
+                    payload=payload,
+                )
             else:
                 messages.append({
                     "role": "tool",
@@ -149,6 +204,11 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                     "content": f"Application Error: target orchestrator '{tid}' unavailable.",
                     "tool_call_id": tc["id"]
                 })
+                execution_plan = advance_execution_plan(
+                    execution_plan,
+                    event_type="orchestrator_invoke_error",
+                    payload={"agent_id": tid, "status": "error", "error": "target orchestrator unavailable", "tool_call_id": tc.get("id")},
+                )
         except Exception as e:
             logger.error(f"[OrchestratorInvokeNode] Invoke failed: {e}")
             messages.append({
@@ -157,6 +217,22 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
                 "content": f"Application Error: {e}",
                 "tool_call_id": tc["id"]
             })
+            execution_plan = advance_execution_plan(
+                execution_plan,
+                event_type="orchestrator_invoke_error",
+                payload={"status": "error", "error": str(e), "tool_call_id": tc.get("id")},
+            )
+
+    await callback.emit(
+        f"data: {json.dumps(build_task_runtime_update_event(task_frame=task_frame, execution_plan=execution_plan, execution_artifacts=execution_artifacts), ensure_ascii=False, default=str)}\n\n"
+    )
+    await persist_task_runtime_state(
+        db,
+        state.get("current_msg_id"),
+        task_frame=task_frame,
+        execution_plan=execution_plan,
+        execution_artifacts=execution_artifacts,
+    )
 
     return {
         "messages": messages,
@@ -168,4 +244,6 @@ async def orchestrator_invoke_node(state: AgentGraphState, config: RunnableConfi
         "interaction_mode": interaction_mode,
         "pending_delegate_type": pending_delegate_type,
         "semantic_slots": semantic_slots,
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts,
     }

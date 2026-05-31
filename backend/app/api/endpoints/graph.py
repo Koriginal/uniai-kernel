@@ -10,6 +10,7 @@ from sqlalchemy import select, and_, update, desc
 
 from app.agents.graph_builder import get_graph_mermaid
 from app.agents.health_monitor import health_monitor
+from app.agents.task_runtime import get_runtime_capability_catalog
 from app.core.db import SessionLocal, get_db
 from app.models.graph_version import GraphTopologyVersionModel
 from app.schemas.graph import GraphTopologyVersion, GraphTopologyVersionCreate, GraphTopologyVersionList
@@ -30,7 +31,16 @@ async def get_graph_topology():
     mermaid = await get_graph_mermaid()
     return {
         "mermaid": mermaid,
-        "nodes": ["context", "agent", "tool_executor", "handoff", "synthesize"],
+        "nodes": [
+            "context",
+            "task_planner",
+            "agent",
+            "tool_executor",
+            "handoff",
+            "orchestrator_invoke",
+            "synthesize",
+            "task_evaluator",
+        ],
         "description": "UniAI LangGraph 对话状态图"
     }
 
@@ -48,6 +58,13 @@ async def get_graph_nodes():
                 "description": "加载会话记忆、历史消息，注入 System Prompt，创建助手消息气泡",
                 "icon": "📥",
                 "color": "#52c41a"
+            },
+            {
+                "id": "task_planner",
+                "label": "任务理解与计划",
+                "description": "生成 task_frame、execution_plan 和验收标准，作为后续执行的运行时契约",
+                "icon": "🧭",
+                "color": "#13c2c2"
             },
             {
                 "id": "agent",
@@ -71,13 +88,62 @@ async def get_graph_nodes():
                 "color": "#722ed1"
             },
             {
+                "id": "orchestrator_invoke",
+                "label": "子主控调用",
+                "description": "按语义策略把任务委托给另一个主控应用，形成应用级编排",
+                "icon": "🧩",
+                "color": "#2f54eb"
+            },
+            {
                 "id": "synthesize",
                 "label": "汇总归还",
                 "description": "专家完成后关闭协作区块，将控制权归还给主控智能体",
                 "icon": "📝",
                 "color": "#eb2f96"
+            },
+            {
+                "id": "task_evaluator",
+                "label": "任务验收与修复",
+                "description": "主控结束前检查计划、产物和约束；失败时可触发一次运行时修复",
+                "icon": "✅",
+                "color": "#389e0d"
             }
         ]
+    }
+
+
+@router.get("/runtime/capabilities")
+async def get_graph_runtime_capabilities():
+    """
+    返回 Agent Runtime 框架能力目录。
+
+    用于前端、SDK 或平台用户理解当前内核提供哪些可组合运行能力。
+    """
+    return {
+        "capabilities": get_runtime_capability_catalog(),
+        "state_fields": [
+            "task_frame",
+            "execution_plan",
+            "execution_artifacts",
+            "task_evaluation",
+            "task_repair_count",
+            "pending_repair",
+        ],
+        "events": [
+            "task_runtime",
+            "task_runtime_update",
+            "task_evaluation",
+            "tool_runtime",
+            "node_event",
+        ],
+        "request_config": {
+            "graph_template_id": "选择运行图模板",
+            "interaction_mode": "选择交互模式",
+            "enable_memory": "是否启用长期记忆",
+            "enable_swarm": "是否启用专家/子主控协作",
+            "enable_canvas": "是否启用看板工具",
+            "max_task_repairs": "验收失败后的运行时修复次数，当前建议 0-3",
+        },
     }
 
 

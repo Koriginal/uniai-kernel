@@ -34,6 +34,53 @@ DOCUMENT_KEYWORDS = {
 }
 
 
+def get_runtime_capability_catalog() -> list[dict[str, Any]]:
+    """Return framework-level runtime capabilities exposed by the agent kernel."""
+    return [
+        {
+            "id": "task_understanding",
+            "label": "任务理解",
+            "node": "task_planner",
+            "state_fields": ["task_frame", "semantic_frame", "semantic_slots"],
+            "events": ["task_runtime"],
+            "description": "把用户输入转成任务类型、目标、约束、验收条件和风险标记。",
+        },
+        {
+            "id": "execution_planning",
+            "label": "执行拆解",
+            "node": "task_planner",
+            "state_fields": ["execution_plan"],
+            "events": ["task_runtime"],
+            "description": "按任务类型生成步骤、责任方、工具候选和完成标准。",
+        },
+        {
+            "id": "execution_ledger",
+            "label": "执行账本",
+            "node": "agent/tool_executor/handoff/orchestrator_invoke/synthesize",
+            "state_fields": ["execution_plan", "execution_artifacts"],
+            "events": ["task_runtime_update", "tool_runtime"],
+            "description": "节点执行时推进步骤状态，记录工具、专家和子主控产物。",
+        },
+        {
+            "id": "task_evaluation",
+            "label": "任务验收",
+            "node": "task_evaluator",
+            "state_fields": ["task_evaluation"],
+            "events": ["task_evaluation", "task_runtime_update"],
+            "description": "主控结束前按计划状态、产物和任务约束做确定性验收。",
+        },
+        {
+            "id": "runtime_repair",
+            "label": "运行时修复",
+            "node": "task_evaluator -> agent",
+            "state_fields": ["task_repair_count", "pending_repair", "execution_plan"],
+            "events": ["task_evaluation", "task_runtime_update"],
+            "config": ["max_task_repairs"],
+            "description": "验收失败且仍有额度时，重开缺口步骤并回到 agent 补执行。",
+        },
+    ]
+
+
 def _stable_id(prefix: str, text: str) -> str:
     digest = hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:12]
     return f"{prefix}_{digest}"
@@ -193,6 +240,294 @@ def build_runtime_prompt_block(task_frame: dict[str, Any] | None, execution_plan
     )
 
 
+def advance_execution_plan(
+    execution_plan: dict[str, Any] | None,
+    *,
+    event_type: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Advance plan state after graph node events.
+
+    The plan remains advisory for now, but every graph node can mark the step it
+    affected. This gives routing, audit, and UI a shared execution ledger.
+    """
+    if not execution_plan:
+        return execution_plan
+
+    plan = {**execution_plan}
+    steps = [dict(step) for step in plan.get("steps") or []]
+    payload = payload or {}
+    if not steps:
+        return plan
+
+    target_id = _resolve_step_id(steps, event_type, payload, plan.get("current_step"))
+    status = _status_for_event(event_type)
+    if not target_id or not status:
+        return plan
+
+    found_index = None
+    for index, step in enumerate(steps):
+        if step.get("id") == target_id:
+            found_index = index
+            step["status"] = status
+            step["last_event"] = {
+                "type": event_type,
+                "summary": _event_summary(payload),
+            }
+            break
+
+    if found_index is None:
+        return plan
+
+    plan["steps"] = steps
+    if status == "in_progress":
+        plan["current_step"] = target_id
+        plan["status"] = "running"
+        return plan
+
+    next_step = _next_open_step(steps, start_index=found_index)
+    plan["current_step"] = next_step.get("id") if next_step else None
+    plan["status"] = "completed" if next_step is None else "running"
+    return plan
+
+
+def record_execution_artifact(
+    artifacts: list[dict[str, Any]] | None,
+    *,
+    artifact_type: str,
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    items = list(artifacts or [])
+    items.append(
+        {
+            "type": artifact_type,
+            "status": payload.get("status"),
+            "tool_call_id": payload.get("tool_call_id"),
+            "tool_name": payload.get("tool_name"),
+            "agent_id": payload.get("agent_id"),
+            "preview": (payload.get("result") or {}).get("preview") or payload.get("error"),
+            "metadata": {
+                key: payload.get(key)
+                for key in ("category", "duration_ms", "phase")
+                if key in payload
+            },
+        }
+    )
+    return items[-30:]
+
+
+async def persist_task_runtime_state(
+    db: Any,
+    message_id: str | None,
+    *,
+    task_frame: dict[str, Any] | None,
+    execution_plan: dict[str, Any] | None,
+    execution_artifacts: list[dict[str, Any]] | None,
+    task_evaluation: dict[str, Any] | None = None,
+) -> None:
+    if not db or not message_id:
+        return
+    from app.models.message import ChatMessage
+
+    try:
+        msg = await db.get(ChatMessage, message_id)
+        if not msg:
+            return
+        runtime_events = dict(msg.runtime_events or {})
+        runtime_events["task_runtime"] = {
+            "type": "task_runtime",
+            "task_frame": task_frame,
+            "execution_plan": execution_plan,
+            "execution_artifacts": execution_artifacts or [],
+            "task_evaluation": task_evaluation,
+        }
+        msg.runtime_events = runtime_events
+        db.add(msg)
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
+def build_task_runtime_update_event(
+    *,
+    task_frame: dict[str, Any] | None,
+    execution_plan: dict[str, Any] | None,
+    execution_artifacts: list[dict[str, Any]] | None = None,
+    task_evaluation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": "task_runtime_update",
+        "task_frame": task_frame,
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts or [],
+        "task_evaluation": task_evaluation,
+    }
+
+
+def should_repair_task(
+    task_evaluation: dict[str, Any] | None,
+    *,
+    repair_count: int,
+    max_repairs: int,
+) -> bool:
+    if not task_evaluation:
+        return False
+    return task_evaluation.get("status") == "failed" and repair_count < max_repairs
+
+
+def build_repair_message(
+    *,
+    task_frame: dict[str, Any] | None,
+    task_evaluation: dict[str, Any],
+) -> dict[str, Any]:
+    frame = task_frame or {}
+    missing = task_evaluation.get("missing_requirements") or []
+    checks = task_evaluation.get("checks") or []
+    failed_checks = [
+        check.get("id")
+        for check in checks
+        if check.get("status") == "failed"
+    ]
+    return {
+        "role": "user",
+        "content": (
+            "[RUNTIME REPAIR REQUEST]\n"
+            "The previous answer did not satisfy the task runtime checks.\n"
+            f"Original user goal: {frame.get('user_goal') or ''}\n"
+            f"Missing requirements: {', '.join(missing) if missing else 'none'}\n"
+            f"Failed checks: {', '.join([item for item in failed_checks if item]) if failed_checks else 'none'}\n"
+            "Repair only the missing parts. Use the required tool or evidence if a missing requirement asks for it, then answer the original user goal."
+        ),
+    }
+
+
+def reopen_plan_for_repair(
+    execution_plan: dict[str, Any] | None,
+    task_evaluation: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not execution_plan:
+        return execution_plan
+    plan = {**execution_plan}
+    steps = [dict(step) for step in plan.get("steps") or []]
+    missing = set((task_evaluation or {}).get("missing_requirements") or [])
+
+    target_id = None
+    if "web_search_result" in missing:
+        for step in steps:
+            if "web_search" in (step.get("tool_candidates") or []) or step.get("owner") == "tool":
+                target_id = step.get("id")
+                step["status"] = "pending"
+                step["last_event"] = {
+                    "type": "repair_required",
+                    "summary": {"missing": "web_search_result"},
+                }
+                break
+    if target_id is None:
+        for step in steps:
+            if step.get("status") in {"failed", "blocked", "pending", "in_progress"}:
+                target_id = step.get("id")
+                step["status"] = "pending"
+                step["last_event"] = {
+                    "type": "repair_required",
+                    "summary": {"missing": list(missing)},
+                }
+                break
+    if target_id is None and steps:
+        target_id = steps[-1].get("id")
+        steps[-1]["status"] = "pending"
+
+    plan["steps"] = steps
+    plan["current_step"] = target_id
+    plan["status"] = "repairing"
+    plan["evaluation_status"] = "repairing"
+    return plan
+
+
+def evaluate_task_completion(
+    *,
+    task_frame: dict[str, Any] | None,
+    execution_plan: dict[str, Any] | None,
+    execution_artifacts: list[dict[str, Any]] | None,
+    messages: list[dict[str, Any]] | None,
+    assistant_text: str | None,
+) -> dict[str, Any]:
+    frame = task_frame or {}
+    plan = execution_plan or {}
+    artifacts = execution_artifacts or []
+    checks: list[dict[str, Any]] = []
+    missing: list[str] = []
+
+    response_present = bool((assistant_text or "").strip())
+    checks.append(
+        {
+            "id": "response_present",
+            "status": "passed" if response_present else "failed",
+            "detail": "assistant produced final text" if response_present else "assistant response is empty",
+        }
+    )
+    if not response_present:
+        missing.append("final_response")
+
+    steps = plan.get("steps") or []
+    failed_steps = [step for step in steps if step.get("status") == "failed"]
+    blocked_steps = [step for step in steps if step.get("status") == "blocked"]
+    open_steps = [step for step in steps if step.get("status") in {"pending", "in_progress"}]
+    checks.append(
+        {
+            "id": "plan_steps",
+            "status": "failed" if failed_steps else ("warning" if blocked_steps or open_steps else "passed"),
+            "detail": {
+                "failed": [step.get("id") for step in failed_steps],
+                "blocked": [step.get("id") for step in blocked_steps],
+                "open": [step.get("id") for step in open_steps],
+            },
+        }
+    )
+    if failed_steps:
+        missing.append("failed_steps_resolved")
+
+    constraints = frame.get("constraints") or {}
+    if constraints.get("requires_external_facts"):
+        has_retrieval = _has_artifact(artifacts, tool_name="web_search") or _has_tool_message(messages or [], "web_search")
+        checks.append(
+            {
+                "id": "external_facts",
+                "status": "passed" if has_retrieval else "failed",
+                "detail": "web_search result available" if has_retrieval else "missing web_search result for realtime task",
+            }
+        )
+        if not has_retrieval:
+            missing.append("web_search_result")
+
+    if constraints.get("requires_governance"):
+        has_governance_trace = _has_artifact(artifacts, tool_prefix="ontology_") or _has_runtime_signal(messages or [], "ontology")
+        checks.append(
+            {
+                "id": "governance_trace",
+                "status": "passed" if has_governance_trace else "warning",
+                "detail": "ontology/runtime trace available" if has_governance_trace else "no ontology runtime trace was attached",
+            }
+        )
+
+    statuses = [check["status"] for check in checks]
+    if "failed" in statuses:
+        verdict = "failed"
+    elif "warning" in statuses:
+        verdict = "warning"
+    else:
+        verdict = "passed"
+
+    return {
+        "status": verdict,
+        "checks": checks,
+        "missing_requirements": missing,
+        "acceptance": frame.get("acceptance") or [],
+    }
+
+
 def _default_acceptance(kind: str) -> list[str]:
     if kind == "realtime_research":
         return ["包含可核查来源", "说明信息时间点", "区分事实、推断和不确定项"]
@@ -228,6 +563,89 @@ def _step(
         "tool_candidates": tool_candidates or [],
         "depends_on": [],
     }
+
+
+def _resolve_step_id(
+    steps: list[dict[str, Any]],
+    event_type: str,
+    payload: dict[str, Any],
+    current_step_id: str | None,
+) -> str | None:
+    if event_type.startswith("tool_"):
+        tool_name = payload.get("tool_name")
+        for step in steps:
+            if tool_name and tool_name in (step.get("tool_candidates") or []):
+                return step.get("id")
+        for step in steps:
+            if step.get("owner") == "tool" and step.get("status") not in {"completed", "failed", "blocked"}:
+                return step.get("id")
+    if event_type.startswith("handoff_") or event_type.startswith("orchestrator_invoke_"):
+        for step in steps:
+            if step.get("owner") == "expert" and step.get("status") not in {"completed", "failed", "blocked"}:
+                return step.get("id")
+    if event_type == "synthesize_complete":
+        for step in steps:
+            if step.get("owner") == "expert" and step.get("status") not in {"completed", "failed", "blocked"}:
+                return step.get("id")
+    return current_step_id or (steps[0].get("id") if steps else None)
+
+
+def _status_for_event(event_type: str) -> str | None:
+    if event_type in {"agent_start", "tool_start", "handoff_start", "orchestrator_invoke_start"}:
+        return "in_progress"
+    if event_type in {"agent_complete", "tool_success", "handoff_success", "orchestrator_invoke_success", "synthesize_complete"}:
+        return "completed"
+    if event_type in {"tool_blocked", "handoff_skipped", "orchestrator_invoke_rejected"}:
+        return "blocked"
+    if event_type in {"tool_error", "handoff_error", "orchestrator_invoke_error", "agent_error"}:
+        return "failed"
+    return None
+
+
+def _next_open_step(steps: list[dict[str, Any]], *, start_index: int) -> dict[str, Any] | None:
+    terminal = {"completed", "failed", "blocked"}
+    for step in steps[start_index + 1:]:
+        if step.get("status") not in terminal:
+            if step.get("status") == "pending":
+                step["status"] = "in_progress"
+            return step
+    return None
+
+
+def _event_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    keys = ("tool_name", "agent_id", "status", "error", "tool_call_id")
+    return {key: payload.get(key) for key in keys if payload.get(key) is not None}
+
+
+def _has_artifact(
+    artifacts: list[dict[str, Any]],
+    *,
+    tool_name: str | None = None,
+    tool_prefix: str | None = None,
+) -> bool:
+    for artifact in artifacts:
+        if artifact.get("status") not in {None, "success", "completed"}:
+            continue
+        name = artifact.get("tool_name") or ""
+        if tool_name and name == tool_name:
+            return True
+        if tool_prefix and name.startswith(tool_prefix):
+            return True
+    return False
+
+
+def _has_tool_message(messages: list[dict[str, Any]], tool_name: str) -> bool:
+    return any(msg.get("role") == "tool" and msg.get("name") == tool_name for msg in messages or [])
+
+
+def _has_runtime_signal(messages: list[dict[str, Any]], signal_name: str) -> bool:
+    needle = signal_name.lower()
+    for msg in messages or []:
+        if needle in str(msg.get("name") or "").lower():
+            return True
+        if needle in str(msg.get("content") or "").lower():
+            return True
+    return False
 
 
 def _compact_text(text: str, max_chars: int) -> str:

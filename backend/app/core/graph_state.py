@@ -34,6 +34,9 @@ class AgentGraphState(TypedDict):
     - task_frame: 任务理解节点输出的任务框架，描述目标、约束、风险和验收条件
     - execution_plan: 任务拆解节点输出的执行计划，描述步骤、责任方和工具候选
     - execution_artifacts: 当前请求周期中产生的结构化中间产物引用
+    - task_evaluation: 主控结束前的验收结果，记录通过、警告、失败和缺口
+    - task_repair_count: 本轮任务已触发的运行时修复次数
+    - pending_repair: 验收节点是否要求回到 agent 继续补执行
     - ontology_pipeline: 当前回合的本体运行时预执行结果
     - pending_delegate_type: 最近一次待处理移交类型（expert/orchestrator）
     """
@@ -57,6 +60,9 @@ class AgentGraphState(TypedDict):
     task_frame: Optional[dict]
     execution_plan: Optional[dict]
     execution_artifacts: list
+    task_evaluation: Optional[dict]
+    task_repair_count: int
+    pending_repair: bool
     ontology_pipeline: Optional[dict]
     pending_delegate_type: Optional[str]
     # --- [New: Phase 2] 自维护字段 ---

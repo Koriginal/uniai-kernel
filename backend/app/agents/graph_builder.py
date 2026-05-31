@@ -10,7 +10,7 @@ UniAI Kernel — LangGraph 对话图编译器
                                 ├──[有 tool_calls，含 Invoke]  → orchestrator_invoke_node → agent_node
                                 ├──[有 tool_calls，无 Handoff] → tool_executor_node → agent_node
                                 ├──[无 tool_calls，是专家]     → synthesize_node → agent_node
-                                └──[无 tool_calls，是主控]     → END
+                                └──[无 tool_calls，是主控]     → task_evaluator_node → END
 """
 import logging
 from langgraph.graph import StateGraph, END, START
@@ -21,6 +21,7 @@ from app.core.graph_state import AgentGraphState
 from app.agents.nodes import (
     context_node,
     task_planner_node,
+    task_evaluator_node,
     agent_node,
     tool_executor_node,
     handoff_node,
@@ -64,6 +65,13 @@ def route_after_orchestrator_invoke(state: AgentGraphState, config: RunnableConf
     子主控接手后，返回 agent_node 继续执行子应用编排。
     """
     return "agent"
+
+
+def route_after_task_evaluator(state: AgentGraphState, config: RunnableConfig) -> str:
+    """
+    验收失败且仍有修复额度时，回到 agent 补执行；否则结束。
+    """
+    return "agent" if state.get("pending_repair") else END
 
 
 # ─────────────────────────────────────────────
@@ -129,6 +137,7 @@ async def build_conversation_graph():
     # ── 注册节点 (带遥测包裹) ──
     workflow.add_node("context", wrap_telemetry(context_node, "context"))
     workflow.add_node("task_planner", wrap_telemetry(task_planner_node, "task_planner"))
+    workflow.add_node("task_evaluator", wrap_telemetry(task_evaluator_node, "task_evaluator"))
     workflow.add_node("agent", wrap_telemetry(agent_node, "agent"))
     workflow.add_node("tool_executor", wrap_telemetry(tool_executor_node, "tool_executor"))
     workflow.add_node("handoff", wrap_telemetry(handoff_node, "handoff"))
@@ -149,6 +158,7 @@ async def build_conversation_graph():
             "orchestrator_invoke": "orchestrator_invoke",
             "tool_executor": "tool_executor",
             "synthesize": "synthesize",
+            "task_evaluator": "task_evaluator",
             END: END,
         }
     )
@@ -175,6 +185,11 @@ async def build_conversation_graph():
 
     # ── synthesize 后回 agent（让主控做最终收尾） ──
     workflow.add_edge("synthesize", "agent")
+    workflow.add_conditional_edges(
+        "task_evaluator",
+        route_after_task_evaluator,
+        {"agent": "agent", END: END}
+    )
 
     # ── 挂载 PostgreSQL Checkpointer (阶段2：持久化) ──
     try:

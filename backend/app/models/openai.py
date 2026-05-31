@@ -41,6 +41,7 @@ class ChatCompletionRequest(BaseModel):
     enable_memory: bool = False
     enable_swarm: bool = True
     enable_canvas: bool = True
+    max_task_repairs: Optional[int] = 1
     skip_save_user: bool = False
 
 # --- Responses (Non-Streaming) ---

@@ -62,7 +62,7 @@ class GraphRegistry:
 
                 if active_version:
                     logger.info(f"[GraphRegistry] Compiling from ACTIVE VERSION for template: {template_id} (Mode: {active_version.mode})")
-                    graph = await self._compile_from_topology(active_version.topology)
+                    graph = await self._compile_from_topology(self._normalize_runtime_topology(active_version.topology))
                     self._compiled_cache[template_id] = graph
                     return graph
 
@@ -74,7 +74,7 @@ class GraphRegistry:
             if template:
                 # 2. 动态编译基础模板
                 logger.info(f"[GraphRegistry] Compiling from BASE TEMPLATE: {template_id}")
-                graph = await self._compile_from_topology(template.topology)
+                graph = await self._compile_from_topology(self._normalize_runtime_topology(template.topology))
                 self._compiled_cache[template_id] = graph
                 return graph
         except (ProgrammingError, SQLAlchemyError) as e:
@@ -83,23 +83,74 @@ class GraphRegistry:
         # 3. 如果没找到，返回默认图
         return await build_conversation_graph()
 
+    def _normalize_runtime_topology(self, topology: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure persisted graph templates know about runtime planner/evaluator nodes."""
+        normalized = {
+            "nodes": [dict(item) for item in topology.get("nodes", [])],
+            "edges": [dict(item) for item in topology.get("edges", [])],
+            "conditional_edges": [dict(item) for item in topology.get("conditional_edges", [])],
+            "entry_point": topology.get("entry_point", "context"),
+        }
+        node_ids = {item.get("id") for item in normalized["nodes"]}
+        node_types = {item.get("type") for item in normalized["nodes"]}
+
+        if "context" in node_ids and "agent" in node_ids and "task_planner" not in node_ids and "task_planner" not in node_types:
+            normalized["nodes"].append({"id": "task_planner", "type": "task_planner"})
+            normalized["edges"] = [
+                edge
+                for edge in normalized["edges"]
+                if not (edge.get("source") == "context" and edge.get("target") == "agent")
+            ]
+            normalized["edges"].extend(
+                [
+                    {"source": "context", "target": "task_planner"},
+                    {"source": "task_planner", "target": "agent"},
+                ]
+            )
+
+        node_ids = {item.get("id") for item in normalized["nodes"]}
+        node_types = {item.get("type") for item in normalized["nodes"]}
+        if "task_evaluator" not in node_ids and "task_evaluator" not in node_types:
+            normalized["nodes"].append({"id": "task_evaluator", "type": "task_evaluator"})
+        normalized["edges"] = [
+            edge for edge in normalized["edges"] if edge.get("source") != "task_evaluator"
+        ]
+        if not any(ce.get("source") == "task_evaluator" for ce in normalized["conditional_edges"]):
+            normalized["conditional_edges"].append(
+                {
+                    "source": "task_evaluator",
+                    "type": "fixed",
+                    "target": "__end__",
+                }
+            )
+
+        for ce_def in normalized["conditional_edges"]:
+            if ce_def.get("type") == "adaptive_router":
+                mapping = dict(ce_def.get("mapping") or {})
+                mapping["task_evaluator"] = "task_evaluator"
+                ce_def["mapping"] = mapping
+
+        return normalized
+
     async def initialize_system_templates(self):
         """
         初始化系统内置模板到数据库。
         """
-        from langgraph.graph import END
         standard_topology = {
             "nodes": [
                 {"id": "context", "type": "context"},
+                {"id": "task_planner", "type": "task_planner"},
                 {"id": "agent", "type": "agent"},
                 {"id": "tool_executor", "type": "tool_executor"},
                 {"id": "handoff", "type": "handoff"},
                 {"id": "orchestrator_invoke", "type": "orchestrator_invoke"},
-                {"id": "synthesize", "type": "synthesize"}
+                {"id": "synthesize", "type": "synthesize"},
+                {"id": "task_evaluator", "type": "task_evaluator"}
             ],
             "edges": [
-                {"source": "context", "target": "agent"},
-                {"source": "synthesize", "target": "agent"}
+                {"source": "context", "target": "task_planner"},
+                {"source": "task_planner", "target": "agent"},
+                {"source": "synthesize", "target": "agent"},
             ],
             "conditional_edges": [
                 {
@@ -110,8 +161,14 @@ class GraphRegistry:
                         "orchestrator_invoke": "orchestrator_invoke",
                         "tool_executor": "tool_executor",
                         "synthesize": "synthesize",
+                        "task_evaluator": "task_evaluator",
                         "__end__": "__end__"
                     }
+                },
+                {
+                    "source": "task_evaluator",
+                    "type": "fixed",
+                    "target": "__end__"
                 },
                 {
                     "source": "tool_executor",
@@ -174,11 +231,20 @@ class GraphRegistry:
         # 节点注册逻辑需映射 type 到实际函数 (此处简化演示，未来可扩展节点插件)
         from app.agents.graph_builder import wrap_telemetry
         from app.agents.nodes import (
-            context_node, agent_node, tool_executor_node, handoff_node, orchestrator_invoke_node, synthesize_node
+            context_node,
+            task_planner_node,
+            task_evaluator_node,
+            agent_node,
+            tool_executor_node,
+            handoff_node,
+            orchestrator_invoke_node,
+            synthesize_node,
         )
         
         node_factory = {
             "context": context_node,
+            "task_planner": task_planner_node,
+            "task_evaluator": task_evaluator_node,
             "agent": agent_node,
             "tool_executor": tool_executor_node,
             "handoff": handoff_node,
@@ -196,11 +262,17 @@ class GraphRegistry:
         
         # 解析 edges (固定边)
         for edge_def in topology.get("edges", []):
-            workflow.add_edge(edge_def["source"], edge_def["target"])
+            target = edge_def["target"]
+            workflow.add_edge(edge_def["source"], END if target == "__end__" else target)
 
         # 解析 conditional_edges (条件边)
-        from app.agents.graph_builder import adaptive_route, route_after_tools, route_after_handoff, route_after_orchestrator_invoke
-        from langgraph.graph import END
+        from app.agents.graph_builder import (
+            adaptive_route,
+            route_after_handoff,
+            route_after_orchestrator_invoke,
+            route_after_task_evaluator,
+            route_after_tools,
+        )
 
         for ce_def in topology.get("conditional_edges", []):
             source = ce_def["source"]
@@ -221,6 +293,8 @@ class GraphRegistry:
                     workflow.add_conditional_edges(source, route_after_handoff, {target: target})
                 elif source == "orchestrator_invoke":
                     workflow.add_conditional_edges(source, route_after_orchestrator_invoke, {target: target})
+                elif source == "task_evaluator":
+                    workflow.add_conditional_edges(source, route_after_task_evaluator, {"agent": "agent", END: END})
                 else:
                     # 默认情况支持简单映射
                     workflow.add_conditional_edges(source, lambda x: target, {target: target})
@@ -228,7 +302,11 @@ class GraphRegistry:
         workflow.set_entry_point(topology.get("entry_point", "context"))
         
         # 持久化支持
-        checkpointer = await create_pg_checkpointer()
+        try:
+            checkpointer = await create_pg_checkpointer()
+        except Exception as e:
+            logger.warning(f"[GraphRegistry] Fallback to MemorySaver due to: {e}")
+            checkpointer = MemorySaver()
         return workflow.compile(checkpointer=checkpointer)
 
     def invalidate_cache(self, template_id: str):

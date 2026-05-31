@@ -15,10 +15,10 @@ from app.agents.task_runtime import (
     build_execution_plan,
     build_task_frame,
     latest_user_text_from_state,
+    persist_task_runtime_state,
 )
 from app.core.graph_state import AgentGraphState
 from app.core.plugins import registry
-from app.models.message import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,13 @@ async def task_planner_node(state: AgentGraphState, config: RunnableConfig) -> d
         await callback.emit(f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n")
 
     if db and current_msg_id:
-        await _persist_task_runtime(db, current_msg_id, event)
+        await persist_task_runtime_state(
+            db,
+            current_msg_id,
+            task_frame=task_frame,
+            execution_plan=execution_plan,
+            execution_artifacts=[],
+        )
 
     return {
         "task_frame": task_frame,
@@ -68,21 +74,3 @@ def _compact_task_frame(task_frame: dict[str, Any]) -> dict[str, Any]:
     if isinstance(goal, str) and len(goal) > 800:
         compact["user_goal"] = goal[:800] + "..."
     return compact
-
-
-async def _persist_task_runtime(db, message_id: str, event: dict[str, Any]) -> None:
-    try:
-        msg = await db.get(ChatMessage, message_id)
-        if not msg:
-            return
-        runtime_events = dict(msg.runtime_events or {})
-        runtime_events["task_runtime"] = event
-        msg.runtime_events = runtime_events
-        db.add(msg)
-        await db.commit()
-    except Exception as exc:
-        logger.debug(f"[TaskPlannerNode] persist task runtime failed: {exc}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            logger.debug("[TaskPlannerNode] rollback failed", exc_info=True)

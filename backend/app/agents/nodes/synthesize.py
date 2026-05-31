@@ -7,6 +7,11 @@
 import json
 import logging
 from langgraph.types import RunnableConfig
+from app.agents.task_runtime import (
+    advance_execution_plan,
+    build_task_runtime_update_event,
+    persist_task_runtime_state,
+)
 from app.core.graph_state import AgentGraphState
 from app.models.openai import (
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionChunkDelta
@@ -27,12 +32,20 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
     orchestrator_agent_id = c["orchestrator_agent_id"]
     orchestrator_profile = c["orchestrator_agent_profile"]
     request_id = c["request_id"]
+    db = c.get("db")
 
     current_msg_id = state["current_msg_id"]
     stream_chunk_id = str(current_msg_id or request_id)
     wrapping_expert_id = state["wrapping_expert_id"]
     total_assistant_content = state["total_assistant_content"]
     current_agent_profile = state["current_agent_profile"]
+    task_frame = state.get("task_frame") or {}
+    execution_artifacts = list(state.get("execution_artifacts") or [])
+    execution_plan = advance_execution_plan(
+        state.get("execution_plan") or {},
+        event_type="synthesize_complete",
+        payload={"agent_id": state.get("current_agent_id"), "status": "completed"},
+    )
 
     # 通知前端专家协作完成
     agent_name = current_agent_profile.get("name", "") if current_agent_profile else ""
@@ -50,6 +63,17 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
         await callback.emit(f"data: {close_chunk}\n\n")
         total_assistant_content += closing_tag
 
+    await callback.emit(
+        f"data: {json.dumps(build_task_runtime_update_event(task_frame=task_frame, execution_plan=execution_plan, execution_artifacts=execution_artifacts), ensure_ascii=False, default=str)}\n\n"
+    )
+    await persist_task_runtime_state(
+        db,
+        current_msg_id,
+        task_frame=task_frame,
+        execution_plan=execution_plan,
+        execution_artifacts=execution_artifacts,
+    )
+
     return {
         "current_agent_id": orchestrator_agent_id,
         "current_agent_profile": orchestrator_profile,
@@ -59,4 +83,6 @@ async def synthesize_node(state: AgentGraphState, config: RunnableConfig) -> dic
         "iter_text": "",
         "interaction_mode": "chat",
         "pending_delegate_type": None,
+        "execution_plan": execution_plan,
+        "execution_artifacts": execution_artifacts,
     }
