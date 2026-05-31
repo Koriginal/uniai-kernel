@@ -31,22 +31,26 @@ context -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize
 
 ## 已落地改动
 
-标准图新增 `task_planner` 节点：
+标准图新增 `task_planner` 和 `task_evaluator` 节点：
 
 ```text
-context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize
+context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize -> task_evaluator
 ```
 
 新增模块：
 
 - `backend/app/agents/task_runtime.py`
 - `backend/app/agents/nodes/task_planner.py`
+- `backend/app/agents/nodes/task_evaluator.py`
 
 新增状态字段：
 
 - `task_frame`
 - `execution_plan`
 - `execution_artifacts`
+- `task_evaluation`
+- `task_repair_count`
+- `pending_repair`
 
 `task_planner_node` 的职责：
 
@@ -57,6 +61,8 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
 5. 写入当前 assistant message 的 `runtime_events.task_runtime`，方便历史回放和审计。
 
 `agent_node` 现在会把结构化计划转成 `[TASK RUNTIME CONTRACT]` 注入本轮模型上下文。这里不是把所有机制继续塞进提示词，而是让 prompt 成为运行时状态的一种投影。后续路由器、工具执行器和前端可以直接读 `state["execution_plan"]`。
+
+`task_evaluator_node` 在一次回答结束前读取 `task_frame`、`execution_plan`、`execution_artifacts` 和最终消息，生成 `task_evaluation`。如果验收失败且 `max_task_repairs` 没耗尽，会把计划重新打开，并把修复要求写回下一轮 `agent_node`。
 
 ## task_frame 字段
 
@@ -121,25 +127,43 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
 - `engineering`：inspect -> delegate 可选 -> change -> verify。
 - `general`：understand -> solve -> respond。
 
-## 后续要接的机制
+## 已接入的推进机制
 
 ### 1. 计划执行状态推进
 
-当前 `execution_plan.steps[].status` 只生成，不更新。下一步应该在节点结束时推进状态：
-
-- `agent_node` 结束：更新当前 orchestrator 步骤为 `completed` 或 `needs_tool`。
-- `tool_executor_node` 结束：把命中的 tool step 标记为 `completed`，把结果引用写入 `execution_artifacts`。
-- `handoff_node` / `synthesize_node`：记录专家输入、输出和归还状态。
-
-建议新增函数：
+当前已提供统一函数：
 
 ```python
 advance_execution_plan(state, event_type, payload) -> dict
 ```
 
-不要把状态推进写散在每个节点里。
+节点不直接拼状态结构，而是按事件推进计划：
 
-### 2. 工具执行按计划约束
+- `agent`：记录模型动作和回答阶段。
+- `tool_executor`：记录工具调用和工具结果产物。
+- `handoff`：记录专家移交。
+- `orchestrator_invoke`：记录子主控调用。
+- `synthesize`：记录汇总归还。
+- `task_evaluator`：记录验收结果，并决定是否进入修复。
+
+### 2. 运行时能力接口
+
+当前已提供接口：
+
+```text
+GET /api/v1/graph/runtime/capabilities
+```
+
+返回内容包括：
+
+- `capabilities`：当前内核能力目录。
+- `state_fields`：运行图会使用的状态字段。
+- `events`：前端和 SDK 需要监听的事件类型。
+- `request_config`：调用方可传的运行时参数。
+
+## 后续要接的机制
+
+### 1. 工具执行按计划约束
 
 工具执行器目前只看 `pending_tool_calls` 和 Agent runtime policy。下一步要增加 plan policy：
 
@@ -148,7 +172,7 @@ advance_execution_plan(state, event_type, payload) -> dict
 - 对 `requires_external_facts=true` 且 `web_search` 可用的任务，必须先有 retrieve 结果再回答。
 - 对 `requires_governance=true` 的任务，优先读本体运行时结果，不让模型绕过规则直接给结论。
 
-### 3. 工具结果外置
+### 2. 工具结果外置
 
 当前 `tool_executor_node` 仍把 `str(res)` 放进 tool message。后续应新增 `tool_artifacts` 表：
 
@@ -165,7 +189,7 @@ advance_execution_plan(state, event_type, payload) -> dict
 
 工具消息里只回填 `preview`、`artifact_id` 和必要摘要。这样长搜索结果、大 JSON、代码片段不会撑爆上下文。
 
-### 4. Tool policy 表
+### 3. Tool policy 表
 
 建议新增 `tool_policy_rules`：
 
@@ -188,7 +212,7 @@ advance_execution_plan(state, event_type, payload) -> dict
 3. 工具自己的 `validateInput`。
 4. 动态工具类型策略，例如 CLI allowlist、MCP server allowlist、HTTP host allowlist。
 
-### 5. Skill 层
+### 4. Skill 层
 
 动态工具解决“能执行什么”，Skill 解决“某类任务怎么做”。建议新增 `agent_skills`：
 
@@ -209,9 +233,10 @@ advance_execution_plan(state, event_type, payload) -> dict
 这一轮改动的验收不是“模型回答更聪明”，而是运行时出现了可观测的结构：
 
 - SSE 中能看到 `task_runtime` 事件。
+- SSE 中能看到 `task_runtime_update` 和 `task_evaluation` 事件。
 - `ChatMessage.runtime_events.task_runtime` 能回放任务框架和计划。
 - `agent_node` 的 prompt 中有来自状态的 `[TASK RUNTIME CONTRACT]`。
-- 单元测试覆盖任务分类、计划生成和 prompt 投影。
+- 单元测试覆盖任务分类、计划生成、prompt 投影、计划推进、产物记录、验收和修复。
 
 后续每加一类任务，不应该先改 system prompt，而应该先补：
 
