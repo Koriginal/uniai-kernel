@@ -221,6 +221,63 @@ const taskStatusMeta: Record<string, { color: string; label: string }> = {
   repairing: { color: 'processing', label: '修复中' },
 };
 
+const openToolArtifact = async (artifactId: string) => {
+  try {
+    const token = localStorage.getItem('token');
+    const res = await axios.get(`/api/v1/messages/artifacts/${artifactId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    const artifact = res.data || {};
+    const metadata = artifact.metadata || {};
+    Modal.info({
+      title: `${artifact.tool_name || '工具'} 产物`,
+      width: 760,
+      content: (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {artifact.content_type && <Tag>{artifact.content_type}</Tag>}
+            {artifact.size_bytes !== undefined && <Tag>{artifact.size_bytes} bytes</Tag>}
+            {artifact.tool_call_id && <Tag color="blue">{artifact.tool_call_id}</Tag>}
+          </div>
+          {Object.keys(metadata).length > 0 && (
+            <pre style={{
+              margin: 0,
+              maxHeight: 120,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              background: '#f8fafc',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 12,
+            }}>
+              {JSON.stringify(metadata, null, 2)}
+            </pre>
+          )}
+          <pre style={{
+            margin: 0,
+            maxHeight: '52vh',
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            background: '#f8fafc',
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: 12,
+            fontSize: 12,
+          }}>
+            {typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content, null, 2)}
+          </pre>
+        </div>
+      ),
+    });
+  } catch (err) {
+    console.error('Failed to load tool artifact', err);
+    message.error('工具产物读取失败');
+  }
+};
+
 const TaskRuntimePanel: React.FC<{ runtime?: any }> = ({ runtime }) => {
   if (!runtime) return null;
   const frame = runtime.task_frame || {};
@@ -351,6 +408,18 @@ const RuntimeChecksPanel: React.FC<{ runtime?: any; tools?: any[] }> = ({ runtim
                     {stepTools.length > 0 && <Tag color="purple">工具 {stepTools.length}</Tag>}
                     {artifacts.length > 0 && <Tag color="cyan">产物 {artifacts.length}</Tag>}
                   </Space>
+                  {artifacts.length > 0 && (
+                    <div style={{ display: 'grid', gap: 5, marginTop: 6 }}>
+                      {artifacts.slice(0, 3).map((event: any, artifactIndex: number) => (
+                        <div key={event.artifact_id || artifactIndex} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{event.tool_label || event.tool_name || '工具产物'}</Text>
+                          <Button size="small" onClick={() => openToolArtifact(event.artifact_id)}>
+                            查看产物
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -364,39 +433,6 @@ const RuntimeChecksPanel: React.FC<{ runtime?: any; tools?: any[] }> = ({ runtim
 const ExecutionTracePanel: React.FC<{ ontology?: any; tools?: any[]; taskRuntime?: any }> = ({ ontology, tools, taskRuntime }) => {
   const toolEvents = (tools || []).filter(Boolean);
   if (!taskRuntime && !ontology && toolEvents.length === 0) return null;
-
-  const openToolArtifact = async (artifactId: string) => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await axios.get(`/api/v1/messages/artifacts/${artifactId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const artifact = res.data || {};
-      Modal.info({
-        title: `${artifact.tool_name || '工具'} 产物`,
-        width: 760,
-        content: (
-          <pre style={{
-            margin: 0,
-            maxHeight: '60vh',
-            overflow: 'auto',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            background: '#f8fafc',
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            padding: 12,
-            fontSize: 12,
-          }}>
-            {typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content, null, 2)}
-          </pre>
-        ),
-      });
-    } catch (err) {
-      console.error('Failed to load tool artifact', err);
-      message.error('工具产物读取失败');
-    }
-  };
 
   const mapping = ontology?.mapping || {};
   const decision = ontology?.decision || {};
