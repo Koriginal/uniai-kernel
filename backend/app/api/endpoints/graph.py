@@ -10,7 +10,7 @@ from sqlalchemy import select, and_, update, desc
 
 from app.agents.graph_builder import get_graph_mermaid
 from app.agents.health_monitor import health_monitor
-from app.agents.task_runtime import get_runtime_capability_catalog
+from app.agents.task_runtime import get_runtime_capability_catalog, get_runtime_provider_catalog
 from app.core.db import SessionLocal, get_db
 from app.models.graph_version import GraphTopologyVersionModel
 from app.schemas.graph import GraphTopologyVersion, GraphTopologyVersionCreate, GraphTopologyVersionList
@@ -121,6 +121,7 @@ async def get_graph_runtime_capabilities():
     """
     return {
         "capabilities": get_runtime_capability_catalog(),
+        "providers": get_runtime_provider_catalog(),
         "state_fields": [
             "task_frame",
             "execution_plan",

@@ -11,6 +11,14 @@ import hashlib
 import re
 from typing import Any
 
+from app.agents.runtime_capabilities import (
+    RuntimeCapabilityContext,
+    get_runtime_provider_catalog,
+    register_runtime_capability_provider,
+    select_runtime_capability_provider,
+    unregister_runtime_capability_provider,
+)
+
 
 REALTIME_KEYWORDS = {
     "今日", "今天", "最新", "当前", "实时", "现在", "刚刚",
@@ -32,6 +40,60 @@ DOCUMENT_KEYWORDS = {
     "合同", "协议", "甲方", "乙方", "付款", "违约", "责任上限", "自动续约",
     "contract", "agreement", "payment terms", "liability", "termination",
 }
+
+
+class DefaultRuntimeCapabilityProvider:
+    name = "default_task_runtime"
+    version = "1.0"
+    task_kinds = ["general", "realtime_research", "engineering", "business_review"]
+    priority = 0
+
+    def catalog(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "task_kinds": self.task_kinds,
+            "priority": self.priority,
+            "description": "内置任务理解、执行拆解和确定性验收规则。",
+            "state_fields": ["task_frame", "execution_plan", "execution_artifacts", "task_evaluation"],
+            "extension_points": ["match", "classify_task", "build_frame", "build_plan", "evaluate"],
+        }
+
+    def match(self, context: RuntimeCapabilityContext) -> float:
+        return 0.1
+
+    def classify_task(self, context: RuntimeCapabilityContext) -> str:
+        return _classify_task_default(context.query, context.semantic_frame)
+
+    def build_frame(self, context: RuntimeCapabilityContext) -> dict[str, Any]:
+        return _build_task_frame_default(
+            query=context.query,
+            semantic_frame=context.semantic_frame,
+            semantic_slots=context.semantic_slots,
+            agent_profile=context.agent_profile,
+            provider=self,
+        )
+
+    def build_plan(self, context: RuntimeCapabilityContext) -> dict[str, Any]:
+        return _build_execution_plan_default(
+            task_frame=context.task_frame,
+            available_tools=context.available_tools,
+            enable_swarm=context.enable_swarm,
+            provider=self,
+        )
+
+    def evaluate(self, context: RuntimeCapabilityContext) -> dict[str, Any]:
+        return _evaluate_task_completion_default(
+            task_frame=context.task_frame,
+            execution_plan=context.execution_plan,
+            execution_artifacts=context.execution_artifacts,
+            messages=context.messages,
+            assistant_text=context.assistant_text,
+            provider=self,
+        )
+
+
+register_runtime_capability_provider(DefaultRuntimeCapabilityProvider())
 
 
 def get_runtime_capability_catalog() -> list[dict[str, Any]]:
@@ -79,6 +141,15 @@ def get_runtime_capability_catalog() -> list[dict[str, Any]]:
             "description": "验收失败且仍有额度时，重开缺口步骤并回到 agent 补执行。",
         },
         {
+            "id": "runtime_capability_provider",
+            "label": "运行时能力 Provider",
+            "node": "task_planner/task_evaluator",
+            "state_fields": ["task_frame", "execution_plan", "task_evaluation"],
+            "events": ["task_runtime", "task_evaluation"],
+            "description": "业务模块可以注册 provider，接管任务分类、计划生成和验收逻辑。",
+            "providers": [item["name"] for item in get_runtime_provider_catalog()],
+        },
+        {
             "id": "plan_aware_tool_policy",
             "label": "计划约束工具",
             "node": "tool_executor",
@@ -122,6 +193,12 @@ def latest_user_text_from_state(state: dict[str, Any]) -> str:
 
 def classify_task(query: str, semantic_frame: dict[str, Any] | None = None) -> str:
     """Return a coarse task kind used by planning and routing."""
+    context = RuntimeCapabilityContext(query=query, semantic_frame=semantic_frame or {})
+    provider = select_runtime_capability_provider(context)
+    return provider.classify_task(context)
+
+
+def _classify_task_default(query: str, semantic_frame: dict[str, Any] | None = None) -> str:
     frame_kind = (semantic_frame or {}).get("intent") or (semantic_frame or {}).get("task_type")
     if isinstance(frame_kind, str) and frame_kind:
         normalized = frame_kind.lower()
@@ -149,7 +226,25 @@ def build_task_frame(
     semantic_slots: dict[str, Any] | None,
     agent_profile: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    task_kind = classify_task(query, semantic_frame)
+    context = RuntimeCapabilityContext(
+        query=query,
+        semantic_frame=semantic_frame or {},
+        semantic_slots=semantic_slots or {},
+        agent_profile=agent_profile or {},
+    )
+    provider = select_runtime_capability_provider(context)
+    return provider.build_frame(context)
+
+
+def _build_task_frame_default(
+    *,
+    query: str,
+    semantic_frame: dict[str, Any] | None,
+    semantic_slots: dict[str, Any] | None,
+    agent_profile: dict[str, Any] | None,
+    provider: DefaultRuntimeCapabilityProvider | None = None,
+) -> dict[str, Any]:
+    task_kind = _classify_task_default(query, semantic_frame)
     profile_policy = (agent_profile or {}).get("runtime_policy") or {}
     ontology_config = (agent_profile or {}).get("ontology_config") or {}
     requires_external_facts = task_kind == "realtime_research"
@@ -171,6 +266,7 @@ def build_task_frame(
         },
         "acceptance": _default_acceptance(task_kind),
         "risk_flags": _risk_flags(query, task_kind, profile_policy),
+        "runtime_provider": _provider_summary(provider),
     }
 
 
@@ -179,6 +275,22 @@ def build_execution_plan(
     task_frame: dict[str, Any],
     available_tools: list[str],
     enable_swarm: bool,
+) -> dict[str, Any]:
+    context = RuntimeCapabilityContext(
+        task_frame=task_frame,
+        available_tools=available_tools or [],
+        enable_swarm=enable_swarm,
+    )
+    provider = select_runtime_capability_provider(context)
+    return provider.build_plan(context)
+
+
+def _build_execution_plan_default(
+    *,
+    task_frame: dict[str, Any],
+    available_tools: list[str],
+    enable_swarm: bool,
+    provider: DefaultRuntimeCapabilityProvider | None = None,
 ) -> dict[str, Any]:
     kind = task_frame.get("kind") or "general"
     tool_set = set(available_tools or [])
@@ -220,6 +332,7 @@ def build_execution_plan(
         "steps": steps,
         "current_step": steps[0]["id"] if steps else None,
         "done_criteria": task_frame.get("acceptance") or [],
+        "runtime_provider": _provider_summary(provider),
     }
 
 
@@ -542,6 +655,26 @@ def evaluate_task_completion(
     messages: list[dict[str, Any]] | None,
     assistant_text: str | None,
 ) -> dict[str, Any]:
+    context = RuntimeCapabilityContext(
+        task_frame=task_frame or {},
+        execution_plan=execution_plan or {},
+        execution_artifacts=execution_artifacts or [],
+        messages=messages or [],
+        assistant_text=assistant_text or "",
+    )
+    provider = select_runtime_capability_provider(context)
+    return provider.evaluate(context)
+
+
+def _evaluate_task_completion_default(
+    *,
+    task_frame: dict[str, Any] | None,
+    execution_plan: dict[str, Any] | None,
+    execution_artifacts: list[dict[str, Any]] | None,
+    messages: list[dict[str, Any]] | None,
+    assistant_text: str | None,
+    provider: DefaultRuntimeCapabilityProvider | None = None,
+) -> dict[str, Any]:
     frame = task_frame or {}
     plan = execution_plan or {}
     artifacts = execution_artifacts or []
@@ -613,6 +746,7 @@ def evaluate_task_completion(
         "checks": checks,
         "missing_requirements": missing,
         "acceptance": frame.get("acceptance") or [],
+        "runtime_provider": _provider_summary(provider),
     }
 
 
@@ -635,6 +769,15 @@ def _risk_flags(query: str, kind: str, policy: dict[str, Any]) -> list[str]:
     if kind == "business_review":
         flags.append("business_decision_requires_evidence")
     return flags
+
+
+def _provider_summary(provider: Any) -> dict[str, Any]:
+    if not provider:
+        return {}
+    return {
+        "name": getattr(provider, "name", "unknown"),
+        "version": getattr(provider, "version", "unknown"),
+    }
 
 
 def _step(

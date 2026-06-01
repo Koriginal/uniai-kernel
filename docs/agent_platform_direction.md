@@ -29,14 +29,15 @@ UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system promp
 - `execution_plan` 记录步骤、责任方、工具候选、当前步骤和完成标准。
 - `execution_artifacts` 记录工具、专家和回答阶段留下的可回放产物。
 - `task_evaluator` 会在结束前检查任务完成度，并在失败时按 `max_task_repairs` 重新打开计划。
+- 已有 `runtime_capabilities` 扩展契约，默认 provider 承接当前任务分类、计划和验收逻辑。
 - 旧拓扑通过 `graph_registry._normalize_runtime_topology()` 自动补齐 `task_planner` 和 `task_evaluator`，避免历史模板直接崩。
-- `/api/v1/graph/runtime/capabilities` 已暴露运行时能力目录、状态字段、事件类型和请求配置。
+- `/api/v1/graph/runtime/capabilities` 已暴露运行时能力目录、provider、状态字段、事件类型和请求配置。
 
 还没有完成的部分：
 
-- 任务分类仍是规则优先，不是可配置策略，也没有模型分类回退。
-- 计划步骤只做到节点级推进，还没有强约束工具调用必须匹配当前步骤。
-- `execution_artifacts` 目前存在状态和消息 runtime events 里，还没有独立表承载大结果。
+- 任务分类仍是默认 provider 的规则优先，provider 契约已接入，但还没有 Agent Profile 级 provider 白名单和模型分类回退。
+- 计划步骤已有工具准入约束，但工具注册表的 category、effect 和风险等级还不够细。
+- 完整工具结果已有 `tool_artifacts` 表承载；专家输出、文件产物还没有统一进入 artifact 表。
 - 修复循环是一次性图内重试，不是完整的子任务队列，也没有人工确认点。
 - 前端控制台刚开始接入任务运行态，还没有形成专门的运行图调试台。
 - E2E 测试还没覆盖 SSE 全链路、历史消息回放和旧拓扑迁移。
@@ -79,27 +80,37 @@ UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system promp
 
 ### 1. 运行时扩展契约
 
-现在 `task_runtime.py` 已经有能力目录，但插件或业务模块还不能注册自己的任务类型。
+现在已经新增 `backend/app/agents/runtime_capabilities/`，用于注册任务运行时 provider。旧的 `build_task_frame()`、`build_execution_plan()`、`evaluate_task_completion()` 入口没有改，内部会先选择 provider，再调用 provider 的分类、计划和验收逻辑。
 
-建议新增接口：
+当前接口：
 
 ```python
 class RuntimeCapabilityProvider(Protocol):
     name: str
+    version: str
     task_kinds: list[str]
+    priority: int
 
-    def match(self, state: GraphState) -> float: ...
-    def build_frame(self, state: GraphState) -> dict: ...
-    def build_plan(self, task_frame: dict, state: GraphState) -> dict: ...
-    def evaluate(self, state: GraphState) -> dict: ...
+    def catalog(self) -> dict: ...
+    def match(self, context: RuntimeCapabilityContext) -> float: ...
+    def classify_task(self, context: RuntimeCapabilityContext) -> str: ...
+    def build_frame(self, context: RuntimeCapabilityContext) -> dict: ...
+    def build_plan(self, context: RuntimeCapabilityContext) -> dict: ...
+    def evaluate(self, context: RuntimeCapabilityContext) -> dict: ...
 ```
 
-落地动作：
+已落地动作：
 
-- 在 `backend/app/agents/runtime_capabilities/` 下放 provider。
-- `task_runtime.py` 保留默认 provider。
-- `/graph/runtime/capabilities` 返回 provider 名称、版本、任务类型和事件。
+- `DefaultRuntimeCapabilityProvider` 承接当前 `general`、`realtime_research`、`engineering`、`business_review`。
+- `register_runtime_capability_provider()` 支持业务模块注册 provider。
+- `RuntimeCapabilityContext` 固定传入 query、semantic frame、agent profile、available tools、plan、artifacts、messages 和 final text。
+- `task_frame`、`execution_plan`、`task_evaluation` 写入 `runtime_provider`，前端和历史回放可以知道本次由哪个 provider 接管。
+- `/graph/runtime/capabilities` 返回 `providers[]`，GraphTracePanel 展示 provider 和 task kinds。
+
+下一步动作：
+
 - Agent Profile 可配置允许哪些 provider。
+- 模型分类回退只能作为 provider 内部策略，输出仍必须落到固定字段。
 
 ### 2. Plan-aware Tool Policy
 
@@ -204,7 +215,7 @@ created_at
 2. 补工具计划约束：先做 `validate_tool_against_plan`，再扩展审计字段。
 3. 补 runtime console：先让一次运行的计划、节点、工具、验收在 UI 上串起来。
 4. 补 artifact 表：先支持工具结果，再支持专家输出和文件产物。
-5. 做 runtime capability provider：把默认规则从 `task_runtime.py` 里拆出来，形成可扩展接口。
+5. 做 Agent Profile 级 provider 配置：限制哪些 Agent 可以启用哪些 runtime provider。
 
 ## 取舍
 

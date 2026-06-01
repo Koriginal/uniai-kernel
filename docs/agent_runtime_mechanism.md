@@ -256,7 +256,18 @@ GET /api/v1/graph/runtime/capabilities
 
 ## 后续要接的机制
 
-### 1. Tool policy 表
+### 1. Runtime capability provider
+
+当前已经有 `backend/app/agents/runtime_capabilities/`：
+
+- `RuntimeCapabilityContext`：统一传 query、semantic frame、Agent Profile、可用工具、计划、产物、消息和最终回答。
+- `RuntimeCapabilityProvider`：提供 `match()`、`classify_task()`、`build_frame()`、`build_plan()`、`evaluate()`。
+- `register_runtime_capability_provider()`：业务模块注册自己的任务类型和验收逻辑。
+- `DefaultRuntimeCapabilityProvider`：保留当前默认规则，避免老入口改动。
+
+后续每加一类任务，不应该先改 system prompt，也不应该直接改全局 `classify_task`。先新增 provider，再决定是否让某个 Agent Profile 启用它。
+
+### 2. Tool policy 表
 
 建议新增 `tool_policy_rules`：
 
@@ -279,7 +290,7 @@ GET /api/v1/graph/runtime/capabilities
 3. 工具自己的 `validateInput`。
 4. 动态工具类型策略，例如 CLI allowlist、MCP server allowlist、HTTP host allowlist。
 
-### 2. Skill 层
+### 3. Skill 层
 
 动态工具解决“能执行什么”，Skill 解决“某类任务怎么做”。建议新增 `agent_skills`：
 
@@ -305,10 +316,11 @@ GET /api/v1/graph/runtime/capabilities
 - `agent_node` 的 prompt 中有来自状态的 `[TASK RUNTIME CONTRACT]`。
 - 单元测试覆盖任务分类、计划生成、prompt 投影、计划推进、产物记录、验收和修复。
 
-后续每加一类任务，不应该先改 system prompt，而应该先补：
+后续每加一类任务，不应该先改 system prompt，而应该先补 provider：
 
-1. `classify_task`
-2. `build_task_frame`
-3. `build_execution_plan`
-4. 计划状态推进
-5. 工具/专家/验收策略
+1. `match`
+2. `classify_task`
+3. `build_frame`
+4. `build_plan`
+5. 计划状态推进
+6. 工具/专家/验收策略

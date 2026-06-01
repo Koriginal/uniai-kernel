@@ -197,9 +197,15 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
     }
   };
 
+  const capabilityLabels: string[] = Array.isArray(capabilities?.capabilities)
+    ? capabilities.capabilities.map((item: any) => item.label || item.id).filter(Boolean)
+    : [];
+  const runtimeProviders: any[] = Array.isArray(capabilities?.providers) ? capabilities.providers : [];
+  const providerNames = runtimeProviders.map((item) => item.name).filter(Boolean);
+  const providerTaskKinds = Array.from(new Set(runtimeProviders.flatMap((item) => item.task_kinds || [])));
   const taskKinds: string[] = capabilities?.task_kinds
     || capabilities?.runtime_capabilities?.task_kinds
-    || (Array.isArray(capabilities?.capabilities) ? capabilities.capabilities.map((item: any) => item.name).filter(Boolean) : []);
+    || providerTaskKinds;
   const eventTypes: string[] = capabilities?.events || capabilities?.runtime_events || [];
   const latestTaskRuntimeEvent = [...runtimeEvents].reverse().find((event) => event.type === 'task_runtime' || event.type === 'task_runtime_update');
   const latestTaskRuntime = latestTaskRuntimeEvent?.payload?.task_runtime || latestTaskRuntimeEvent?.payload?.runtime || latestTaskRuntimeEvent?.payload || {};
@@ -282,6 +288,7 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
             {finalToolEvents.length > 0 && <Tag>工具 {finalToolEvents.length}</Tag>}
             {blockedToolCount > 0 && <Tag color="warning">拦截 {blockedToolCount}</Tag>}
             {artifactCount > 0 && <Tag color="cyan">产物 {artifactCount}</Tag>}
+            {latestTaskFrame.runtime_provider?.name && <Tag color="geekblue">Provider {latestTaskFrame.runtime_provider.name}</Tag>}
           </Space>
           {latestPlan.current_step && (
             <div style={{ marginTop: 8, color: '#64748b', fontSize: 12 }}>
@@ -302,9 +309,11 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
             {capabilities ? <Tag color="green">已同步</Tag> : <Tag>本地兜底</Tag>}
           </div>
           <Space size={[4, 6]} wrap>
-            {taskKinds.slice(0, 6).map((kind) => <Tag key={kind} color="blue">{kind}</Tag>)}
+            {providerNames.slice(0, 3).map((name) => <Tag key={name} color="geekblue">{name}</Tag>)}
+            {taskKinds.slice(0, 5).map((kind) => <Tag key={kind} color="blue">{kind}</Tag>)}
+            {capabilityLabels.slice(0, 3).map((label) => <Tag key={label} color="cyan">{label}</Tag>)}
             {eventTypes.slice(0, 4).map((event) => <Tag key={event}>{event}</Tag>)}
-            {taskKinds.length === 0 && eventTypes.length === 0 && (
+            {providerNames.length === 0 && taskKinds.length === 0 && capabilityLabels.length === 0 && eventTypes.length === 0 && (
               <>
                 <Tag color="blue">task_frame</Tag>
                 <Tag color="blue">execution_plan</Tag>

@@ -7,11 +7,15 @@ from app.agents.task_runtime import (
     classify_task,
     evaluate_task_completion,
     get_runtime_capability_catalog,
+    get_runtime_provider_catalog,
     reopen_plan_for_repair,
     record_execution_artifact,
+    register_runtime_capability_provider,
     should_repair_task,
+    unregister_runtime_capability_provider,
     validate_tool_against_plan,
 )
+from app.agents.runtime_capabilities import RuntimeCapabilityContext
 
 
 def test_classify_realtime_task():
@@ -311,4 +315,101 @@ def test_runtime_capability_catalog_exposes_framework_nodes():
     assert "execution_ledger" in ids
     assert "task_evaluation" in ids
     assert "runtime_repair" in ids
+    assert "runtime_capability_provider" in ids
     assert "plan_aware_tool_policy" in ids
+
+
+def test_runtime_provider_catalog_exposes_default_provider():
+    providers = get_runtime_provider_catalog()
+    names = {item["name"] for item in providers}
+
+    assert "default_task_runtime" in names
+
+
+def test_registered_runtime_provider_can_own_custom_task_kind():
+    class InvoiceRuntimeProvider:
+        name = "invoice_runtime_test"
+        version = "0.1"
+        task_kinds = ["invoice_review"]
+        priority = 20
+
+        def catalog(self):
+            return {
+                "name": self.name,
+                "version": self.version,
+                "task_kinds": self.task_kinds,
+                "description": "test provider",
+            }
+
+        def match(self, context: RuntimeCapabilityContext) -> float:
+            if "发票" in context.query:
+                return 0.9
+            if context.task_frame.get("kind") == "invoice_review":
+                return 0.9
+            return 0.0
+
+        def classify_task(self, context: RuntimeCapabilityContext) -> str:
+            return "invoice_review"
+
+        def build_frame(self, context: RuntimeCapabilityContext) -> dict:
+            return {
+                "task_id": "task_invoice_test",
+                "kind": "invoice_review",
+                "user_goal": context.query,
+                "constraints": {"requires_governance": True},
+                "acceptance": ["核对发票字段"],
+                "runtime_provider": {"name": self.name, "version": self.version},
+            }
+
+        def build_plan(self, context: RuntimeCapabilityContext) -> dict:
+            return {
+                "plan_id": "plan_invoice_test",
+                "task_id": context.task_frame.get("task_id"),
+                "status": "planned",
+                "steps": [
+                    {
+                        "id": "check_invoice",
+                        "title": "核对发票抬头、金额和税号",
+                        "owner": "orchestrator",
+                        "status": "pending",
+                        "tool_candidates": [],
+                        "depends_on": [],
+                    }
+                ],
+                "current_step": "check_invoice",
+                "done_criteria": ["核对发票字段"],
+                "runtime_provider": {"name": self.name, "version": self.version},
+            }
+
+        def evaluate(self, context: RuntimeCapabilityContext) -> dict:
+            return {
+                "status": "passed" if context.assistant_text else "failed",
+                "checks": [{"id": "invoice_response", "status": "passed" if context.assistant_text else "failed"}],
+                "missing_requirements": [] if context.assistant_text else ["invoice_response"],
+                "acceptance": context.task_frame.get("acceptance") or [],
+                "runtime_provider": {"name": self.name, "version": self.version},
+            }
+
+    register_runtime_capability_provider(InvoiceRuntimeProvider())
+    try:
+        frame = build_task_frame(
+            query="请核对这张发票的抬头和金额",
+            semantic_frame={},
+            semantic_slots={},
+            agent_profile={},
+        )
+        plan = build_execution_plan(task_frame=frame, available_tools=[], enable_swarm=False)
+        evaluation = evaluate_task_completion(
+            task_frame=frame,
+            execution_plan=plan,
+            execution_artifacts=[],
+            messages=[],
+            assistant_text="抬头和金额已核对。",
+        )
+
+        assert frame["kind"] == "invoice_review"
+        assert frame["runtime_provider"]["name"] == "invoice_runtime_test"
+        assert plan["steps"][0]["id"] == "check_invoice"
+        assert evaluation["runtime_provider"]["name"] == "invoice_runtime_test"
+    finally:
+        unregister_runtime_capability_provider("invoice_runtime_test")
