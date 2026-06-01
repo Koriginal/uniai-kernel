@@ -12,6 +12,7 @@ class RuntimeCapabilityContext:
     semantic_frame: dict[str, Any] = field(default_factory=dict)
     semantic_slots: dict[str, Any] = field(default_factory=dict)
     agent_profile: dict[str, Any] = field(default_factory=dict)
+    allowed_provider_names: list[str] | None = None
     available_tools: list[str] = field(default_factory=list)
     enable_swarm: bool = False
     task_frame: dict[str, Any] = field(default_factory=dict)

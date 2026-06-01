@@ -208,6 +208,7 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     ontology_pipeline = state.get("ontology_pipeline")
     ontology_config = (agent_profile or {}).get("ontology_config") or {}
     runtime_policy = (agent_profile or {}).get("runtime_policy") or {}
+    application_tool_names = c.get("application_tool_names")
     allow_tools = bool(runtime_policy.get("allow_tools", True))
     allow_web_search = bool(runtime_policy.get("allow_web_search", True))
     ontology_enabled = ontology_runtime.is_enabled(ontology_config)
@@ -332,6 +333,10 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if agent_profile and agent_profile.get("tools"):
         if "*" not in agent_profile["tools"]:
             tools_list = [t for t in tools_list if t.metadata.name in agent_profile["tools"]]
+    if application_tool_names:
+        allowed_app_tools = {str(name) for name in application_tool_names}
+        if "*" not in allowed_app_tools:
+            tools_list = [t for t in tools_list if t.metadata.name in allowed_app_tools]
     if not allow_tools:
         tools_list = []
     elif not allow_web_search:
@@ -340,6 +345,8 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
     if ontology_enabled and allow_tools:
         existing_tool_names = {tool.metadata.name for tool in tools_list}
         for tool_name in ONTOLOGY_AGENT_TOOL_NAMES:
+            if application_tool_names and "*" not in {str(name) for name in application_tool_names} and tool_name not in {str(name) for name in application_tool_names}:
+                continue
             action = registry.get_action(tool_name)
             if action and tool_name not in existing_tool_names:
                 tools_list.append(action)
@@ -354,7 +361,9 @@ async def agent_node(state: AgentGraphState, config: RunnableConfig) -> dict:
 
     if enable_canvas and not runtime_task_lock_active:
         canvas_tool = registry.get_action("upsert_canvas")
-        if canvas_tool and not any(t.get("function", {}).get("name") == "upsert_canvas" for t in openai_tools):
+        app_tool_set = {str(name) for name in application_tool_names} if application_tool_names else set()
+        app_allows_canvas = not application_tool_names or "*" in app_tool_set or "upsert_canvas" in app_tool_set
+        if canvas_tool and app_allows_canvas and not any(t.get("function", {}).get("name") == "upsert_canvas" for t in openai_tools):
             openai_tools.append(canvas_tool.to_openai_format())
 
     if enable_swarm and not runtime_task_lock_active:

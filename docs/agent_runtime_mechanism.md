@@ -45,6 +45,8 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
 
 新增状态字段：
 
+- `application_id`
+- `application_context`
 - `task_frame`
 - `execution_plan`
 - `execution_artifacts`
@@ -54,7 +56,7 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
 
 `task_planner_node` 的职责：
 
-1. 读取当前用户请求、`semantic_frame`、`semantic_slots`、Agent Profile、可用工具目录。
+1. 读取当前用户请求、`semantic_frame`、`semantic_slots`、Agent Profile、业务应用 runtime contract、可用工具目录。
 2. 生成 `task_frame`，记录任务类型、用户目标、约束、风险和验收条件。
 3. 生成 `execution_plan`，记录步骤、责任方、工具候选和完成标准。
 4. 通过 SSE 发出 `task_runtime` 事件。
@@ -71,6 +73,9 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
 ```json
 {
   "task_id": "task_xxx",
+  "application_id": "app_xxx",
+  "business_domain": "risk",
+  "scenario_type": "risk_review",
   "kind": "general | realtime_research | business_review | engineering | workflow | builder | analysis",
   "user_goal": "...",
   "semantic_frame": {},
@@ -83,9 +88,18 @@ context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invok
     "requires_governance": false
   },
   "acceptance": [],
+  "acceptance_policy": {},
   "risk_flags": []
 }
 ```
+
+如果请求带 `application_id`，`AgentService` 会先读取业务应用：
+
+- `primary_agent_id` 决定本轮主控 Agent。
+- `runtime_provider_names` 限制 provider 选择；留空只使用 `default_task_runtime`。
+- `tool_names` 先限制可暴露和可执行工具，再进入 plan-aware policy。
+- `ontology_space_id` 写入本体运行配置。
+- `acceptance_policy` 进入 `task_frame`，后续验收策略可读取。
 
 当前分类是规则优先：
 

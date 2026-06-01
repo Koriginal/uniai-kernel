@@ -231,6 +231,7 @@ def build_task_frame(
         semantic_frame=semantic_frame or {},
         semantic_slots=semantic_slots or {},
         agent_profile=agent_profile or {},
+        allowed_provider_names=(agent_profile or {}).get("allowed_runtime_provider_names"),
     )
     provider = select_runtime_capability_provider(context)
     return provider.build_frame(context)
@@ -257,6 +258,11 @@ def _build_task_frame_default(
         "user_goal": query,
         "semantic_frame": semantic_frame or {},
         "semantic_slots": semantic_slots or {},
+        "application_id": (agent_profile or {}).get("application_id"),
+        "business_domain": (agent_profile or {}).get("business_domain"),
+        "scenario_type": (agent_profile or {}).get("scenario_type"),
+        "allowed_runtime_provider_names": (agent_profile or {}).get("allowed_runtime_provider_names"),
+        "acceptance_policy": (agent_profile or {}).get("acceptance_policy") or {},
         "constraints": {
             "allow_tools": bool(profile_policy.get("allow_tools", True)),
             "allow_web_search": bool(profile_policy.get("allow_web_search", True)),
@@ -278,6 +284,7 @@ def build_execution_plan(
 ) -> dict[str, Any]:
     context = RuntimeCapabilityContext(
         task_frame=task_frame,
+        allowed_provider_names=(task_frame or {}).get("allowed_runtime_provider_names"),
         available_tools=available_tools or [],
         enable_swarm=enable_swarm,
     )
@@ -657,6 +664,7 @@ def evaluate_task_completion(
 ) -> dict[str, Any]:
     context = RuntimeCapabilityContext(
         task_frame=task_frame or {},
+        allowed_provider_names=(task_frame or {}).get("allowed_runtime_provider_names") if task_frame else None,
         execution_plan=execution_plan or {},
         execution_artifacts=execution_artifacts or [],
         messages=messages or [],

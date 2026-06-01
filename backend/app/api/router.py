@@ -9,6 +9,7 @@ from app.api.endpoints import (
     completions,
     embeddings,
     audit,
+    applications,
     registry,
     llm,
     api_keys,
@@ -31,6 +32,7 @@ api_router.include_router(embeddings.router, prefix="/v1", tags=["OpenAI Standar
 mgmt_router = APIRouter(prefix="/api/v1")
 
 mgmt_router.include_router(agents.router, prefix="/agents", tags=["Agent Profiles"])
+mgmt_router.include_router(applications.router, prefix="/applications", tags=["Agent Applications"])
 mgmt_router.include_router(providers.router, prefix="/providers", tags=["Provider Management"])
 mgmt_router.include_router(sessions.router, prefix="/chat-sessions", tags=["Session Tracking"])
 mgmt_router.include_router(messages_ep.router, prefix="/messages", tags=["Message Management"])

@@ -37,17 +37,20 @@ class SessionCreate(BaseModel):
     title: Optional[str] = "New Chat"
     opening_remarks: Optional[str] = None
     active_agent_id: Optional[str] = None
+    application_id: Optional[str] = None
     
 class SessionUpdate(BaseModel):
     title: Optional[str] = None
     opening_remarks: Optional[str] = None
     active_agent_id: Optional[str] = None
+    application_id: Optional[str] = None
 
 class SessionResponse(BaseModel):
     id: str
     title: Optional[str] = None
     status: Optional[str] = None
     active_agent_id: Optional[str] = None
+    application_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -60,6 +63,7 @@ def _session_to_dict(s: ChatSession) -> dict:
         "title": s.title,
         "status": s.status,
         "active_agent_id": s.active_agent_id,
+        "application_id": (s.extra_metadata or {}).get("application_id") if isinstance(s.extra_metadata, dict) else None,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None
     }
@@ -181,7 +185,10 @@ async def create_session(
         opening_remarks=session_in.opening_remarks,
         active_agent_id=session_in.active_agent_id,
         user_id=current_user.id,
-        extra_metadata={"auth_source": "dashboard_jwt"},
+        extra_metadata={
+            "auth_source": "dashboard_jwt",
+            **({"application_id": session_in.application_id} if session_in.application_id else {}),
+        },
     )
     db.add(new_session)
     await db.commit()
@@ -245,10 +252,16 @@ async def update_session(
         session.title = update.title
     if update.opening_remarks is not None:
         session.opening_remarks = update.opening_remarks
+    if update.active_agent_id is not None:
+        session.active_agent_id = update.active_agent_id
+    if update.application_id is not None:
+        metadata = dict(session.extra_metadata or {})
+        metadata["application_id"] = update.application_id
+        session.extra_metadata = metadata
         
     await db.commit()
     await db.refresh(session)
-    return session
+    return _session_to_dict(session)
 
 @router.delete("/{session_id}")
 async def delete_session(

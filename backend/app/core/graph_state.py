@@ -21,6 +21,7 @@ class AgentGraphState(TypedDict):
     - handoff_target_id: 移交目标的 agent_id
     - current_agent_id: 当前活跃的智能体 ID
     - current_agent_profile: 当前活跃智能体的 Profile 快照 (dict)
+    - application_id/application_context: 当前业务智能体应用及运行契约快照
     - called_expert_ids: 已被调用过的专家 ID 列表（防重复）
     - wrapping_expert_id: 当前正在发送内容的专家 ID（用于 <collaboration> 标签管理）
     - total_assistant_content: 整个请求周期内累积的助手文本内容
@@ -47,6 +48,8 @@ class AgentGraphState(TypedDict):
     handoff_target_id: Optional[str]
     current_agent_id: str
     current_agent_profile: Optional[dict]
+    application_id: Optional[str]
+    application_context: Optional[dict]
     called_expert_ids: list
     wrapping_expert_id: Optional[str]
     total_assistant_content: str

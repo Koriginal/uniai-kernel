@@ -304,6 +304,8 @@ const TaskRuntimePanel: React.FC<{ runtime?: any }> = ({ runtime }) => {
           <ScheduleOutlined style={{ color: '#1677ff' }} />
           <Text strong>Agent Runtime</Text>
           {frame.kind && <Tag color="blue">{frame.kind}</Tag>}
+          {frame.application_id && <Tag color="purple">应用 {frame.application_id}</Tag>}
+          {frame.scenario_type && <Tag>{frame.scenario_type}</Tag>}
           <Tag color={meta.color}>{meta.label}</Tag>
           {runtime.task_repair_count > 0 && <Tag color="purple">修复 {runtime.task_repair_count}</Tag>}
         </Space>

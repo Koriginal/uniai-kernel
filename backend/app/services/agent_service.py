@@ -29,6 +29,7 @@ from app.models.agent import AgentProfile
 from app.models.session import ChatSession
 from app.models.provider import UserModelConfig, ProviderModel, UserProvider
 from app.services.swarm_service import swarm_service
+from app.services.application_service import build_runtime_contract, ensure_application_access
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.agents.graph_builder import build_conversation_graph
@@ -90,8 +91,37 @@ class AgentService:
                         current_query = str(content)
                     break
 
-            # ── 2. 加载当前活跃 Agent Profile ──
-            agent_profile = await swarm_service.get_active_agent_profile(db, session_id, request.model)
+            # ── 2. 加载业务应用与当前活跃 Agent Profile ──
+            application_contract = None
+            application_tool_names = None
+            allowed_runtime_provider_names = None
+            model_for_agent = request.model
+            application_id = request.application_id
+            if application_id:
+                application = await ensure_application_access(
+                    db,
+                    application_id,
+                    user_id=user_id,
+                    is_admin=is_admin,
+                )
+                if application.status != "active":
+                    raise ValueError("Agent application is not active")
+                application_contract = await build_runtime_contract(
+                    db,
+                    application,
+                    user_id=user_id,
+                    is_admin=is_admin,
+                )
+                primary_agent = application_contract.get("primary_agent") or {}
+                if primary_agent.get("id"):
+                    model_for_agent = primary_agent["id"]
+                application_tool_names = application_contract.get("tool_names") or None
+                allowed_runtime_provider_names = application_contract.get("runtime_provider_names") or None
+
+            if application_id:
+                agent_profile = await db.get(AgentProfile, model_for_agent)
+            else:
+                agent_profile = await swarm_service.get_active_agent_profile(db, session_id, model_for_agent)
             agent_id = agent_profile.id if agent_profile else "agent-default"
 
             agent_profile_dict = None
@@ -100,6 +130,12 @@ class AgentService:
                 profile_ontology_config = agent_profile.ontology_config or {}
                 if runtime_policy and runtime_policy.get("allow_ontology") is False:
                     profile_ontology_config = {"enabled": False, "mode": "off"}
+                if application_contract:
+                    runtime_policy = {**runtime_policy, **(application_contract.get("runtime_policy") or {})}
+                    profile_ontology_config = {
+                        **profile_ontology_config,
+                        **(application_contract.get("ontology_config") or {}),
+                    }
                 effective_enable_swarm = enable_swarm and bool(runtime_policy.get("allow_swarm", enable_swarm))
                 effective_enable_canvas = enable_canvas and bool(runtime_policy.get("allow_canvas", enable_canvas))
                 agent_profile_dict = {
@@ -117,6 +153,12 @@ class AgentService:
                     "routing_keywords": agent_profile.routing_keywords or [],
                     "handoff_strategy": agent_profile.handoff_strategy,
                     "runtime_mode": "root_orchestrator" if agent_profile.role == "orchestrator" else "expert",
+                    "application_id": application_id,
+                    "application": application_contract.get("application") if application_contract else None,
+                    "business_domain": (application_contract.get("application") or {}).get("business_domain") if application_contract else None,
+                    "scenario_type": (application_contract.get("application") or {}).get("scenario_type") if application_contract else None,
+                    "allowed_runtime_provider_names": allowed_runtime_provider_names,
+                    "acceptance_policy": application_contract.get("acceptance_policy") if application_contract else {},
                 }
             else:
                 effective_enable_swarm = enable_swarm
@@ -133,7 +175,8 @@ class AgentService:
             if session_id:
                 await self._ensure_session_exists(
                     db, session_id, user_id, active_agent_id=agent_id,
-                    identity_context=identity_context
+                    identity_context=identity_context,
+                    application_id=application_id,
                 )
 
             # ── 5. 构建流式回调桥接器 ──
@@ -148,6 +191,8 @@ class AgentService:
                 "handoff_target_id": None,
                 "current_agent_id": agent_id,
                 "current_agent_profile": agent_profile_dict,
+                "application_id": application_id,
+                "application_context": application_contract,
                 "called_expert_ids": [],
                 "wrapping_expert_id": None,
                 "total_assistant_content": "",
@@ -182,6 +227,10 @@ class AgentService:
                     "model_name": request.model,
                     "orchestrator_agent_id": agent_id,
                     "orchestrator_agent_profile": agent_profile_dict,
+                    "application_id": application_id,
+                    "application_context": application_contract,
+                    "application_tool_names": application_tool_names,
+                    "allowed_runtime_provider_names": allowed_runtime_provider_names,
                     "enable_canvas": effective_enable_canvas,
                     "enable_swarm": effective_enable_swarm,
                     "enable_memory": enable_memory,
@@ -252,6 +301,7 @@ class AgentService:
         self, db: AsyncSession, session_id: str, user_id: str,
         title: str = "New Chat", active_agent_id: str = None,
         identity_context: Optional[Dict[str, Any]] = None,
+        application_id: Optional[str] = None,
     ):
         """确保数据库中存在对应会话记录"""
         if not session_id or not db:
@@ -266,6 +316,7 @@ class AgentService:
                 "auth_source": (identity_context or {}).get("source", "unknown"),
                 "api_key_id": (identity_context or {}).get("api_key_id"),
                 "api_key_name": (identity_context or {}).get("api_key_name"),
+                "application_id": application_id,
             }
             session = ChatSession(
                 id=session_id, user_id=user_id,
@@ -285,6 +336,11 @@ class AgentService:
                     session.extra_metadata = metadata
                     db.add(session)
                     await db.commit()
+            if application_id and metadata.get("application_id") != application_id:
+                metadata["application_id"] = application_id
+                session.extra_metadata = metadata
+                db.add(session)
+                await db.commit()
         return session
 
     async def chat(

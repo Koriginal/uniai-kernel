@@ -115,6 +115,15 @@ def _is_tool_allowed_by_policy(func_name: str, runtime_policy: dict | None) -> t
     return True, None
 
 
+def _is_tool_allowed_by_application(func_name: str, tool_names: list[str] | None) -> tuple[bool, str | None]:
+    if not tool_names:
+        return True, None
+    allowed = {str(name) for name in tool_names}
+    if "*" in allowed or func_name in allowed:
+        return True, None
+    return False, "当前业务应用未授权执行该工具"
+
+
 async def _emit_tool_runtime(callback: Any, payload: dict) -> None:
     event = {"type": "tool_runtime", **payload}
     await callback.emit(f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n")
@@ -294,6 +303,7 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
     callback = c["stream_callback"]
     agent_profile = state["current_agent_profile"]
     runtime_policy = (agent_profile or {}).get("runtime_policy") or {}
+    application_tool_names = c.get("application_tool_names")
     c["current_agent_id"] = state.get("current_agent_id")
     messages = list(state["messages"])
     pending_tool_calls = state["pending_tool_calls"]
@@ -334,6 +344,10 @@ async def tool_executor_node(state: AgentGraphState, config: RunnableConfig) -> 
                 raise ValueError("Tool arguments must be a JSON object")
             parsed_args = inject_runtime_tool_args(func_name, args, c, agent_profile)
             is_allowed, blocked_reason = _is_tool_allowed_by_policy(func_name, runtime_policy)
+            app_allowed, app_blocked_reason = _is_tool_allowed_by_application(func_name, application_tool_names)
+            if is_allowed and not app_allowed:
+                is_allowed = False
+                blocked_reason = app_blocked_reason
             plan_policy = validate_tool_against_plan(
                 tool_name=func_name,
                 tool_metadata=tool_meta,

@@ -1,22 +1,23 @@
 # UniAI Kernel 平台方向与当前差距
 
-UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system prompt。它应该是一个智能体开发平台和运行框架：平台负责定义 Agent、工具、运行图、任务状态、权限和审计；运行框架负责把用户请求转成可执行状态，并在图节点之间推进。
+UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system prompt。它应该是一个智能体开发平台和运行框架：平台先定义业务智能体应用，再把 Agent、工具、本体、运行图、任务状态、权限和审计挂到应用上；运行框架负责把用户请求转成可执行状态，并在图节点之间推进。
 
 这份文档按当前代码来写，不按口号写。这里的每一项都应该能落到模块、字段、接口或下一步开发动作。
 
 ## 平台边界
 
-当前平台至少要分成七层：
+当前平台至少要分成八层：
 
-1. Agent 定义层：`backend/app/models/agent.py`、Agent Profile、runtime policy、专家角色和 handoff 策略。
-2. 运行图层：`backend/app/agents/graph_builder.py`、`graph_registry.py`、拓扑版本和节点编译。
-3. 任务运行时层：`backend/app/agents/task_runtime.py`、`task_planner`、`task_evaluator`。
-4. 工具层：动态工具、MCP 工具、工具执行器、工具审计和 tool runtime events。
-5. 语义与本体层：semantic frame、ontology runtime、本体空间、规则检查和补数字段。
-6. 观测层：SSE `node_event`、`task_runtime`、`tool_runtime`、`task_evaluation`，以及消息上的 `runtime_events`。
-7. 控制台层：ChatView、GraphTracePanel、AgentManager、ToolRegistry、OntologyWorkbench。
+1. 业务应用层：`AgentApplication`，绑定业务域、场景、主控 Agent、provider、工具、本体空间、运行策略和验收策略。
+2. Agent 定义层：`backend/app/models/agent.py`、Agent Profile、runtime policy、专家角色和 handoff 策略。
+3. 运行图层：`backend/app/agents/graph_builder.py`、`graph_registry.py`、拓扑版本和节点编译。
+4. 任务运行时层：`backend/app/agents/task_runtime.py`、`task_planner`、`task_evaluator`。
+5. 工具层：动态工具、MCP 工具、工具执行器、工具审计和 tool runtime events。
+6. 语义与本体层：semantic frame、ontology runtime、本体空间、规则检查和补数字段。
+7. 观测层：SSE `node_event`、`task_runtime`、`tool_runtime`、`task_evaluation`，以及消息上的 `runtime_events`。
+8. 控制台层：ChatView、GraphTracePanel、ApplicationManager、AgentManager、ToolRegistry、OntologyWorkbench。
 
-这几个层之间不能继续靠提示词传隐式状态。任务目标、执行计划、工具产物、验收结果要进入状态字段和事件流。
+这几个层之间不能继续靠提示词传隐式状态。业务应用、任务目标、执行计划、工具产物、验收结果要进入状态字段和事件流。
 
 ## 当前成熟度
 
@@ -26,20 +27,22 @@ UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system promp
 
 - 标准图里已有 `context -> task_planner -> agent -> tool_executor / handoff / orchestrator_invoke / synthesize -> task_evaluator`。
 - `task_frame` 记录任务类型、用户目标、约束、风险标记和验收条件。
+- `AgentApplication` 已作为业务场景入口，收拢主控 Agent、runtime provider、工具白名单、本体空间和验收策略。
 - `execution_plan` 记录步骤、责任方、工具候选、当前步骤和完成标准。
 - `execution_artifacts` 记录工具、专家和回答阶段留下的可回放产物。
 - `task_evaluator` 会在结束前检查任务完成度，并在失败时按 `max_task_repairs` 重新打开计划。
 - 已有 `runtime_capabilities` 扩展契约，默认 provider 承接当前任务分类、计划和验收逻辑。
 - 旧拓扑通过 `graph_registry._normalize_runtime_topology()` 自动补齐 `task_planner` 和 `task_evaluator`，避免历史模板直接崩。
 - `/api/v1/graph/runtime/capabilities` 已暴露运行时能力目录、provider、状态字段、事件类型和请求配置。
+- `/api/v1/applications` 已提供业务应用管理接口，`/runtime-contract` 可查看应用实际启用的主控、provider、工具、本体和策略。
 
 还没有完成的部分：
 
-- 任务分类仍是默认 provider 的规则优先，provider 契约已接入，但还没有 Agent Profile 级 provider 白名单和模型分类回退。
+- 任务分类仍是默认 provider 的规则优先，应用级 provider 白名单已接入，但还没有模型分类回退。
 - 计划步骤已有工具准入约束，但工具注册表的 category、effect 和风险等级还不够细。
 - 完整工具结果已有 `tool_artifacts` 表承载；专家输出、文件产物还没有统一进入 artifact 表。
 - 修复循环是一次性图内重试，不是完整的子任务队列，也没有人工确认点。
-- 前端控制台刚开始接入任务运行态，还没有形成专门的运行图调试台。
+- 前端已有业务应用入口，但创建应用仍是配置表单，还没有对话式搭建向导和业务模板市场。
 - E2E 测试还没覆盖 SSE 全链路、历史消息回放和旧拓扑迁移。
 
 ## 已修掉的问题
@@ -77,6 +80,25 @@ UniAI Kernel 的定位不是单个聊天机器人，也不是一组 system promp
 - 这只解决本地编译和开发体验，生产环境仍应使用持久化 checkpointer。
 
 ## 现在最该补的能力
+
+### 0. 业务智能体应用层
+
+现在已经新增 `backend/app/models/application.py`，应用是业务场景入口，Agent Profile 是执行角色。业务用户不应该先选“专家、工具、本体、审计”，而应该先进入一个业务应用，例如风控审核、合同审查、客户支持或研究流程。
+
+已落地动作：
+
+- `AgentApplication` 表记录业务域、场景类型、主控 Agent、runtime provider、工具白名单、本体空间、运行策略和验收策略。
+- `GET/POST/PATCH /api/v1/applications` 管理应用。
+- `GET /api/v1/applications/{id}/runtime-contract` 展示实际启用的主控、provider、工具、本体和策略。
+- Chat 请求支持 `application_id`，运行时从应用解析主控 Agent、工具白名单、provider 白名单、本体空间和验收策略。
+- `task_frame` 写入 `application_id`、`business_domain`、`scenario_type`。
+- 前端新增 ApplicationManager，侧边栏把“业务应用”放到“管理专家”之前。
+
+下一步动作：
+
+- 做对话式应用创建向导：从“我要做一个授信风控审核”生成应用草稿、工具建议、本体字段建议和验收策略。
+- 给常见业务场景补模板：风控审核、合同审查、舆情研究、客服工单分流。
+- 把应用运行报表接到审计面板，按应用聚合会话、工具调用、命中规则、产物和失败原因。
 
 ### 1. 运行时扩展契约
 
@@ -215,7 +237,7 @@ created_at
 2. 补工具计划约束：先做 `validate_tool_against_plan`，再扩展审计字段。
 3. 补 runtime console：先让一次运行的计划、节点、工具、验收在 UI 上串起来。
 4. 补 artifact 表：先支持工具结果，再支持专家输出和文件产物。
-5. 做 Agent Profile 级 provider 配置：限制哪些 Agent 可以启用哪些 runtime provider。
+5. 做对话式业务应用搭建：从用户业务描述生成应用草稿、工具绑定、本体字段和验收策略。
 
 ## 取舍
 

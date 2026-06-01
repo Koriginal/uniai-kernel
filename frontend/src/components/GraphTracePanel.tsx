@@ -12,6 +12,7 @@ interface GraphTracePanelProps {
   visible: boolean;
   onClose: () => void;
   currentAgentName?: string;
+  currentApplicationName?: string;
   isStreaming: boolean;
   nodeEvents: any[];
   runtimeEvents?: any[];
@@ -137,7 +138,7 @@ const buildStepRuntimeItems = (steps: any[], toolEvents: any[], evaluation: any)
   });
 };
 
-const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, isStreaming, nodeEvents, runtimeEvents = [] }) => {
+const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, currentAgentName, currentApplicationName, isStreaming, nodeEvents, runtimeEvents = [] }) => {
   const [nodes, setNodes] = useState<any[]>([]);
   const [capabilities, setCapabilities] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -267,7 +268,7 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
       <div style={{ flex: 1, padding: '24px 24px', overflowY: 'auto' }}>
         <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
            <Text type="secondary">当前编排器</Text>
-           <Tag color="cyan">{currentAgentName || 'Orchestrator'}</Tag>
+           <Tag color={currentApplicationName ? 'purple' : 'cyan'}>{currentApplicationName || currentAgentName || 'Orchestrator'}</Tag>
         </div>
 
         <div style={{
@@ -283,6 +284,8 @@ const GraphTracePanel: React.FC<GraphTracePanelProps> = ({ visible, onClose, cur
           </div>
           <Space size={[4, 6]} wrap>
             {latestTaskFrame.kind && <Tag color="blue">{latestTaskFrame.kind}</Tag>}
+            {latestTaskFrame.application_id && <Tag color="purple">应用 {latestTaskFrame.application_id}</Tag>}
+            {latestTaskFrame.scenario_type && <Tag>{latestTaskFrame.scenario_type}</Tag>}
             {latestPlan.status && <Tag color={statusColor(latestPlan.status)}>计划 {latestPlan.status}</Tag>}
             {latestEvaluation.status && <Tag color={statusColor(latestEvaluation.status)}>验收 {latestEvaluation.status}</Tag>}
             {finalToolEvents.length > 0 && <Tag>工具 {finalToolEvents.length}</Tag>}

@@ -30,7 +30,16 @@ async def task_planner_node(state: AgentGraphState, config: RunnableConfig) -> d
     current_msg_id = state.get("current_msg_id")
 
     query = latest_user_text_from_state(state)
-    available_tools = [tool.metadata.name for tool in registry.get_all_actions()]
+    application_tool_names = c.get("application_tool_names")
+    if application_tool_names:
+        allowed = {str(name) for name in application_tool_names}
+        available_tools = [
+            tool.metadata.name
+            for tool in registry.get_all_actions()
+            if "*" in allowed or tool.metadata.name in allowed
+        ]
+    else:
+        available_tools = [tool.metadata.name for tool in registry.get_all_actions()]
     task_frame = build_task_frame(
         query=query,
         semantic_frame=state.get("semantic_frame") or {},

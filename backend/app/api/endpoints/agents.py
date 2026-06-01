@@ -75,6 +75,7 @@ class AgentProfileResponse(BaseModel):
 class AgentChatRequest(BaseModel):
     query: Union[str, List[Dict[str, Any]]] # 支持图片/多模态
     session_id: Optional[str] = None
+    application_id: Optional[str] = None
     stream: bool = True
     interaction_mode: str = "chat"
     enable_memory: bool = False
@@ -664,6 +665,7 @@ async def agent_chat(
         ],
         stream=request_data.stream,
         interaction_mode=request_data.interaction_mode,
+        application_id=request_data.application_id,
         skip_save_user=request_data.skip_save_user
     )
     

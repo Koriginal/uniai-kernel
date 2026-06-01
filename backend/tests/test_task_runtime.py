@@ -16,6 +16,7 @@ from app.agents.task_runtime import (
     validate_tool_against_plan,
 )
 from app.agents.runtime_capabilities import RuntimeCapabilityContext
+from app.agents.nodes.tools import _is_tool_allowed_by_application
 
 
 def test_classify_realtime_task():
@@ -188,6 +189,13 @@ def test_validate_tool_against_plan_warns_when_no_step_requests_tool():
 
     assert decision["allowed"]
     assert decision["decision"] == "warn"
+
+
+def test_application_tool_whitelist_blocks_unlisted_tool():
+    allowed, reason = _is_tool_allowed_by_application("upsert_canvas", ["web_search"])
+
+    assert not allowed
+    assert "业务应用" in reason
 
 
 def test_evaluate_realtime_task_requires_retrieval():
@@ -413,3 +421,43 @@ def test_registered_runtime_provider_can_own_custom_task_kind():
         assert evaluation["runtime_provider"]["name"] == "invoice_runtime_test"
     finally:
         unregister_runtime_capability_provider("invoice_runtime_test")
+
+
+def test_runtime_provider_selection_respects_application_allowlist():
+    class HighPriorityProvider:
+        name = "high_priority_test"
+        version = "0.1"
+        task_kinds = ["high_priority"]
+        priority = 50
+
+        def catalog(self):
+            return {"name": self.name, "version": self.version, "task_kinds": self.task_kinds}
+
+        def match(self, context: RuntimeCapabilityContext) -> float:
+            return 1.0
+
+        def classify_task(self, context: RuntimeCapabilityContext) -> str:
+            return "high_priority"
+
+        def build_frame(self, context: RuntimeCapabilityContext) -> dict:
+            return {"task_id": "task_high", "kind": "high_priority", "allowed_runtime_provider_names": context.allowed_provider_names}
+
+        def build_plan(self, context: RuntimeCapabilityContext) -> dict:
+            return {"plan_id": "plan_high", "steps": [], "runtime_provider": {"name": self.name}}
+
+        def evaluate(self, context: RuntimeCapabilityContext) -> dict:
+            return {"status": "passed", "checks": [], "missing_requirements": []}
+
+    register_runtime_capability_provider(HighPriorityProvider())
+    try:
+        frame = build_task_frame(
+            query="今天金价有什么变化？",
+            semantic_frame={},
+            semantic_slots={},
+            agent_profile={"allowed_runtime_provider_names": ["default_task_runtime"]},
+        )
+
+        assert frame["kind"] == "realtime_research"
+        assert frame["runtime_provider"]["name"] == "default_task_runtime"
+    finally:
+        unregister_runtime_capability_provider("high_priority_test")

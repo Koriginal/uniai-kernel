@@ -19,6 +19,7 @@ const { Header, Content, Sider } = Layout;
 const { Text, Title } = Typography;
 
 const OntologyWorkbench = React.lazy(() => import('./components/OntologyWorkbench'));
+const ApplicationManager = React.lazy(() => import('./components/ApplicationManager'));
 const AgentManager = React.lazy(() => import('./components/AgentManager'));
 const ProviderManager = React.lazy(() => import('./components/ProviderManager'));
 const ToolRegistry = React.lazy(() => import('./components/ToolRegistry'));
@@ -38,13 +39,30 @@ const ViewLoading: React.FC<{ label?: string }> = ({ label = '正在加载页面
   </div>
 );
 
-type ViewType = 'chat' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
+type ViewType = 'chat' | 'applications' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
 
 interface Session {
   id: string;
   title: string;
   status: string;
+  application_id?: string | null;
+  active_agent_id?: string | null;
   created_at: string;
+}
+
+interface AgentApplication {
+  id: string;
+  name: string;
+  description?: string;
+  business_domain?: string;
+  scenario_type: string;
+  primary_agent_id?: string;
+  runtime_provider_names: string[];
+  tool_names: string[];
+  ontology_space_id?: string;
+  runtime_policy: Record<string, unknown>;
+  acceptance_policy: Record<string, unknown>;
+  status: string;
 }
 
 // 子组件：全局专家评分卡
@@ -191,6 +209,8 @@ const App: React.FC = () => {
   };
   // --- Core State ---
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [applications, setApplications] = useState<AgentApplication[]>([]);
+  const [currentApplication, setCurrentApplication] = useState<AgentApplication | null>(null);
   const [modelConfigs, setModelConfigs] = useState<any[]>([]);
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   // 使用 Ref 同步记录专家模式，解决异步判定崩溃
@@ -283,6 +303,23 @@ const App: React.FC = () => {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchApplications = useCallback(async () => {
+    try {
+      const res = await api.get('/api/v1/applications/');
+      const items: AgentApplication[] = res.data || [];
+      setApplications(items);
+      const savedApplicationId = localStorage.getItem('currentApplicationId');
+      setCurrentApplication(prev => {
+        if (prev && items.some(item => item.id === prev.id)) return prev;
+        if (savedApplicationId) {
+          const found = items.find(item => item.id === savedApplicationId);
+          if (found) return found;
+        }
+        return null;
+      });
+    } catch { /* ignore */ }
+  }, []);
+
   const fetchSessions = useCallback(async () => {
     try {
       const res = await api.get('/api/v1/chat-sessions/');
@@ -304,10 +341,11 @@ const App: React.FC = () => {
     if (token) {
       fetchMe();
       fetchAgents();
+      fetchApplications();
       fetchModelConfigs();
       fetchSessions();
     }
-  }, [token, fetchMe, fetchAgents, fetchModelConfigs, fetchSessions]);
+  }, [token, fetchMe, fetchAgents, fetchApplications, fetchModelConfigs, fetchSessions]);
 
   // --- Persistence Sync ---
   useEffect(() => {
@@ -327,6 +365,14 @@ const App: React.FC = () => {
       localStorage.setItem('currentAgentId', currentAgent.id);
     }
   }, [currentAgent]);
+
+  useEffect(() => {
+    if (currentApplication) {
+      localStorage.setItem('currentApplicationId', currentApplication.id);
+    } else {
+      localStorage.removeItem('currentApplicationId');
+    }
+  }, [currentApplication]);
 
   useEffect(() => {
     if (currentSessionId) {
@@ -350,7 +396,7 @@ const App: React.FC = () => {
       loadSession(currentSessionId);
       setSessionRestored(true);
     }
-  }, [token, activeView, currentSessionId, sessions, agents, sessionRestored]);
+  }, [token, activeView, currentSessionId, sessions, agents, applications, sessionRestored]);
 
   // --- Session Management ---
   const startNewChat = () => {
@@ -361,12 +407,23 @@ const App: React.FC = () => {
     setCanvasContent(null);
   };
 
+  const handleApplicationSelect = (application: AgentApplication) => {
+    setCurrentApplication(application);
+    const primaryAgent = agents.find(agent => agent.id === application.primary_agent_id);
+    if (primaryAgent) {
+      setCurrentAgent(primaryAgent);
+      localStorage.setItem('currentAgentId', primaryAgent.id);
+    }
+    startNewChat();
+  };
+
   const createNewSession = async (autoClear = true, showToast = true) => {
     try {
       console.log("[App] Creating new session, autoClear:", autoClear);
       const res = await api.post('/api/v1/chat-sessions/', {
-        title: currentAgent ? `与 ${currentAgent.name} 的对话` : 'New Chat',
-        active_agent_id: currentAgent?.id
+        title: currentApplication ? `${currentApplication.name} 对话` : (currentAgent ? `与 ${currentAgent.name} 的对话` : 'New Chat'),
+        active_agent_id: currentAgent?.id,
+        application_id: currentApplication?.id
       });
       const newSession = res.data;
       setCurrentSessionId(newSession.id);
@@ -397,6 +454,18 @@ const App: React.FC = () => {
       // 1. 恢复会话关联的专家信息
       const res = await api.get(`/api/v1/chat-sessions/${sessionId}`);
       const session = res.data;
+      if (session.application_id) {
+        let application = applications.find(item => item.id === session.application_id);
+        if (!application) {
+          try {
+            const appRes = await api.get(`/api/v1/applications/${session.application_id}`);
+            application = appRes.data;
+          } catch { /* ignore */ }
+        }
+        if (application) setCurrentApplication(application);
+      } else {
+        setCurrentApplication(null);
+      }
       if (session.active_agent_id) {
         const agent = agents.find(a => a.id === session.active_agent_id);
         if (agent) setCurrentAgent(agent);
@@ -626,6 +695,7 @@ const App: React.FC = () => {
         body: JSON.stringify({
           query: contentPayload,
           session_id: sessionId,
+          application_id: currentApplication?.id,
           stream: true,
           enable_memory: enableMemory,
           enable_swarm: enableSwarm,
@@ -1001,6 +1071,7 @@ const App: React.FC = () => {
     }
 
     setActiveView('chat');
+    setCurrentApplication(null);
     setCurrentAgent(agent);
   };
 
@@ -1127,6 +1198,9 @@ const App: React.FC = () => {
             selectedKeys={[activeView]}
             style={{ borderRight: 0, background: 'transparent', margin: '0 8px', borderRadius: 10 }}
           >
+            <Menu.Item key="applications" icon={<AppstoreAddOutlined />} onClick={() => setActiveView('applications')}>
+              业务应用
+            </Menu.Item>
             <Menu.Item key="agents" icon={<AppstoreOutlined />} onClick={() => setActiveView('agents')}>
               管理专家
             </Menu.Item>
@@ -1183,19 +1257,22 @@ const App: React.FC = () => {
                   overlayStyle={{ paddingTop: 10 }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '4px 12px', borderRadius: 8, transition: 'all 0.2s', background: 'rgba(24,144,255,0.05)' }} className="agent-header-link">
-                    <Avatar size="small" icon={<RobotOutlined />} style={{ backgroundColor: '#1890ff', marginRight: 10 }} />
+                    <Avatar size="small" icon={currentApplication ? <AppstoreAddOutlined /> : <RobotOutlined />} style={{ backgroundColor: currentApplication ? '#722ed1' : '#1890ff', marginRight: 10 }} />
                     <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 'normal' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Text strong style={{ fontSize: 14 }}>{currentAgent.name}</Text>
+                        <Text strong style={{ fontSize: 14 }}>{currentApplication?.name || currentAgent.name}</Text>
                         <ThunderboltFilled style={{ fontSize: 10, color: '#faad14' }} />
                       </div>
-                      <Text type="secondary" style={{ fontSize: '10px' }}>在线 (点击查看评分卡)</Text>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>
+                        {currentApplication ? `主控：${currentAgent.name} · ${currentApplication.scenario_type}` : '在线 (点击查看评分卡)'}
+                      </Text>
                     </div>
                   </div>
                 </Popover>
               ) : (
                 <Text strong style={{ fontSize: 14 }}>
-                  {activeView === 'agents' ? '专家集群管理'
+                  {activeView === 'applications' ? '业务智能体应用'
+                    : activeView === 'agents' ? '专家集群管理'
                     : activeView === 'providers' ? '模型供应商'
                       : activeView === 'tools' ? '工具注册表'
                         : activeView === 'ontology' ? '本体治理台'
@@ -1315,6 +1392,7 @@ const App: React.FC = () => {
                     visible={graphTraceVisible}
                     onClose={() => setGraphTraceVisible(false)}
                     currentAgentName={currentAgent?.name}
+                    currentApplicationName={currentApplication?.name}
                     isStreaming={loading}
                     nodeEvents={nodeEvents}
                     runtimeEvents={runtimeEvents}
@@ -1337,6 +1415,17 @@ const App: React.FC = () => {
                 </Suspense>
               )}
             </div>
+          )}
+
+          {activeView === 'applications' && (
+            <Suspense fallback={<ViewLoading label="正在加载业务应用..." />}>
+              <ApplicationManager
+                applications={applications}
+                agents={agents}
+                onRefresh={fetchApplications}
+                onSelectApplication={handleApplicationSelect}
+              />
+            </Suspense>
           )}
 
           {activeView === 'agents' && (
