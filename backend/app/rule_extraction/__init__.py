@@ -1,0 +1,1 @@
+"""Reusable rule extraction module."""
