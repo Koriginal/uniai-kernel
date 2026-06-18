@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { AppstoreAddOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import axios from 'axios';
+import type { AxiosInstance } from 'axios';
 import type { Agent } from './ChatView';
 
 const { Text, Title } = Typography;
@@ -16,6 +17,8 @@ export interface AgentApplication {
   runtime_provider_names: string[];
   tool_names: string[];
   ontology_space_id?: string;
+  review_pack_id?: string;
+  review_pack_version?: string;
   runtime_policy: Record<string, unknown>;
   acceptance_policy: Record<string, unknown>;
   status: string;
@@ -24,6 +27,7 @@ export interface AgentApplication {
 interface Props {
   applications: AgentApplication[];
   agents: Agent[];
+  api: AxiosInstance;
   onRefresh: () => void;
   onSelectApplication: (application: AgentApplication) => void;
 }
@@ -42,12 +46,13 @@ const statusOptions = [
   { label: '归档', value: 'archived' },
 ];
 
-const ApplicationManager: React.FC<Props> = ({ applications, agents, onRefresh, onSelectApplication }) => {
+const ApplicationManager: React.FC<Props> = ({ applications, agents, api, onRefresh, onSelectApplication }) => {
   const [form] = Form.useForm();
   const [editing, setEditing] = useState<AgentApplication | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [actions, setActions] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
+  const [reviewPacks, setReviewPacks] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -67,9 +72,27 @@ const ApplicationManager: React.FC<Props> = ({ applications, agents, onRefresh, 
     loadAssets();
   }, []);
 
+  useEffect(() => {
+    const loadReviewPacks = async () => {
+      const spaceIds = Array.from(new Set(applications.map((item) => item.ontology_space_id).filter(Boolean)));
+      if (spaceIds.length === 0) {
+        setReviewPacks([]);
+        return;
+      }
+      try {
+        const results = await Promise.all(spaceIds.map((spaceId) => api.get('/api/v1/review/packs', { params: { space_id: spaceId } })));
+        setReviewPacks(results.flatMap((res) => res.data || []));
+      } catch {
+        setReviewPacks([]);
+      }
+    };
+    loadReviewPacks();
+  }, [api, applications]);
+
   const agentOptions = useMemo(() => agents.map((agent) => ({ label: agent.name, value: agent.id })), [agents]);
   const toolOptions = useMemo(() => actions.map((item) => ({ label: item.label ? `${item.label} (${item.name})` : item.name, value: item.name })), [actions]);
   const providerOptions = useMemo(() => providers.map((item) => ({ label: `${item.name} · ${item.task_kinds?.join(', ') || 'runtime'}`, value: item.name })), [providers]);
+  const reviewPackOptions = useMemo(() => reviewPacks.map((item) => ({ label: `${item.name} · ${item.version} · ${item.status}`, value: item.id })), [reviewPacks]);
 
   const openEditor = (application?: AgentApplication) => {
     setEditing(application || null);
@@ -78,6 +101,8 @@ const ApplicationManager: React.FC<Props> = ({ applications, agents, onRefresh, 
       status: 'active',
       runtime_provider_names: [],
       tool_names: [],
+      review_pack_id: undefined,
+      review_pack_version: undefined,
       runtime_policy: '{}',
       acceptance_policy: '{}',
     });
@@ -167,6 +192,7 @@ const ApplicationManager: React.FC<Props> = ({ applications, agents, onRefresh, 
             { title: '主控', dataIndex: 'primary_agent_id', width: 180, render: (id: string) => agents.find((agent) => agent.id === id)?.name || id || '-' },
             { title: '工具', dataIndex: 'tool_names', width: 120, render: (items: string[]) => (items?.length ? <Tag color="purple">{items.length}</Tag> : <Tag>继承 Agent</Tag>) },
             { title: 'Provider', dataIndex: 'runtime_provider_names', width: 130, render: (items: string[]) => (items?.length ? <Tag color="geekblue">{items.length}</Tag> : <Tag>default</Tag>) },
+            { title: '规则包', dataIndex: 'review_pack_id', width: 160, render: (id: string, item: AgentApplication) => id ? <Tag color="cyan">{item.review_pack_version || 'fixed'}</Tag> : <Tag>未绑定</Tag> },
             { title: '状态', dataIndex: 'status', width: 100, render: (status: string) => <Tag color={status === 'active' ? 'green' : 'default'}>{status}</Tag> },
             {
               title: '操作',
@@ -209,6 +235,12 @@ const ApplicationManager: React.FC<Props> = ({ applications, agents, onRefresh, 
           </Form.Item>
           <Form.Item name="ontology_space_id" label="本体空间 ID">
             <Input placeholder="可选：绑定一个本体空间" />
+          </Form.Item>
+          <Form.Item name="review_pack_id" label="固定评审规则包">
+            <Select allowClear showSearch options={reviewPackOptions} optionFilterProp="label" placeholder="选择已发布规则包，或留空使用普通对话模式" />
+          </Form.Item>
+          <Form.Item name="review_pack_version" label="规则包版本">
+            <Input placeholder="选择规则包时后端会自动填充；也可手工锁定显示版本" />
           </Form.Item>
           <Form.Item name="runtime_policy" label="运行策略 JSON">
             <Input.TextArea rows={5} />

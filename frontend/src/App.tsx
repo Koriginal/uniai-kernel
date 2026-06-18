@@ -5,7 +5,7 @@ import {
   DatabaseOutlined, PlusOutlined, RobotOutlined, DeleteOutlined,
   ToolOutlined, BarChartOutlined, KeyOutlined, EditOutlined, UserOutlined,
   LockOutlined, AppstoreAddOutlined, NodeIndexOutlined, ThunderboltFilled,
-  SyncOutlined, MenuFoldOutlined, MenuUnfoldOutlined
+  SyncOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SafetyOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -19,6 +19,7 @@ const { Header, Content, Sider } = Layout;
 const { Text, Title } = Typography;
 
 const OntologyWorkbench = React.lazy(() => import('./components/OntologyWorkbench'));
+const RuleLibraryWorkbench = React.lazy(() => import('./components/RuleLibraryWorkbench'));
 const ApplicationManager = React.lazy(() => import('./components/ApplicationManager'));
 const AgentManager = React.lazy(() => import('./components/AgentManager'));
 const ProviderManager = React.lazy(() => import('./components/ProviderManager'));
@@ -39,7 +40,13 @@ const ViewLoading: React.FC<{ label?: string }> = ({ label = '正在加载页面
   </div>
 );
 
-type ViewType = 'chat' | 'applications' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
+type ViewType = 'chat' | 'applications' | 'rule_library' | 'agents' | 'providers' | 'tools' | 'audit' | 'api_keys' | 'users' | 'profile' | 'settings' | 'ontology';
+
+const normalizeStoredView = (value: string | null): ViewType => {
+  if (value === 'review_knowledge' || value === 'ontology_assets') return 'rule_library';
+  const allowed: ViewType[] = ['chat', 'applications', 'rule_library', 'agents', 'providers', 'tools', 'audit', 'api_keys', 'users', 'profile', 'settings', 'ontology'];
+  return allowed.includes(value as ViewType) ? (value as ViewType) : 'chat';
+};
 
 interface Session {
   id: string;
@@ -60,6 +67,8 @@ interface AgentApplication {
   runtime_provider_names: string[];
   tool_names: string[];
   ontology_space_id?: string;
+  review_pack_id?: string;
+  review_pack_version?: string;
   runtime_policy: Record<string, unknown>;
   acceptance_policy: Record<string, unknown>;
   status: string;
@@ -215,7 +224,7 @@ const App: React.FC = () => {
   const [currentAgent, setCurrentAgent] = useState<Agent | null>(null);
   // 使用 Ref 同步记录专家模式，解决异步判定崩溃
   const isExpertRef = useRef(false);
-  const [activeView, setActiveView] = useState<ViewType>((localStorage.getItem('activeView') as ViewType) || 'chat');
+  const [activeView, setActiveView] = useState<ViewType>(() => normalizeStoredView(localStorage.getItem('activeView')));
   const [siderCollapsed, setSiderCollapsed] = useState<boolean>(() => localStorage.getItem('sidebarCollapsed') === 'true');
   const [menuOpenKeys, setMenuOpenKeys] = useState<string[]>(() => {
     try {
@@ -1201,6 +1210,9 @@ const App: React.FC = () => {
             <Menu.Item key="applications" icon={<AppstoreAddOutlined />} onClick={() => setActiveView('applications')}>
               业务应用
             </Menu.Item>
+            <Menu.Item key="rule_library" icon={<SafetyOutlined />} onClick={() => setActiveView('rule_library')}>
+              规则库
+            </Menu.Item>
             <Menu.Item key="agents" icon={<AppstoreOutlined />} onClick={() => setActiveView('agents')}>
               管理专家
             </Menu.Item>
@@ -1272,12 +1284,13 @@ const App: React.FC = () => {
               ) : (
                 <Text strong style={{ fontSize: 14 }}>
                   {activeView === 'applications' ? '业务智能体应用'
-                    : activeView === 'agents' ? '专家集群管理'
-                    : activeView === 'providers' ? '模型供应商'
-                      : activeView === 'tools' ? '工具注册表'
-                        : activeView === 'ontology' ? '本体治理台'
-                        : activeView === 'users' ? '系统用户管理'
-                          : 'UniAI Kernel'}
+                    : activeView === 'rule_library' ? '规则库'
+                      : activeView === 'agents' ? '专家集群管理'
+                      : activeView === 'providers' ? '模型供应商'
+                        : activeView === 'tools' ? '工具注册表'
+                          : activeView === 'ontology' ? '本体治理台'
+                          : activeView === 'users' ? '系统用户管理'
+                            : 'UniAI Kernel'}
                 </Text>
               )}
             </div>
@@ -1422,9 +1435,16 @@ const App: React.FC = () => {
               <ApplicationManager
                 applications={applications}
                 agents={agents}
+                api={api}
                 onRefresh={fetchApplications}
                 onSelectApplication={handleApplicationSelect}
               />
+            </Suspense>
+          )}
+
+          {activeView === 'rule_library' && (
+            <Suspense fallback={<ViewLoading label="正在加载规则库..." />}>
+              <RuleLibraryWorkbench api={api} />
             </Suspense>
           )}
 
