@@ -10,6 +10,7 @@ from app.agents.runtime_capabilities import get_runtime_provider_catalog
 from app.core.plugins import registry
 from app.models.agent import AgentProfile
 from app.models.application import AgentApplication
+from app.models.review import ReviewPackModel
 
 
 SCENARIO_TYPES = {"risk_review", "contract_review", "customer_support", "research_workflow", "custom"}
@@ -57,6 +58,10 @@ def normalize_application_payload(data: Dict[str, Any], *, partial: bool = False
         raise HTTPException(status_code=400, detail="acceptance_policy 必须是对象")
     if "ontology_space_id" in normalized and normalized.get("ontology_space_id") is not None:
         normalized["ontology_space_id"] = str(normalized["ontology_space_id"]).strip() or None
+    if "review_pack_id" in normalized and normalized.get("review_pack_id") is not None:
+        normalized["review_pack_id"] = str(normalized["review_pack_id"]).strip() or None
+    if "review_pack_version" in normalized and normalized.get("review_pack_version") is not None:
+        normalized["review_pack_version"] = str(normalized["review_pack_version"]).strip() or None
     if "primary_agent_id" in normalized and normalized.get("primary_agent_id") is not None:
         normalized["primary_agent_id"] = str(normalized["primary_agent_id"]).strip() or None
     return normalized
@@ -106,6 +111,8 @@ def application_to_dict(application: AgentApplication) -> Dict[str, Any]:
         "runtime_provider_names": application.runtime_provider_names or [],
         "tool_names": application.tool_names or [],
         "ontology_space_id": application.ontology_space_id,
+        "review_pack_id": application.review_pack_id,
+        "review_pack_version": application.review_pack_version,
         "runtime_policy": application.runtime_policy or {},
         "acceptance_policy": application.acceptance_policy or {},
         "status": application.status,
@@ -149,6 +156,26 @@ async def build_runtime_contract(
     if application.ontology_space_id:
         ontology_config.update({"enabled": True, "mode": ontology_config.get("mode") or "auto", "space_id": application.ontology_space_id})
 
+    review_pack = await db.get(ReviewPackModel, application.review_pack_id) if application.review_pack_id else None
+    review_policy = {
+        "review_pack_id": application.review_pack_id,
+        "review_pack_version": application.review_pack_version,
+        "fixed_pack": bool(application.review_pack_id),
+        "runtime_rule_source": "released_review_pack" if application.review_pack_id else "not_bound",
+    }
+    if review_pack:
+        review_policy.update(
+            {
+                "name": review_pack.name,
+                "version": review_pack.version,
+                "scenario_type": review_pack.scenario_type,
+                "status": review_pack.status,
+                "space_id": review_pack.space_id,
+                "review_check_count": len(review_pack.review_check_ids or []),
+                "norm_clause_count": len(review_pack.norm_clause_ids or []),
+            }
+        )
+
     return {
         "application": application_to_dict(application),
         "primary_agent": {
@@ -164,6 +191,7 @@ async def build_runtime_contract(
         "missing_tools": missing_tools,
         "ontology_space_id": application.ontology_space_id,
         "ontology_config": ontology_config,
+        "review_policy": review_policy,
         "runtime_policy": runtime_policy,
         "acceptance_policy": application.acceptance_policy or {},
         "limits": {

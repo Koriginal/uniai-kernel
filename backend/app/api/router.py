@@ -16,6 +16,8 @@ from app.api.endpoints import (
     dynamic_tools,
     auth,
     users,
+    review,
+    rule_extraction,
     messages as messages_ep,
     orchestration as orch_ep,
 )
@@ -45,11 +47,15 @@ mgmt_router.include_router(user_init.router, prefix="/user-init", tags=["User Li
 mgmt_router.include_router(llm.router, prefix="/llm", tags=["LLM Raw Access"])
 mgmt_router.include_router(api_keys.router, prefix="/user/api-keys", tags=["API Keys"])
 mgmt_router.include_router(dynamic_tools.router, prefix="/dynamic-tools", tags=["Dynamic Tools"])
+mgmt_router.include_router(review.router, prefix="/review", tags=["Domain Review"])
+mgmt_router.include_router(rule_extraction.router, prefix="/rule-extraction", tags=["Rule Extraction"])
 
 # Ontology routes stay registered even when the capability is disabled, so clients
 # receive a clear 503 from the endpoint guard instead of an ambiguous 404.
 from app.api.endpoints import ontology as ontology_ep
+from app.api.endpoints import ontology_assets as ontology_assets_ep
 mgmt_router.include_router(ontology_ep.router, prefix="/ontology", tags=["Ontology Engine"])
+mgmt_router.include_router(ontology_assets_ep.router, prefix="/ontology", tags=["Ontology Asset Pipeline"])
 
 # --- 3. [图引擎面] LangGraph 图拓扑与调试 ---
 from app.api.endpoints import graph as graph_ep

@@ -23,6 +23,8 @@ class AgentApplication(Base):
     runtime_provider_names = Column(JSON, default=[])
     tool_names = Column(JSON, default=[])
     ontology_space_id = Column(String, nullable=True, index=True)
+    review_pack_id = Column(String, ForeignKey("review_packs.id", ondelete="SET NULL"), nullable=True, index=True)
+    review_pack_version = Column(String, nullable=True)
     runtime_policy = Column(JSON, default={})
     acceptance_policy = Column(JSON, default={})
     status = Column(String, nullable=False, default="active")

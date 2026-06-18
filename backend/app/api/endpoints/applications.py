@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.core.db import get_db
 from app.models.application import AgentApplication
+from app.models.review import ReviewPackModel
 from app.models.user import User
 from app.ontology.persistent_service import persistent_ontology_service
 from app.services.application_service import (
@@ -31,6 +32,8 @@ class AgentApplicationCreate(BaseModel):
     runtime_provider_names: List[str] = []
     tool_names: List[str] = []
     ontology_space_id: Optional[str] = None
+    review_pack_id: Optional[str] = None
+    review_pack_version: Optional[str] = None
     runtime_policy: Dict[str, Any] = {}
     acceptance_policy: Dict[str, Any] = {}
     status: str = "active"
@@ -45,6 +48,8 @@ class AgentApplicationUpdate(BaseModel):
     runtime_provider_names: Optional[List[str]] = None
     tool_names: Optional[List[str]] = None
     ontology_space_id: Optional[str] = None
+    review_pack_id: Optional[str] = None
+    review_pack_version: Optional[str] = None
     runtime_policy: Optional[Dict[str, Any]] = None
     acceptance_policy: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
@@ -61,6 +66,8 @@ class AgentApplicationResponse(BaseModel):
     runtime_provider_names: List[str]
     tool_names: List[str]
     ontology_space_id: Optional[str] = None
+    review_pack_id: Optional[str] = None
+    review_pack_version: Optional[str] = None
     runtime_policy: Dict[str, Any]
     acceptance_policy: Dict[str, Any]
     status: str
@@ -78,6 +85,22 @@ async def _ensure_ontology_space_access(db: AsyncSession, space_id: Optional[str
         current_user.is_admin,
         action="read",
     )
+
+
+async def _ensure_review_pack_access(db: AsyncSession, review_pack_id: Optional[str], current_user: User) -> Optional[ReviewPackModel]:
+    if not review_pack_id:
+        return None
+    review_pack = await db.get(ReviewPackModel, review_pack_id)
+    if not review_pack:
+        raise HTTPException(status_code=400, detail="review_pack_id 指向的评审规则包不存在")
+    await persistent_ontology_service._ensure_space_access(
+        db,
+        review_pack.space_id,
+        current_user.id,
+        current_user.is_admin,
+        action="read",
+    )
+    return review_pack
 
 
 @router.get("/", response_model=List[AgentApplicationResponse])
@@ -98,6 +121,9 @@ async def create_application(
     data = normalize_application_payload(payload.model_dump())
     await ensure_agent_access(db, data.get("primary_agent_id"), user_id=current_user.id, is_admin=current_user.is_admin)
     await _ensure_ontology_space_access(db, data.get("ontology_space_id"), current_user)
+    review_pack = await _ensure_review_pack_access(db, data.get("review_pack_id"), current_user)
+    if review_pack and not data.get("review_pack_version"):
+        data["review_pack_version"] = review_pack.version
     application = AgentApplication(
         user_id=current_user.id,
         **data,
@@ -131,6 +157,10 @@ async def update_application(
         await ensure_agent_access(db, data.get("primary_agent_id"), user_id=current_user.id, is_admin=current_user.is_admin)
     if "ontology_space_id" in data:
         await _ensure_ontology_space_access(db, data.get("ontology_space_id"), current_user)
+    if "review_pack_id" in data:
+        review_pack = await _ensure_review_pack_access(db, data.get("review_pack_id"), current_user)
+        if review_pack and not data.get("review_pack_version"):
+            data["review_pack_version"] = review_pack.version
     for key, value in data.items():
         setattr(application, key, value)
     db.add(application)

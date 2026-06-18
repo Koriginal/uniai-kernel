@@ -23,3 +23,12 @@ from app.models.ontology import (
     OntologyDataSourceModel,
     OntologySecretModel,
 )
+from app.models.ontology_assets import OntologyTermModel, RuleEntryModel, RuleSourceDocumentModel
+from app.models.review import (
+    NormClauseModel,
+    PolicyArticleModel,
+    PolicyDocumentModel,
+    ReviewCheckModel,
+    ReviewPackModel,
+    ReviewRunModel,
+)
